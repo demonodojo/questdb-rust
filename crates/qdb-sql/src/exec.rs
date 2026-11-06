@@ -287,7 +287,9 @@ impl Accumulator {
     fn start(func: AggFunc) -> Self {
         match func {
             AggFunc::Count => Self::Count(0),
-            AggFunc::Min | AggFunc::Max | AggFunc::Sum => Self::Value(None),
+            AggFunc::Min | AggFunc::Max | AggFunc::Sum | AggFunc::First | AggFunc::Last => {
+                Self::Value(None)
+            }
             AggFunc::Avg => Self::Average {
                 total: None,
                 count: 0,
@@ -360,7 +362,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::Sum => qdb_types::TAG_LONG,
         AggFunc::Avg => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
-        AggFunc::Min | AggFunc::Max => input.tag,
+        AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
 }
 
@@ -373,10 +375,11 @@ fn contribution(
         return Ok(Some(Scalar::Long(1)));
     };
     let value = &columns[index][row];
-    if value.is_null() || (input.tag == qdb_types::TAG_CHAR && matches!(value, Scalar::Char(0))) {
-        return Ok(None);
-    }
+    let skipped =
+        value.is_null() || (input.tag == qdb_types::TAG_CHAR && matches!(value, Scalar::Char(0)));
     match input.func {
+        AggFunc::First | AggFunc::Last => Ok(Some(value.clone())),
+        _ if skipped => Ok(None),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => {
             let Scalar::Boolean(bit) = value else {
@@ -486,6 +489,14 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
     };
     match accumulator {
         Accumulator::Count(total) => *total += 1,
+        Accumulator::Value(current) if func == AggFunc::First => {
+            if current.is_none() {
+                *current = Some(next);
+            }
+        }
+        Accumulator::Value(current) if func == AggFunc::Last => {
+            *current = Some(next);
+        }
         Accumulator::Value(current) if func == AggFunc::Sum => {
             *current = Some(match current.take() {
                 None => next,
@@ -1973,6 +1984,214 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT avg(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn first_last_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT first(id) FROM sensors",
+                "expected/first_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT last(id) FROM sensors",
+                "expected/last_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT first(reading) FROM sensors",
+                "expected/first_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT last(reading) FROM sensors",
+                "expected/last_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT first(ok) FROM sensors",
+                "expected/first_ok.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT last(ok) FROM sensors",
+                "expected/last_ok.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT first(note) FROM sensors",
+                "expected/first_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT last(note) FROM sensors",
+                "expected/last_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT first(ch) FROM sensors",
+                "expected/first_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT last(tag) FROM sensors",
+                "expected/last_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT first(ts) FROM sensors",
+                "expected/first_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT last(day) FROM sensors",
+                "expected/last_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT first(location) FROM sensors",
+                "expected/first_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT last(location) FROM sensors",
+                "expected/last_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT first(id) FROM sensors WHERE id > 100",
+                "expected/first_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT first(reading) FROM sensors WHERE id = 2",
+                "expected/first_reading_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT last(note) FROM sensors WHERE note = ''",
+                "expected/last_empty_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT first(ch) FROM sensors WHERE ch = ''",
+                "expected/first_empty_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT FIRST(ID) FROM sensors",
+                "expected/first_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT first(id) FROM sensors LIMIT 0",
+                "expected/first_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT last(score) FROM sensors",
+                "expected/last_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, first(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_first_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, last(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_last_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, first(reading) FROM sensors GROUP BY id ORDER BY id",
+                "expected/group_first_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, first(id) FROM sensors GROUP BY location ORDER BY first(id)",
+                "expected/group_first_by_value.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT first(id) FROM days",
+                "expected/first_id.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT last(id) FROM days",
+                "expected/last_id.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT first(note) FROM days",
+                "expected/first_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT last(note) FROM days",
+                "expected/last_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT first(ts) FROM days",
+                "expected/first_ts.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT last(ts) FROM days",
+                "expected/last_ts.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT first(id) FROM days WHERE id = NULL",
+                "expected/first_null.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT location, first(id) FROM days GROUP BY location ORDER BY location",
+                "expected/group_first_id.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT location, last(id) FROM days GROUP BY location ORDER BY location",
+                "expected/group_last_id.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT location, last(note) FROM days GROUP BY location ORDER BY last(note)",
+                "expected/group_last_note.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT first() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT last() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT first(*) FROM sensors").unwrap_err();
+        assert!(err.message.contains("too few arguments"), "{}", err.message);
+        let err = execute(&sensors, "SELECT first(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

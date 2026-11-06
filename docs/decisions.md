@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-06 — first() y last()
+
+`first` guarda el valor de la primera fila leída y `last` el de la última, dentro del filtro o del grupo. Un NULL y un `CHAR` 0 cuentan: el `last(id)` de `madrid` en `sensors` es NULL, y el `last(id)` de `days` también. El tipo del resultado es el de la columna, así que un `BOOLEAN` sigue siendo `true` o `false`. En estas tablas sin O3 el orden de lectura coincide con el row id de 10.1.0. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-06 — avg()
 
 `avg` divide la misma suma que `sum` entre el número de valores que entran, y el resultado es siempre `DOUBLE`. NULL y un `CHAR` 0 no entran. Si no queda ningún valor, la fila es NULL. Un `BOOLEAN` entra como `0.0` o `1.0`. Un `-0.0` solo se conserva; `0.0` y `-0.0` juntos dan `0.0`. El texto del TSV lo escribe `format_f64`, así que `avg(ts)` de `sensors` queda `1577934246500000.0`; el JSON de `/exec` imprime `1.5779342465E15` para el mismo número. Se contrastó con `/exec` en `sensors` y `days`, también dentro del `GROUP BY` de una columna.

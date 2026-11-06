@@ -187,7 +187,32 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   avg_limit_zero "SELECT avg(id) FROM sensors LIMIT 0" \
   group_avg_id "SELECT location, avg(id) FROM sensors GROUP BY location ORDER BY location" \
   group_avg_reading "SELECT id, avg(reading) FROM sensors GROUP BY id ORDER BY id" \
-  group_avg_by_value "SELECT location, avg(id) FROM sensors GROUP BY location ORDER BY avg(id)"
+  group_avg_by_value "SELECT location, avg(id) FROM sensors GROUP BY location ORDER BY avg(id)" \
+  first_id "SELECT first(id) FROM sensors" \
+  last_id "SELECT last(id) FROM sensors" \
+  first_reading "SELECT first(reading) FROM sensors" \
+  last_reading "SELECT last(reading) FROM sensors" \
+  first_ok "SELECT first(ok) FROM sensors" \
+  last_ok "SELECT last(ok) FROM sensors" \
+  first_note "SELECT first(note) FROM sensors" \
+  last_note "SELECT last(note) FROM sensors" \
+  first_ch "SELECT first(ch) FROM sensors" \
+  last_tag "SELECT last(tag) FROM sensors" \
+  first_ts "SELECT first(ts) FROM sensors" \
+  last_day "SELECT last(day) FROM sensors" \
+  first_location "SELECT first(location) FROM sensors" \
+  last_location "SELECT last(location) FROM sensors" \
+  first_null "SELECT first(id) FROM sensors WHERE id > 100" \
+  first_reading_null "SELECT first(reading) FROM sensors WHERE id = 2" \
+  last_empty_note "SELECT last(note) FROM sensors WHERE note = ''" \
+  first_empty_ch "SELECT first(ch) FROM sensors WHERE ch = ''" \
+  first_case "SELECT FIRST(ID) FROM sensors" \
+  first_limit_zero "SELECT first(id) FROM sensors LIMIT 0" \
+  last_score "SELECT last(score) FROM sensors" \
+  group_first_id "SELECT location, first(id) FROM sensors GROUP BY location ORDER BY location" \
+  group_last_id "SELECT location, last(id) FROM sensors GROUP BY location ORDER BY location" \
+  group_first_reading "SELECT id, first(reading) FROM sensors GROUP BY id ORDER BY id" \
+  group_first_by_value "SELECT location, first(id) FROM sensors GROUP BY location ORDER BY first(id)"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -231,7 +256,17 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   avg_null "SELECT avg(id) FROM days WHERE id = NULL" \
   avg_ts "SELECT avg(ts) FROM days" \
   group_avg_id "SELECT location, avg(id) FROM days GROUP BY location ORDER BY location" \
-  group_avg_by_value "SELECT location, avg(id) FROM days GROUP BY location ORDER BY avg(id)"
+  group_avg_by_value "SELECT location, avg(id) FROM days GROUP BY location ORDER BY avg(id)" \
+  first_id "SELECT first(id) FROM days" \
+  last_id "SELECT last(id) FROM days" \
+  first_note "SELECT first(note) FROM days" \
+  last_note "SELECT last(note) FROM days" \
+  first_ts "SELECT first(ts) FROM days" \
+  last_ts "SELECT last(ts) FROM days" \
+  first_null "SELECT first(id) FROM days WHERE id = NULL" \
+  group_first_id "SELECT location, first(id) FROM days GROUP BY location ORDER BY location" \
+  group_last_id "SELECT location, last(id) FROM days GROUP BY location ORDER BY location" \
+  group_last_note "SELECT location, last(note) FROM days GROUP BY location ORDER BY last(note)"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -366,6 +401,31 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT location, avg(id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT id, avg(reading) FROM sensors GROUP BY id ORDER BY id"),
     (os.environ["DIFF_H1"], "SELECT location, avg(id) FROM sensors GROUP BY location ORDER BY avg(id)"),
+    (os.environ["DIFF_H1"], "SELECT first(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first(ok) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last(ok) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last(tag) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first(id) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT first(reading) FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT last(note) FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT first(ch) FROM sensors WHERE ch = ''"),
+    (os.environ["DIFF_H1"], "SELECT FIRST(ID) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT last(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT location, first(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT location, last(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT id, first(reading) FROM sensors GROUP BY id ORDER BY id"),
+    (os.environ["DIFF_H1"], "SELECT location, first(id) FROM sensors GROUP BY location ORDER BY first(id)"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -408,6 +468,16 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT avg(ts) FROM days"),
     (os.environ["DIFF_H2"], "SELECT location, avg(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT location, avg(id) FROM days GROUP BY location ORDER BY avg(id)"),
+    (os.environ["DIFF_H2"], "SELECT first(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT last(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT first(note) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT last(note) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT first(ts) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT last(ts) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT first(id) FROM days WHERE id = NULL"),
+    (os.environ["DIFF_H2"], "SELECT location, first(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT location, last(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT location, last(note) FROM days GROUP BY location ORDER BY last(note)"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

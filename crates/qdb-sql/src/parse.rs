@@ -44,6 +44,8 @@ pub enum AggFunc {
     Max,
     Sum,
     Avg,
+    First,
+    Last,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,7 +53,7 @@ pub struct AggregateExpr {
     pub func: AggFunc,
     /// Result column name, such as `count()`, `min(id)` or `MAX(note)`.
     pub label: String,
-    /// `None` for `count()` and `count(*)`. `min`, `max`, `sum` and `avg` always name a column.
+    /// `None` for `count()` and `count(*)`. `min`, `max`, `sum`, `avg`, `first` and `last` always name a column.
     pub column: Option<String>,
 }
 
@@ -330,7 +332,7 @@ impl<'a> Parser<'a> {
         let name = std::str::from_utf8(&bytes[..index]).unwrap_or("");
         if !matches!(
             name.to_ascii_lowercase().as_str(),
-            "count" | "min" | "max" | "sum" | "avg"
+            "count" | "min" | "max" | "sum" | "avg" | "first" | "last"
         ) {
             return false;
         }
@@ -370,6 +372,8 @@ impl<'a> Parser<'a> {
             "max" => AggFunc::Max,
             "sum" => AggFunc::Sum,
             "avg" => AggFunc::Avg,
+            "first" => AggFunc::First,
+            "last" => AggFunc::Last,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
