@@ -144,7 +144,7 @@ fn execute_aggregate(
         }
         absorb(
             &mut accumulator,
-            contribution(&table.columns, row, &input),
+            contribution(&table.columns, row, &input)?,
             aggregate.func,
         );
     }
@@ -214,7 +214,7 @@ fn execute_group(
             }
         }
         let key = table.columns[key_index][row].clone();
-        let next = contribution(&table.columns, row, &input);
+        let next = contribution(&table.columns, row, &input)?;
         if let Some(group) = groups.iter_mut().find(|(found, _)| found == &key) {
             absorb(&mut group.1, next, aggregate.func);
         } else {
@@ -273,6 +273,8 @@ struct AggColumn {
     index: Option<usize>,
     tag: i32,
     func: AggFunc,
+    /// Symbol texts in key order. `sum` of a symbol adds that key.
+    symbol_keys: Vec<Scalar>,
 }
 
 enum Accumulator {
@@ -284,7 +286,7 @@ impl Accumulator {
     fn start(func: AggFunc) -> Self {
         match func {
             AggFunc::Count => Self::Count(0),
-            AggFunc::Min | AggFunc::Max => Self::Value(None),
+            AggFunc::Min | AggFunc::Max | AggFunc::Sum => Self::Value(None),
         }
     }
 
@@ -303,51 +305,145 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             index: None,
             tag: qdb_types::TAG_LONG,
             func: aggregate.func,
+            symbol_keys: Vec::new(),
         });
     };
     let index = table
         .column_index(name)
         .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
     let tag = table.meta.columns[index].tag;
-    if aggregate.func == AggFunc::Count && tag == qdb_types::TAG_BOOLEAN {
-        return Err(Error::new(
-            "there is no matching function `count` with the argument types: (BOOLEAN)",
-        ));
+    if matches!(aggregate.func, AggFunc::Count | AggFunc::Sum) && tag == qdb_types::TAG_BOOLEAN {
+        let name = match aggregate.func {
+            AggFunc::Sum => "sum",
+            _ => "count",
+        };
+        return Err(Error::new(format!(
+            "there is no matching function `{name}` with the argument types: (BOOLEAN)"
+        )));
     }
+    let symbol_keys = if aggregate.func == AggFunc::Sum && tag == qdb_types::TAG_SYMBOL {
+        let mut keys = Vec::new();
+        for value in &table.columns[index] {
+            if value.is_null() || keys.contains(value) {
+                continue;
+            }
+            keys.push(value.clone());
+        }
+        keys
+    } else {
+        Vec::new()
+    };
     Ok(AggColumn {
         index: Some(index),
         tag,
         func: aggregate.func,
+        symbol_keys,
     })
 }
 
 fn aggregate_order_tag(input: &AggColumn) -> i32 {
-    if matches!(input.func, AggFunc::Min | AggFunc::Max) && input.tag == qdb_types::TAG_BOOLEAN {
-        qdb_types::TAG_DOUBLE
-    } else if input.func == AggFunc::Count {
-        qdb_types::TAG_LONG
-    } else {
-        input.tag
+    match input.func {
+        AggFunc::Count => qdb_types::TAG_LONG,
+        AggFunc::Sum if input.tag == qdb_types::TAG_FLOAT => qdb_types::TAG_FLOAT,
+        AggFunc::Sum if input.tag == qdb_types::TAG_DOUBLE => qdb_types::TAG_DOUBLE,
+        AggFunc::Sum => qdb_types::TAG_LONG,
+        AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
+        AggFunc::Min | AggFunc::Max => input.tag,
     }
 }
 
-fn contribution(columns: &[Vec<Scalar>], row: usize, input: &AggColumn) -> Option<Scalar> {
+fn contribution(
+    columns: &[Vec<Scalar>],
+    row: usize,
+    input: &AggColumn,
+) -> Result<Option<Scalar>, Error> {
     let Some(index) = input.index else {
-        return Some(Scalar::Long(1));
+        return Ok(Some(Scalar::Long(1)));
     };
     let value = &columns[index][row];
     if value.is_null() || (input.tag == qdb_types::TAG_CHAR && matches!(value, Scalar::Char(0))) {
-        return None;
+        return Ok(None);
     }
     match input.func {
-        AggFunc::Count => Some(Scalar::Long(1)),
+        AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => {
             let Scalar::Boolean(bit) = value else {
-                return None;
+                return Ok(None);
             };
-            Some(Scalar::Double(if *bit { 1.0 } else { 0.0 }))
+            Ok(Some(Scalar::Double(if *bit { 1.0 } else { 0.0 })))
         }
-        AggFunc::Min | AggFunc::Max => Some(value.clone()),
+        AggFunc::Min | AggFunc::Max => Ok(Some(value.clone())),
+        AggFunc::Sum => sum_addend(value, input),
+    }
+}
+
+fn sum_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Error> {
+    if value.is_null() || (input.tag == qdb_types::TAG_CHAR && matches!(value, Scalar::Char(0))) {
+        return Ok(None);
+    }
+    match input.tag {
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT | qdb_types::TAG_LONG => {
+            Ok(Some(Scalar::Long(as_i64(value)?)))
+        }
+        qdb_types::TAG_DATE => match value {
+            Scalar::Date(millis) => Ok(Some(Scalar::Long(*millis))),
+            _ => Err(Error::new("internal: date column value")),
+        },
+        qdb_types::TAG_TIMESTAMP => match value {
+            Scalar::Timestamp(micros) => Ok(Some(Scalar::Long(*micros))),
+            _ => Err(Error::new("internal: timestamp column value")),
+        },
+        qdb_types::TAG_FLOAT => match value {
+            Scalar::Float(number) => Ok(Some(Scalar::Float(*number))),
+            _ => Err(Error::new("internal: float column value")),
+        },
+        qdb_types::TAG_DOUBLE => match value {
+            Scalar::Double(number) => Ok(Some(Scalar::Double(*number))),
+            _ => Err(Error::new("internal: double column value")),
+        },
+        qdb_types::TAG_SYMBOL => {
+            let key = input
+                .symbol_keys
+                .iter()
+                .position(|found| found == value)
+                .ok_or_else(|| Error::new("internal: symbol key"))?;
+            Ok(Some(Scalar::Long(i64::try_from(key).unwrap_or(i64::MAX))))
+        }
+        qdb_types::TAG_CHAR => Err(Error::new(format!(
+            "inconvertible value: {} [CHAR -> SHORT]",
+            scalar_text(value)
+        ))),
+        qdb_types::TAG_STRING => Err(Error::new(format!(
+            "inconvertible value: `{}` [STRING -> DOUBLE]",
+            scalar_text(value)
+        ))),
+        qdb_types::TAG_VARCHAR => Err(Error::new(format!(
+            "inconvertible value: `{}` [VARCHAR -> DOUBLE]",
+            scalar_text(value)
+        ))),
+        _ => Err(Error::new(format!(
+            "unsupported: sum of column type {}",
+            input.tag
+        ))),
+    }
+}
+
+fn scalar_text(value: &Scalar) -> String {
+    match value {
+        Scalar::Text(text) => text.clone(),
+        Scalar::Char(unit) => char::from_u32(u32::from(*unit))
+            .map(|unit| unit.to_string())
+            .unwrap_or_default(),
+        _ => value.to_string(),
+    }
+}
+
+fn add_sum(left: &Scalar, right: &Scalar) -> Scalar {
+    match (left, right) {
+        (Scalar::Long(left), Scalar::Long(right)) => Scalar::Long(left.wrapping_add(*right)),
+        (Scalar::Float(left), Scalar::Float(right)) => Scalar::Float(*left + *right),
+        (Scalar::Double(left), Scalar::Double(right)) => Scalar::Double(*left + *right),
+        _ => left.clone(),
     }
 }
 
@@ -357,6 +453,12 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
     };
     match accumulator {
         Accumulator::Count(total) => *total += 1,
+        Accumulator::Value(current) if func == AggFunc::Sum => {
+            *current = Some(match current.take() {
+                None => next,
+                Some(kept) => add_sum(&kept, &next),
+            });
+        }
         Accumulator::Value(current) => match current {
             None => *current = Some(next),
             Some(kept) => {
@@ -1514,10 +1616,178 @@ mod tests {
     }
 
     #[test]
+    fn sum_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT sum(id) FROM sensors",
+                "expected/sum_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(reading) FROM sensors",
+                "expected/sum_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(score) FROM sensors",
+                "expected/sum_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(b) FROM sensors",
+                "expected/sum_b.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(code) FROM sensors",
+                "expected/sum_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(flags) FROM sensors",
+                "expected/sum_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(b) FROM sensors WHERE b = 0",
+                "expected/sum_b_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(id) FROM sensors WHERE id > 100",
+                "expected/sum_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(reading) FROM sensors WHERE id = -1",
+                "expected/sum_neg_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(reading) FROM sensors WHERE reading = 0.0",
+                "expected/sum_zeros.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(ts) FROM sensors",
+                "expected/sum_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(day) FROM sensors",
+                "expected/sum_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(location) FROM sensors",
+                "expected/sum_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT SUM(ID) FROM sensors",
+                "expected/sum_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(id) FROM sensors LIMIT 0",
+                "expected/sum_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, sum(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_sum_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sum(id) FROM sensors GROUP BY location ORDER BY sum(id)",
+                "expected/group_sum_by_value.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, sum(reading) FROM sensors GROUP BY id ORDER BY id",
+                "expected/group_sum_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, sum(score) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_sum_score.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT sum(id) FROM days",
+                "expected/sum_id.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT sum(ts) FROM days",
+                "expected/sum_ts.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT sum(location) FROM days",
+                "expected/sum_location.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT sum(id) FROM days WHERE id = NULL",
+                "expected/sum_null.tsv",
+            ),
+            (
+                days,
+                "SELECT location, sum(id) FROM days GROUP BY location ORDER BY location",
+                "expected/group_sum_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT sum() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sum(*) FROM sensors").unwrap_err();
+        assert!(err.message.contains("too few arguments"), "{}", err.message);
+        let err = execute(&sensors, "SELECT sum(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("no matching function"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sum(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> SHORT]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sum(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sum(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
     fn rejects_unimplemented_sql() {
         let err = execute(&root(), "INSERT INTO sensors VALUES (1)").unwrap_err();
         assert!(err.message.contains("unsupported"), "{}", err.message);
-        let err = execute(&root(), "SELECT sum() FROM sensors").unwrap_err();
+        let err = execute(&root(), "SELECT avg() FROM sensors").unwrap_err();
         assert!(err.message.contains("unsupported"), "{}", err.message);
         let err = execute(&root(), "SELECT count(ok) FROM sensors").unwrap_err();
         assert!(

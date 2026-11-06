@@ -3,7 +3,7 @@
 //! Accepted form:
 //! `SELECT <cols>|*|<aggregate>|<col>, <aggregate> FROM <table> [WHERE <col> <op> <literal>] [GROUP BY <col>] [ORDER BY <col>|<aggregate> [ASC|DESC] [, ...]] [LIMIT n | LIMIT lo, hi]`
 //!
-//! An aggregate is `count()`, `count(<col>)`, `min(<col>)` or `max(<col>)`.
+//! An aggregate is `count()`, `count(<col>)`, `min(<col>)`, `max(<col>)` or `sum(<col>)`.
 //!
 //! `LIMIT n` keeps the first `n` rows after `WHERE` and `ORDER BY`. A negative
 //! `n` keeps the last `|n|` rows in that same order. `LIMIT lo, hi` keeps the
@@ -15,7 +15,10 @@
 //! whose stored value is 0. `count` of a `BOOLEAN` is rejected. `min` and `max`
 //! skip those same values and return NULL when every value was skipped. A
 //! `BOOLEAN` argument becomes `0.0` or `1.0`. `-0.0` and `0.0` tie, and the
-//! value already chosen stays. An aggregate without `GROUP BY` returns one
+//! value already chosen stays. `sum` skips nulls and returns NULL when every
+//! value was skipped. Integers, dates, timestamps and symbol keys sum to
+//! `LONG`. `FLOAT` and `DOUBLE` keep their type. `-0.0` summed with `0.0`
+//! becomes `0.0`. An aggregate without `GROUP BY` returns one
 //! row, or none when `LIMIT` removes it.
 //! `GROUP BY` of one column returns one row per distinct value, in first-seen
 //! order until `ORDER BY` sorts it. `-0.0` and `0.0` stay in different groups.

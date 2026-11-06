@@ -42,6 +42,7 @@ pub enum AggFunc {
     Count,
     Min,
     Max,
+    Sum,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +50,7 @@ pub struct AggregateExpr {
     pub func: AggFunc,
     /// Result column name, such as `count()`, `min(id)` or `MAX(note)`.
     pub label: String,
-    /// `None` for `count()` and `count(*)`. `min` and `max` always name a column.
+    /// `None` for `count()` and `count(*)`. `min`, `max` and `sum` always name a column.
     pub column: Option<String>,
 }
 
@@ -326,7 +327,10 @@ impl<'a> Parser<'a> {
             index += 1;
         }
         let name = std::str::from_utf8(&bytes[..index]).unwrap_or("");
-        if !matches!(name.to_ascii_lowercase().as_str(), "count" | "min" | "max") {
+        if !matches!(
+            name.to_ascii_lowercase().as_str(),
+            "count" | "min" | "max" | "sum"
+        ) {
             return false;
         }
         while bytes
@@ -363,6 +367,7 @@ impl<'a> Parser<'a> {
             "count" => AggFunc::Count,
             "min" => AggFunc::Min,
             "max" => AggFunc::Max,
+            "sum" => AggFunc::Sum,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {

@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-06 — sum()
+
+`sum` omite NULL y un `CHAR` 0. Si no queda ningún valor, la fila es NULL. BYTE, SHORT, INT, LONG, DATE y TIMESTAMP se acumulan en `LONG`. `FLOAT` y `DOUBLE` conservan su tipo. `0.0 + -0.0` da `0.0`; un `-0.0` solo se conserva. Un símbolo suma su clave, que en estos fixtures es el orden de primera aparición. `sum` de `BOOLEAN` no tiene función, y un texto no convertible devuelve el error de 10.1.0. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-06 — min() y max()
 
 `min` y `max` omiten NULL y un `CHAR` 0. Si no queda ningún valor, la fila es NULL. Un `BOOLEAN` se lee como `0.0` o `1.0`. `-0.0` y `0.0` empatan y se conserva el que ya estaba elegido, así que el mínimo de `reading` en `sensors` es `0.0` y el máximo del grupo `id = -1` sigue siendo `-0.0`. Se contrastó con `/exec` en `sensors` y `days`, también dentro del `GROUP BY` de una columna.

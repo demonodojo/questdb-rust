@@ -149,7 +149,26 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   group_min_by_value "SELECT location, min(id) FROM sensors GROUP BY location ORDER BY min(id)" \
   group_max_note "SELECT location, max(note) FROM sensors GROUP BY location ORDER BY location" \
   group_max_reading "SELECT id, max(reading) FROM sensors GROUP BY id ORDER BY id" \
-  group_min_reading "SELECT location, min(reading) FROM sensors GROUP BY location ORDER BY location"
+  group_min_reading "SELECT location, min(reading) FROM sensors GROUP BY location ORDER BY location" \
+  sum_id "SELECT sum(id) FROM sensors" \
+  sum_reading "SELECT sum(reading) FROM sensors" \
+  sum_score "SELECT sum(score) FROM sensors" \
+  sum_b "SELECT sum(b) FROM sensors" \
+  sum_code "SELECT sum(code) FROM sensors" \
+  sum_flags "SELECT sum(flags) FROM sensors" \
+  sum_b_zero "SELECT sum(b) FROM sensors WHERE b = 0" \
+  sum_null "SELECT sum(id) FROM sensors WHERE id > 100" \
+  sum_neg_zero "SELECT sum(reading) FROM sensors WHERE id = -1" \
+  sum_zeros "SELECT sum(reading) FROM sensors WHERE reading = 0.0" \
+  sum_ts "SELECT sum(ts) FROM sensors" \
+  sum_day "SELECT sum(day) FROM sensors" \
+  sum_location "SELECT sum(location) FROM sensors" \
+  sum_case "SELECT SUM(ID) FROM sensors" \
+  sum_limit_zero "SELECT sum(id) FROM sensors LIMIT 0" \
+  group_sum_id "SELECT location, sum(id) FROM sensors GROUP BY location ORDER BY location" \
+  group_sum_by_value "SELECT sum(id) FROM sensors GROUP BY location ORDER BY sum(id)" \
+  group_sum_reading "SELECT id, sum(reading) FROM sensors GROUP BY id ORDER BY id" \
+  group_sum_score "SELECT location, sum(score) FROM sensors GROUP BY location ORDER BY location"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -183,7 +202,12 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   max_note "SELECT max(note) FROM days" \
   min_null "SELECT min(id) FROM days WHERE id = NULL" \
   group_min_id "SELECT location, min(id) FROM days GROUP BY location ORDER BY location" \
-  group_max_note "SELECT location, max(note) FROM days GROUP BY location ORDER BY location"
+  group_max_note "SELECT location, max(note) FROM days GROUP BY location ORDER BY location" \
+  sum_id "SELECT sum(id) FROM days" \
+  sum_ts "SELECT sum(ts) FROM days" \
+  sum_location "SELECT sum(location) FROM days" \
+  sum_null "SELECT sum(id) FROM days WHERE id = NULL" \
+  group_sum_id "SELECT location, sum(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -280,6 +304,25 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT location, max(note) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT id, max(reading) FROM sensors GROUP BY id ORDER BY id"),
     (os.environ["DIFF_H1"], "SELECT location, min(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT sum(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sum(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sum(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sum(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sum(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sum(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sum(b) FROM sensors WHERE b = 0"),
+    (os.environ["DIFF_H1"], "SELECT sum(id) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT sum(reading) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT sum(reading) FROM sensors WHERE reading = 0.0"),
+    (os.environ["DIFF_H1"], "SELECT sum(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sum(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sum(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT SUM(ID) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sum(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT location, sum(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT sum(id) FROM sensors GROUP BY location ORDER BY sum(id)"),
+    (os.environ["DIFF_H1"], "SELECT id, sum(reading) FROM sensors GROUP BY id ORDER BY id"),
+    (os.environ["DIFF_H1"], "SELECT location, sum(score) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -312,6 +355,11 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT min(id) FROM days WHERE id = NULL"),
     (os.environ["DIFF_H2"], "SELECT location, min(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT location, max(note) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT sum(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT sum(ts) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT sum(location) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT sum(id) FROM days WHERE id = NULL"),
+    (os.environ["DIFF_H2"], "SELECT location, sum(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
