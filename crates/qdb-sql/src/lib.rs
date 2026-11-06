@@ -1,7 +1,9 @@
 //! A deliberately small SQL surface for the H1 read slice.
 //!
 //! Accepted form:
-//! `SELECT <cols>|*|count()|count(<col>)|<col>, count() FROM <table> [WHERE <col> <op> <literal>] [GROUP BY <col>] [ORDER BY <col>|count() [ASC|DESC] [, ...]] [LIMIT n | LIMIT lo, hi]`
+//! `SELECT <cols>|*|<aggregate>|<col>, <aggregate> FROM <table> [WHERE <col> <op> <literal>] [GROUP BY <col>] [ORDER BY <col>|<aggregate> [ASC|DESC] [, ...]] [LIMIT n | LIMIT lo, hi]`
+//!
+//! An aggregate is `count()`, `count(<col>)`, `min(<col>)` or `max(<col>)`.
 //!
 //! `LIMIT n` keeps the first `n` rows after `WHERE` and `ORDER BY`. A negative
 //! `n` keeps the last `|n|` rows in that same order. `LIMIT lo, hi` keeps the
@@ -10,8 +12,11 @@
 //! `ORDER BY`, or when the only key is the designated timestamp. Any other
 //! key list keeps the last `|lo|` rows. Equal keys keep their incoming order.
 //! `count()` counts filtered rows. `count(col)` skips nulls, and also a `CHAR`
-//! whose stored value is 0. `count` of a `BOOLEAN` is rejected. An aggregate
-//! without `GROUP BY` returns one row, or none when `LIMIT` removes it.
+//! whose stored value is 0. `count` of a `BOOLEAN` is rejected. `min` and `max`
+//! skip those same values and return NULL when every value was skipped. A
+//! `BOOLEAN` argument becomes `0.0` or `1.0`. `-0.0` and `0.0` tie, and the
+//! value already chosen stays. An aggregate without `GROUP BY` returns one
+//! row, or none when `LIMIT` removes it.
 //! `GROUP BY` of one column returns one row per distinct value, in first-seen
 //! order until `ORDER BY` sorts it. `-0.0` and `0.0` stay in different groups.
 //! Anything else, including `SELECT 1`, DML and joins, returns

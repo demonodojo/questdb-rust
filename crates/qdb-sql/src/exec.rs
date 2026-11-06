@@ -1,5 +1,5 @@
 use crate::parse::{
-    date_from_literal, parse_query, timestamp_from_literal, CmpOp, CountExpr, Filter,
+    date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp, Filter,
     GroupedSelect, Query, SelectList,
 };
 use qdb_storage::{open_table, Table};
@@ -29,18 +29,18 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
     if query.group_by.is_some()
         && !matches!(
             &query.columns,
-            SelectList::Count(_) | SelectList::Grouped(_)
+            SelectList::Aggregate(_) | SelectList::Grouped(_)
         )
     {
-        return Err(Error::new("unsupported: GROUP BY without count()"));
+        return Err(Error::new("unsupported: GROUP BY without an aggregate"));
     }
     let projection = match &query.columns {
-        SelectList::Count(count) if query.group_by.is_none() => {
-            return execute_count(table, query, count);
+        SelectList::Aggregate(aggregate) if query.group_by.is_none() => {
+            return execute_aggregate(table, query, aggregate);
         }
-        SelectList::Count(count) => return execute_group(table, query, None, count),
+        SelectList::Aggregate(aggregate) => return execute_group(table, query, None, aggregate),
         SelectList::Grouped(grouped) => {
-            return execute_group(table, query, Some(grouped), &grouped.count);
+            return execute_group(table, query, Some(grouped), &grouped.aggregate);
         }
         SelectList::Star => (0..table.meta.columns.len()).collect::<Vec<_>>(),
         SelectList::Columns(names) => {
@@ -121,24 +121,32 @@ pub fn render_tsv(result: &QueryResult) -> String {
     out
 }
 
-fn execute_count(table: &Table, query: &Query, count: &CountExpr) -> Result<QueryResult, Error> {
+fn execute_aggregate(
+    table: &Table,
+    query: &Query,
+    aggregate: &AggregateExpr,
+) -> Result<QueryResult, Error> {
     for order in &query.order_by {
-        if !order.column.eq_ignore_ascii_case(&count.label) {
+        if !order.column.eq_ignore_ascii_case(&aggregate.label) {
             return Err(Error::new(format!(
                 "ORDER BY expressions must appear in select list. Invalid column: {}",
                 order.column
             )));
         }
     }
-    let counted = counted_column(table, count)?;
-    let mut total = 0i64;
+    let input = aggregate_input(table, aggregate)?;
+    let mut accumulator = Accumulator::start(aggregate.func);
     for row in 0..table.row_count() {
         if let Some(filter) = &query.filter {
             if !row_matches(table, row, filter)? {
                 continue;
             }
         }
-        total += count_increment(&table.columns, row, counted);
+        absorb(
+            &mut accumulator,
+            contribution(&table.columns, row, &input),
+            aggregate.func,
+        );
     }
     let mut row_ids = vec![0];
     if let Some(limit) = query.limit {
@@ -150,10 +158,10 @@ fn execute_count(table: &Table, query: &Query, count: &CountExpr) -> Result<Quer
     let rows = if row_ids.is_empty() {
         Vec::new()
     } else {
-        vec![vec![Scalar::Long(total)]]
+        vec![vec![accumulator.finish()]]
     };
     Ok(QueryResult {
-        columns: vec![count.label.clone()],
+        columns: vec![aggregate.label.clone()],
         rows,
     })
 }
@@ -162,7 +170,7 @@ fn execute_group(
     table: &Table,
     query: &Query,
     grouped: Option<&GroupedSelect>,
-    count: &CountExpr,
+    aggregate: &AggregateExpr,
 ) -> Result<QueryResult, Error> {
     let group_name = query
         .group_by
@@ -187,17 +195,18 @@ fn execute_group(
             .ok_or_else(|| Error::new(format!("Invalid column: {group_name}")))?
     };
     for order in &query.order_by {
-        let by_count = order.column.eq_ignore_ascii_case(&count.label);
+        let by_aggregate = order.column.eq_ignore_ascii_case(&aggregate.label);
         let by_key = order.column.eq_ignore_ascii_case(group_name);
-        if !by_count && !by_key {
+        if !by_aggregate && !by_key {
             return Err(Error::new(format!(
                 "ORDER BY expressions must appear in select list. Invalid column: {}",
                 order.column
             )));
         }
     }
-    let counted = counted_column(table, count)?;
-    let mut groups: Vec<(Scalar, i64)> = Vec::new();
+    let input = aggregate_input(table, aggregate)?;
+    let value_tag = aggregate_order_tag(&input);
+    let mut groups: Vec<(Scalar, Accumulator)> = Vec::new();
     for row in 0..table.row_count() {
         if let Some(filter) = &query.filter {
             if !row_matches(table, row, filter)? {
@@ -205,18 +214,20 @@ fn execute_group(
             }
         }
         let key = table.columns[key_index][row].clone();
-        let increment = count_increment(&table.columns, row, counted);
+        let next = contribution(&table.columns, row, &input);
         if let Some(group) = groups.iter_mut().find(|(found, _)| found == &key) {
-            group.1 += increment;
+            absorb(&mut group.1, next, aggregate.func);
         } else {
-            groups.push((key, increment));
+            let mut accumulator = Accumulator::start(aggregate.func);
+            absorb(&mut accumulator, next, aggregate.func);
+            groups.push((key, accumulator));
         }
     }
     let tag = table.meta.columns[key_index].tag;
     groups.sort_by(|left, right| {
         for order in &query.order_by {
-            let mut ordering = if order.column.eq_ignore_ascii_case(&count.label) {
-                left.1.cmp(&right.1)
+            let mut ordering = if order.column.eq_ignore_ascii_case(&aggregate.label) {
+                compare_asc(&left.1.finish(), &right.1.finish(), value_tag)
             } else {
                 compare_asc(&left.0, &right.0, tag)
             };
@@ -238,51 +249,139 @@ fn execute_group(
     }
     let columns = match grouped {
         Some(grouped) if grouped.key_at == 0 => {
-            vec![grouped.key.clone(), count.label.clone()]
+            vec![grouped.key.clone(), aggregate.label.clone()]
         }
-        Some(grouped) => vec![count.label.clone(), grouped.key.clone()],
-        None => vec![count.label.clone()],
+        Some(grouped) => vec![aggregate.label.clone(), grouped.key.clone()],
+        None => vec![aggregate.label.clone()],
     };
     let rows = row_ids
         .into_iter()
         .map(|index| {
-            let (key, total) = &groups[index];
-            let count_value = Scalar::Long(*total);
+            let (key, accumulator) = &groups[index];
+            let value = accumulator.finish();
             match grouped {
-                Some(grouped) if grouped.key_at == 0 => vec![key.clone(), count_value],
-                Some(_) => vec![count_value, key.clone()],
-                None => vec![count_value],
+                Some(grouped) if grouped.key_at == 0 => vec![key.clone(), value],
+                Some(_) => vec![value, key.clone()],
+                None => vec![value],
             }
         })
         .collect();
     Ok(QueryResult { columns, rows })
 }
 
-fn counted_column(table: &Table, count: &CountExpr) -> Result<Option<(usize, i32)>, Error> {
-    let Some(name) = &count.column else {
-        return Ok(None);
+struct AggColumn {
+    index: Option<usize>,
+    tag: i32,
+    func: AggFunc,
+}
+
+enum Accumulator {
+    Count(i64),
+    Value(Option<Scalar>),
+}
+
+impl Accumulator {
+    fn start(func: AggFunc) -> Self {
+        match func {
+            AggFunc::Count => Self::Count(0),
+            AggFunc::Min | AggFunc::Max => Self::Value(None),
+        }
+    }
+
+    fn finish(&self) -> Scalar {
+        match self {
+            Self::Count(total) => Scalar::Long(*total),
+            Self::Value(Some(value)) => value.clone(),
+            Self::Value(None) => Scalar::Null,
+        }
+    }
+}
+
+fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn, Error> {
+    let Some(name) = &aggregate.column else {
+        return Ok(AggColumn {
+            index: None,
+            tag: qdb_types::TAG_LONG,
+            func: aggregate.func,
+        });
     };
     let index = table
         .column_index(name)
         .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
     let tag = table.meta.columns[index].tag;
-    if tag == qdb_types::TAG_BOOLEAN {
+    if aggregate.func == AggFunc::Count && tag == qdb_types::TAG_BOOLEAN {
         return Err(Error::new(
             "there is no matching function `count` with the argument types: (BOOLEAN)",
         ));
     }
-    Ok(Some((index, tag)))
+    Ok(AggColumn {
+        index: Some(index),
+        tag,
+        func: aggregate.func,
+    })
 }
 
-fn count_increment(columns: &[Vec<Scalar>], row: usize, counted: Option<(usize, i32)>) -> i64 {
-    let Some((index, tag)) = counted else {
-        return 1;
+fn aggregate_order_tag(input: &AggColumn) -> i32 {
+    if matches!(input.func, AggFunc::Min | AggFunc::Max) && input.tag == qdb_types::TAG_BOOLEAN {
+        qdb_types::TAG_DOUBLE
+    } else if input.func == AggFunc::Count {
+        qdb_types::TAG_LONG
+    } else {
+        input.tag
+    }
+}
+
+fn contribution(columns: &[Vec<Scalar>], row: usize, input: &AggColumn) -> Option<Scalar> {
+    let Some(index) = input.index else {
+        return Some(Scalar::Long(1));
     };
     let value = &columns[index][row];
-    if value.is_null() || (tag == qdb_types::TAG_CHAR && matches!(value, Scalar::Char(0))) {
-        0
-    } else {
-        1
+    if value.is_null() || (input.tag == qdb_types::TAG_CHAR && matches!(value, Scalar::Char(0))) {
+        return None;
+    }
+    match input.func {
+        AggFunc::Count => Some(Scalar::Long(1)),
+        AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => {
+            let Scalar::Boolean(bit) = value else {
+                return None;
+            };
+            Some(Scalar::Double(if *bit { 1.0 } else { 0.0 }))
+        }
+        AggFunc::Min | AggFunc::Max => Some(value.clone()),
+    }
+}
+
+fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
+    let Some(next) = next else {
+        return;
+    };
+    match accumulator {
+        Accumulator::Count(total) => *total += 1,
+        Accumulator::Value(current) => match current {
+            None => *current = Some(next),
+            Some(kept) => {
+                let replace = matches!(
+                    (func, agg_cmp(kept, &next)),
+                    (AggFunc::Min, Ordering::Greater) | (AggFunc::Max, Ordering::Less)
+                );
+                if replace {
+                    *current = Some(next);
+                }
+            }
+        },
+    }
+}
+
+/// `min` and `max` treat `-0.0` and `0.0` as equal and keep the value already chosen.
+fn agg_cmp(left: &Scalar, right: &Scalar) -> Ordering {
+    match (left, right) {
+        (Scalar::Float(left), Scalar::Float(right)) => {
+            left.partial_cmp(right).unwrap_or(Ordering::Equal)
+        }
+        (Scalar::Double(left), Scalar::Double(right)) => {
+            left.partial_cmp(right).unwrap_or(Ordering::Equal)
+        }
+        _ => compare_values(left, right),
     }
 }
 
@@ -292,9 +391,9 @@ fn limit_follows_timestamp_order(table: &Table, query: &Query) -> Result<bool, E
     let [order] = query.order_by.as_slice() else {
         return Ok(query.order_by.is_empty());
     };
-    let index = table
-        .column_index(&order.column)
-        .ok_or_else(|| Error::new(format!("unknown ORDER BY column `{}`", order.column)))?;
+    let Some(index) = table.column_index(&order.column) else {
+        return Ok(false);
+    };
     Ok(index as i32 == table.meta.timestamp_index)
 }
 
@@ -1193,6 +1292,225 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.message.contains("multiple GROUP BY"), "{}", err.message);
+    }
+
+    #[test]
+    fn min_max_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT min(id) FROM sensors",
+                "expected/min_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT max(id) FROM sensors",
+                "expected/max_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(note) FROM sensors",
+                "expected/min_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT max(note) FROM sensors",
+                "expected/max_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(reading) FROM sensors",
+                "expected/min_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT max(reading) FROM sensors",
+                "expected/max_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(id) FROM sensors WHERE id > 100",
+                "expected/min_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(ok) FROM sensors",
+                "expected/min_ok.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT max(ok) FROM sensors",
+                "expected/max_ok.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(ch) FROM sensors",
+                "expected/min_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(ch) FROM sensors WHERE ch = ''",
+                "expected/min_ch_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(b) FROM sensors",
+                "expected/min_b.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(code) FROM sensors",
+                "expected/min_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(flags) FROM sensors",
+                "expected/min_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT max(flags) FROM sensors",
+                "expected/max_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(ts) FROM sensors",
+                "expected/min_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT max(ts) FROM sensors",
+                "expected/max_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(day) FROM sensors",
+                "expected/min_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT max(day) FROM sensors",
+                "expected/max_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(tag) FROM sensors",
+                "expected/min_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT max(tag) FROM sensors",
+                "expected/max_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(location) FROM sensors",
+                "expected/min_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT max(location) FROM sensors",
+                "expected/max_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(score) FROM sensors",
+                "expected/min_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT max(score) FROM sensors",
+                "expected/max_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT MIN(ID) FROM sensors",
+                "expected/min_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT min(id) FROM sensors LIMIT 0",
+                "expected/min_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, min(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_min_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, min(id) FROM sensors GROUP BY location ORDER BY min(id)",
+                "expected/group_min_by_value.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, max(note) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_max_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, max(reading) FROM sensors GROUP BY id ORDER BY id",
+                "expected/group_max_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, min(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_min_reading.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT min(id) FROM days",
+                "expected/min_id.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT min(note) FROM days",
+                "expected/min_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT max(note) FROM days",
+                "expected/max_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT min(id) FROM days WHERE id = NULL",
+                "expected/min_null.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT location, min(id) FROM days GROUP BY location ORDER BY location",
+                "expected/group_min_id.tsv",
+            ),
+            (
+                days,
+                "SELECT location, max(note) FROM days GROUP BY location ORDER BY location",
+                "expected/group_max_note.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT min() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT min(*) FROM sensors").unwrap_err();
+        assert!(err.message.contains("too few arguments"), "{}", err.message);
+        let err = execute(&sensors, "SELECT min(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT min(id), max(id) FROM sensors").unwrap_err();
+        assert!(err.message.contains("unsupported"), "{}", err.message);
     }
 
     #[test]

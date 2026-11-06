@@ -37,20 +37,28 @@ pub struct Limit {
     pub hi: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AggFunc {
+    Count,
+    Min,
+    Max,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CountExpr {
-    /// Result column name, such as `count()` or `count(id)`.
+pub struct AggregateExpr {
+    pub func: AggFunc,
+    /// Result column name, such as `count()`, `min(id)` or `MAX(note)`.
     pub label: String,
-    /// `None` for `count()` and `count(*)`.
+    /// `None` for `count()` and `count(*)`. `min` and `max` always name a column.
     pub column: Option<String>,
 }
 
-/// One grouping column plus `count`, in select-list order.
+/// One grouping column plus one aggregate, in select-list order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupedSelect {
     /// Column spelling from the select list, used as the result header.
     pub key: String,
-    pub count: CountExpr,
+    pub aggregate: AggregateExpr,
     /// Position of the key in the output row.
     pub key_at: usize,
 }
@@ -59,7 +67,7 @@ pub struct GroupedSelect {
 pub enum SelectList {
     Star,
     Columns(Vec<String>),
-    Count(CountExpr),
+    Aggregate(AggregateExpr),
     Grouped(GroupedSelect),
 }
 
@@ -148,7 +156,7 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
 
 enum SelectPiece {
     Column(String),
-    Count(CountExpr),
+    Aggregate(AggregateExpr),
 }
 
 struct Parser<'a> {
@@ -239,8 +247,8 @@ impl<'a> Parser<'a> {
         let mut pieces = Vec::new();
         loop {
             self.skip();
-            if self.starts_count_call() {
-                pieces.push(SelectPiece::Count(self.parse_count()?));
+            if self.starts_aggregate_call() {
+                pieces.push(SelectPiece::Aggregate(self.parse_aggregate()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -251,7 +259,7 @@ impl<'a> Parser<'a> {
         }
         let counts = pieces
             .iter()
-            .filter(|piece| matches!(piece, SelectPiece::Count(_)))
+            .filter(|piece| matches!(piece, SelectPiece::Aggregate(_)))
             .count();
         if counts == 0 {
             let mut columns = Vec::with_capacity(pieces.len());
@@ -269,36 +277,40 @@ impl<'a> Parser<'a> {
             ));
         }
         if pieces.len() == 1 {
-            let Some(SelectPiece::Count(count)) = pieces.pop() else {
-                return Err(Error::new("internal: count piece"));
+            let Some(SelectPiece::Aggregate(aggregate)) = pieces.pop() else {
+                return Err(Error::new("internal: aggregate piece"));
             };
-            return Ok(SelectList::Count(count));
+            return Ok(SelectList::Aggregate(aggregate));
         }
         let mut key = None;
         let mut key_at = 0;
-        let mut count = None;
+        let mut aggregate = None;
         for (index, piece) in pieces.into_iter().enumerate() {
             match piece {
                 SelectPiece::Column(name) => {
                     key_at = index;
                     key = Some(name);
                 }
-                SelectPiece::Count(expr) => count = Some(expr),
+                SelectPiece::Aggregate(expr) => aggregate = Some(expr),
             }
         }
-        let (Some(key), Some(count)) = (key, count) else {
+        let (Some(key), Some(aggregate)) = (key, aggregate) else {
             return Err(Error::new(
                 "unsupported: aggregate mixed with other select expressions",
             ));
         };
-        Ok(SelectList::Grouped(GroupedSelect { key, count, key_at }))
+        Ok(SelectList::Grouped(GroupedSelect {
+            key,
+            aggregate,
+            key_at,
+        }))
     }
 
     fn starts_value(&self) -> bool {
         matches!(self.peek(), Some(byte) if byte.is_ascii_alphabetic() || byte == b'_')
     }
 
-    fn starts_count_call(&self) -> bool {
+    fn starts_aggregate_call(&self) -> bool {
         let bytes = &self.src[self.pos..];
         let Some(first) = bytes.first() else {
             return false;
@@ -314,7 +326,7 @@ impl<'a> Parser<'a> {
             index += 1;
         }
         let name = std::str::from_utf8(&bytes[..index]).unwrap_or("");
-        if !name.eq_ignore_ascii_case("count") {
+        if !matches!(name.to_ascii_lowercase().as_str(), "count" | "min" | "max") {
             return false;
         }
         while bytes
@@ -326,27 +338,51 @@ impl<'a> Parser<'a> {
         bytes.get(index) == Some(&b'(')
     }
 
-    fn parse_count(&mut self) -> Result<CountExpr, Error> {
+    fn parse_aggregate(&mut self) -> Result<AggregateExpr, Error> {
         let name = self.ident_spelling()?;
         self.skip();
         if !self.eat(b'(') {
-            return Err(Error::new("unsupported: expected '(' after count"));
+            return Err(Error::new(format!(
+                "unsupported: expected '(' after {name}"
+            )));
         }
         self.skip();
-        let column = if self.eat(b'*') || self.peek() == Some(b')') {
+        let starred = self.eat(b'*');
+        let column = if starred || self.peek() == Some(b')') {
             None
         } else {
             Some(self.ident_spelling()?)
         };
         self.skip();
         if !self.eat(b')') {
-            return Err(Error::new("unsupported: expected ')' after count"));
+            return Err(Error::new(format!(
+                "unsupported: expected ')' after {name}"
+            )));
+        }
+        let func = match name.to_ascii_lowercase().as_str() {
+            "count" => AggFunc::Count,
+            "min" => AggFunc::Min,
+            "max" => AggFunc::Max,
+            _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
+        };
+        if func != AggFunc::Count && starred {
+            return Err(Error::new("too few arguments for '*' [found=0,expected=2]"));
+        }
+        if func != AggFunc::Count && column.is_none() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
         }
         let label = match &column {
             Some(column) => format!("{name}({column})"),
             None => format!("{name}()"),
         };
-        Ok(CountExpr { label, column })
+        Ok(AggregateExpr {
+            func,
+            label,
+            column,
+        })
     }
 
     fn parse_order_call(&mut self, name: String) -> Result<String, Error> {

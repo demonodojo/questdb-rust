@@ -1,0 +1,4 @@
+location	min(id)
+NULL	2
+madrid	1
+東京	NULL
