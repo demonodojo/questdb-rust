@@ -1,9 +1,9 @@
 use crate::parse::{
-    date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp, Filter,
-    GroupedSelect, Query, SelectList,
+    date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
+    ConcatArg, Filter, GroupedSelect, Proj, Query, SelectList,
 };
 use qdb_storage::{open_table, Table};
-use qdb_types::{Error, Scalar};
+use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
 use std::cmp::Ordering;
 use std::path::Path;
 
@@ -42,6 +42,7 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
         SelectList::Grouped(grouped) => {
             return execute_group(table, query, Some(grouped), &grouped.aggregate);
         }
+        SelectList::Projection(items) => return execute_projection(table, query, items),
         SelectList::Star => (0..table.meta.columns.len()).collect::<Vec<_>>(),
         SelectList::Columns(names) => {
             let mut indexes = Vec::with_capacity(names.len());
@@ -104,6 +105,223 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
         rows.push(values);
     }
     Ok(QueryResult { columns, rows })
+}
+
+fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<QueryResult, Error> {
+    let resolved = items
+        .iter()
+        .map(|item| resolve_proj(table, item))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut row_ids = Vec::new();
+    for row in 0..table.row_count() {
+        if let Some(filter) = &query.filter {
+            if !row_matches(table, row, filter)? {
+                continue;
+            }
+        }
+        row_ids.push(row);
+    }
+    if !query.order_by.is_empty() {
+        let mut keys = Vec::with_capacity(query.order_by.len());
+        for order in &query.order_by {
+            if let Some(index) = resolved.iter().position(|item| {
+                item.concat_label()
+                    .is_some_and(|label| label.eq_ignore_ascii_case(&order.column))
+            }) {
+                keys.push(OrderKey::Concat(index, order.descending));
+                continue;
+            }
+            let index = table
+                .column_index(&order.column)
+                .ok_or_else(|| Error::new(format!("unknown ORDER BY column `{}`", order.column)))?;
+            keys.push(OrderKey::Column(
+                index,
+                table.meta.columns[index].tag,
+                order.descending,
+            ));
+        }
+        row_ids.sort_by(|a, b| {
+            for key in &keys {
+                let mut ordering = match key {
+                    OrderKey::Column(index, tag, _) => {
+                        compare_asc(&table.columns[*index][*a], &table.columns[*index][*b], *tag)
+                    }
+                    OrderKey::Concat(index, _) => compare_asc(
+                        &eval_resolved(table, *a, &resolved[*index]),
+                        &eval_resolved(table, *b, &resolved[*index]),
+                        qdb_types::TAG_STRING,
+                    ),
+                };
+                if key.descending() {
+                    ordering = ordering.reverse();
+                }
+                if ordering != Ordering::Equal {
+                    return ordering;
+                }
+            }
+            Ordering::Equal
+        });
+    }
+    if let Some(limit) = query.limit {
+        if limit.lo < 0 && limit.hi > 0 && limit_follows_timestamp_order(table, query)? {
+            return Err(Error::new("LIMIT <negative>, <positive> is not allowed"));
+        }
+        apply_limit(&mut row_ids, limit.lo, limit.hi);
+    }
+    let columns = resolved
+        .iter()
+        .map(|item| match item {
+            ResolvedProj::Column { index, .. } => table.meta.columns[*index].name.clone(),
+            ResolvedProj::Concat { label, .. } => label.clone(),
+        })
+        .collect();
+    let rows = row_ids
+        .into_iter()
+        .map(|row| {
+            resolved
+                .iter()
+                .map(|item| eval_resolved(table, row, item))
+                .collect()
+        })
+        .collect();
+    Ok(QueryResult { columns, rows })
+}
+
+enum OrderKey {
+    Column(usize, i32, bool),
+    Concat(usize, bool),
+}
+
+impl OrderKey {
+    fn descending(&self) -> bool {
+        match self {
+            Self::Column(_, _, descending) | Self::Concat(_, descending) => *descending,
+        }
+    }
+}
+
+enum ResolvedProj {
+    Column {
+        index: usize,
+    },
+    Concat {
+        label: String,
+        args: Vec<ResolvedArg>,
+    },
+}
+
+impl ResolvedProj {
+    fn concat_label(&self) -> Option<&str> {
+        match self {
+            Self::Concat { label, .. } => Some(label),
+            Self::Column { .. } => None,
+        }
+    }
+}
+
+enum ResolvedArg {
+    Text(String),
+    Column { index: usize, tag: i32 },
+}
+
+fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
+    match item {
+        Proj::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("unknown column `{name}`")))?;
+            Ok(ResolvedProj::Column { index })
+        }
+        Proj::Concat(expr) => Ok(ResolvedProj::Concat {
+            label: expr.label.clone(),
+            args: expr
+                .args
+                .iter()
+                .map(|arg| resolve_concat_arg(table, arg))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+    }
+}
+
+fn resolve_concat_arg(table: &Table, arg: &ConcatArg) -> Result<ResolvedArg, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Text(text)) => Ok(ResolvedArg::Text(text.clone())),
+        ConcatArg::Literal(_) => Ok(ResolvedArg::Text(String::new())),
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            Ok(ResolvedArg::Column {
+                index,
+                tag: table.meta.columns[index].tag,
+            })
+        }
+    }
+}
+
+fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
+    match item {
+        ResolvedProj::Column { index } => table.columns[*index][row].clone(),
+        ResolvedProj::Concat { args, .. } => Scalar::Text(
+            args.iter()
+                .map(|arg| match arg {
+                    ResolvedArg::Text(text) => text.clone(),
+                    ResolvedArg::Column { index, tag } => {
+                        cast_concat(&table.columns[*index][row], *tag)
+                    }
+                })
+                .collect(),
+        ),
+    }
+}
+
+/// QuestDB `concat` stringifies each argument and skips a SQL `NULL` literal or a text null.
+fn cast_concat(value: &Scalar, tag: i32) -> String {
+    match tag {
+        qdb_types::TAG_STRING | qdb_types::TAG_SYMBOL | qdb_types::TAG_VARCHAR => match value {
+            Scalar::Text(text) => text.clone(),
+            _ => String::new(),
+        },
+        qdb_types::TAG_CHAR => match value {
+            Scalar::Char(unit) => char::from_u32(u32::from(*unit))
+                .map(|unit| unit.to_string())
+                .unwrap_or_default(),
+            _ => String::new(),
+        },
+        qdb_types::TAG_BOOLEAN => match value {
+            Scalar::Boolean(bit) => {
+                if *bit {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                }
+            }
+            _ => String::new(),
+        },
+        qdb_types::TAG_BYTE
+        | qdb_types::TAG_SHORT
+        | qdb_types::TAG_INT
+        | qdb_types::TAG_LONG
+        | qdb_types::TAG_DATE => match value {
+            Scalar::Null => "null".to_string(),
+            Scalar::Byte(number) => number.to_string(),
+            Scalar::Short(number) => number.to_string(),
+            Scalar::Int(number) => number.to_string(),
+            Scalar::Long(number) => number.to_string(),
+            Scalar::Date(number) => number.to_string(),
+            _ => "null".to_string(),
+        },
+        qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE => match value {
+            Scalar::Float(number) => format_f64(f64::from(*number)),
+            Scalar::Double(number) => format_f64(*number),
+            _ => "NaN".to_string(),
+        },
+        qdb_types::TAG_TIMESTAMP => match value {
+            Scalar::Timestamp(micros) => format_timestamp_micros(*micros),
+            _ => String::new(),
+        },
+        _ => String::new(),
+    }
 }
 
 pub fn render_tsv(result: &QueryResult) -> String {
@@ -2418,6 +2636,146 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.message.contains("(BOOLEAN)"), "{}", err.message);
+    }
+
+    #[test]
+    fn concat_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT concat(note, location) FROM sensors",
+                "expected/concat_note_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(note, '!') FROM sensors",
+                "expected/concat_bang.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat('pre-', location) FROM sensors",
+                "expected/concat_prefix.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(note, null) FROM sensors",
+                "expected/concat_null_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(ch, note) FROM sensors",
+                "expected/concat_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(id, note) FROM sensors",
+                "expected/concat_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(reading, '') FROM sensors",
+                "expected/concat_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(day, '') FROM sensors",
+                "expected/concat_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(ts, '') FROM sensors",
+                "expected/concat_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(ok, '') FROM sensors",
+                "expected/concat_ok.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(flags, '') FROM sensors",
+                "expected/concat_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT CONCAT(NOTE, LOCATION) FROM sensors",
+                "expected/concat_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat( note , location ) FROM sensors",
+                "expected/concat_space.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat('it''s', '!') FROM sensors LIMIT 1",
+                "expected/concat_quote.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(note) FROM sensors",
+                "expected/concat_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(note, location, tag) FROM sensors",
+                "expected/concat_three.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(note, location) FROM sensors ORDER BY concat(note, location)",
+                "expected/concat_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(note, location) FROM sensors ORDER BY note",
+                "expected/concat_order_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, concat(note, location) FROM sensors ORDER BY concat(note, location)",
+                "expected/concat_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(note, location) FROM sensors LIMIT 0",
+                "expected/concat_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT concat(note, location) FROM sensors WHERE note = ''",
+                "expected/concat_where_empty.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT concat(note, location) FROM days",
+                "expected/concat_note_location.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT concat(location, note) FROM days ORDER BY ts",
+                "expected/concat_order_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT concat() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("no arguments provided"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT concat(missing, note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

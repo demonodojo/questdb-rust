@@ -236,7 +236,28 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   group_cd_ch "SELECT location, count_distinct(ch) FROM sensors GROUP BY location ORDER BY location" \
   group_cd_flags "SELECT location, count_distinct(flags) FROM sensors GROUP BY location ORDER BY location" \
   group_cd_by_id "SELECT id, count_distinct(note) FROM sensors GROUP BY id ORDER BY id" \
-  group_cd_by_value "SELECT location, count_distinct(note) FROM sensors GROUP BY location ORDER BY count_distinct(note)"
+  group_cd_by_value "SELECT location, count_distinct(note) FROM sensors GROUP BY location ORDER BY count_distinct(note)" \
+  concat_note_location "SELECT concat(note, location) FROM sensors" \
+  concat_bang "SELECT concat(note, '!') FROM sensors" \
+  concat_prefix "SELECT concat('pre-', location) FROM sensors" \
+  concat_null_lit "SELECT concat(note, null) FROM sensors" \
+  concat_ch "SELECT concat(ch, note) FROM sensors" \
+  concat_id "SELECT concat(id, note) FROM sensors" \
+  concat_reading "SELECT concat(reading, '') FROM sensors" \
+  concat_day "SELECT concat(day, '') FROM sensors" \
+  concat_ts "SELECT concat(ts, '') FROM sensors" \
+  concat_ok "SELECT concat(ok, '') FROM sensors" \
+  concat_flags "SELECT concat(flags, '') FROM sensors" \
+  concat_case "SELECT CONCAT(NOTE, LOCATION) FROM sensors" \
+  concat_space "SELECT concat( note , location ) FROM sensors" \
+  concat_quote "SELECT concat('it''s', '!') FROM sensors LIMIT 1" \
+  concat_one "SELECT concat(note) FROM sensors" \
+  concat_three "SELECT concat(note, location, tag) FROM sensors" \
+  concat_order "SELECT concat(note, location) FROM sensors ORDER BY concat(note, location)" \
+  concat_order_note "SELECT concat(note, location) FROM sensors ORDER BY note" \
+  concat_with_id "SELECT id, concat(note, location) FROM sensors ORDER BY concat(note, location)" \
+  concat_limit_zero "SELECT concat(note, location) FROM sensors LIMIT 0" \
+  concat_where_empty "SELECT concat(note, location) FROM sensors WHERE note = ''"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -296,7 +317,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   cd_location "SELECT count_distinct(location) FROM days" \
   cd_null "SELECT count_distinct(id) FROM days WHERE id = NULL" \
   group_cd_id "SELECT location, count_distinct(id) FROM days GROUP BY location ORDER BY location" \
-  group_cd_by_value "SELECT location, count_distinct(note) FROM days GROUP BY location ORDER BY count_distinct(note)"
+  group_cd_by_value "SELECT location, count_distinct(note) FROM days GROUP BY location ORDER BY count_distinct(note)" \
+  concat_note_location "SELECT concat(note, location) FROM days" \
+  concat_order_ts "SELECT concat(location, note) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -480,6 +503,27 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT location, count_distinct(flags) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT id, count_distinct(note) FROM sensors GROUP BY id ORDER BY id"),
     (os.environ["DIFF_H1"], "SELECT location, count_distinct(note) FROM sensors GROUP BY location ORDER BY count_distinct(note)"),
+    (os.environ["DIFF_H1"], "SELECT concat(note, location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat(note, '!') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat('pre-', location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat(note, null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat(ch, note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat(id, note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat(reading, '') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat(day, '') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat(ts, '') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat(ok, '') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat(flags, '') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT CONCAT(NOTE, LOCATION) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat( note , location ) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat('it''s', '!') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT concat(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat(note, location, tag) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT concat(note, location) FROM sensors ORDER BY concat(note, location)"),
+    (os.environ["DIFF_H1"], "SELECT concat(note, location) FROM sensors ORDER BY note"),
+    (os.environ["DIFF_H1"], "SELECT id, concat(note, location) FROM sensors ORDER BY concat(note, location)"),
+    (os.environ["DIFF_H1"], "SELECT concat(note, location) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT concat(note, location) FROM sensors WHERE note = ''"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -538,6 +582,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT count_distinct(id) FROM days WHERE id = NULL"),
     (os.environ["DIFF_H2"], "SELECT location, count_distinct(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT location, count_distinct(note) FROM days GROUP BY location ORDER BY count_distinct(note)"),
+    (os.environ["DIFF_H2"], "SELECT concat(note, location) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT concat(location, note) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

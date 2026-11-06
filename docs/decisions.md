@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-06 — concat()
+
+`concat` acepta uno o más argumentos y devuelve `STRING`. Un NULL de texto, símbolo o varchar no aporta caracteres. Un NULL de entero o fecha se escribe `null`. Un float o double nulo se escribe `NaN`. Una fecha no nula se escribe como milisegundos, y un timestamp con el formato `YYYY-MM-DDThh:mm:ss.mmmuuuZ`. `-0.0` se conserva. El nombre de columna conserva las mayúsculas y los literales entre comillas. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-06 — count_distinct()
 
 `count_distinct` cuenta valores distintos y devuelve `LONG`. NULL y un `CHAR` 0 no entran; una cadena vacía y un cero numérico sí. `-0.0` y `0.0` son distintos, así que `reading = 0.0` aporta 2. Sin valores el resultado es 0. Fuera de `GROUP BY` admite `FLOAT`, `DOUBLE` y `BOOLEAN`; dentro no, y el error es el de 10.1.0. Se contrastó con `/exec` en `sensors` y `days`.

@@ -1,0 +1,5 @@
+id	concat(note, location)
+2	
+1	alphamadrid
+NULL	madrid
+-1	βeta東京

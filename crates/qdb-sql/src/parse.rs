@@ -74,6 +74,28 @@ pub enum SelectList {
     Columns(Vec<String>),
     Aggregate(AggregateExpr),
     Grouped(GroupedSelect),
+    /// A select list that contains `concat(...)`. Plain columns may sit beside it.
+    Projection(Vec<Proj>),
+}
+
+/// One select-list value. A column name is stored lowercased; `concat` keeps its label.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Proj {
+    Column(String),
+    Concat(ConcatExpr),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConcatExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConcatArg {
+    Column(String),
+    /// `NULL` contributes nothing. A string literal contributes its text.
+    Literal(Scalar),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,12 +135,18 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
     if parser.eat_keyword("order") {
         parser.expect_keyword("by")?;
         loop {
-            let mut column = parser.ident()?;
             parser.skip();
-            if parser.peek() == Some(b'(') {
-                column = parser.parse_order_call(column)?;
+            let column = if parser.starts_concat_call() {
+                parser.parse_concat()?.label
+            } else {
+                let mut column = parser.ident()?;
                 parser.skip();
-            }
+                if parser.peek() == Some(b'(') {
+                    column = parser.parse_order_call(column)?;
+                    parser.skip();
+                }
+                column
+            };
             let descending = if parser.eat_keyword("desc") {
                 parser.skip();
                 true
@@ -162,6 +190,7 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
 enum SelectPiece {
     Column(String),
     Aggregate(AggregateExpr),
+    Concat(ConcatExpr),
 }
 
 struct Parser<'a> {
@@ -254,6 +283,8 @@ impl<'a> Parser<'a> {
             self.skip();
             if self.starts_aggregate_call() {
                 pieces.push(SelectPiece::Aggregate(self.parse_aggregate()?));
+            } else if self.starts_concat_call() {
+                pieces.push(SelectPiece::Concat(self.parse_concat()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -266,6 +297,30 @@ impl<'a> Parser<'a> {
             .iter()
             .filter(|piece| matches!(piece, SelectPiece::Aggregate(_)))
             .count();
+        let concat_count = pieces
+            .iter()
+            .filter(|piece| matches!(piece, SelectPiece::Concat(_)))
+            .count();
+        if counts > 0 && concat_count > 0 {
+            return Err(Error::new(
+                "unsupported: aggregate mixed with other select expressions",
+            ));
+        }
+        if counts == 0 && concat_count > 0 {
+            let mut items = Vec::with_capacity(pieces.len());
+            for piece in pieces {
+                match piece {
+                    SelectPiece::Column(name) => {
+                        items.push(Proj::Column(name.to_ascii_lowercase()))
+                    }
+                    SelectPiece::Concat(expr) => items.push(Proj::Concat(expr)),
+                    SelectPiece::Aggregate(_) => {
+                        return Err(Error::new("internal: aggregate piece"));
+                    }
+                }
+            }
+            return Ok(SelectList::Projection(items));
+        }
         if counts == 0 {
             let mut columns = Vec::with_capacity(pieces.len());
             for piece in pieces {
@@ -297,6 +352,9 @@ impl<'a> Parser<'a> {
                     key = Some(name);
                 }
                 SelectPiece::Aggregate(expr) => aggregate = Some(expr),
+                SelectPiece::Concat(_) => {
+                    return Err(Error::new("internal: concat piece"));
+                }
             }
         }
         let (Some(key), Some(aggregate)) = (key, aggregate) else {
@@ -313,6 +371,97 @@ impl<'a> Parser<'a> {
 
     fn starts_value(&self) -> bool {
         matches!(self.peek(), Some(byte) if byte.is_ascii_alphabetic() || byte == b'_')
+    }
+
+    fn starts_concat_call(&self) -> bool {
+        self.starts_named_call("concat")
+    }
+
+    fn starts_named_call(&self, expected: &str) -> bool {
+        let bytes = &self.src[self.pos..];
+        let Some(first) = bytes.first() else {
+            return false;
+        };
+        if !first.is_ascii_alphabetic() && *first != b'_' {
+            return false;
+        }
+        let mut index = 1;
+        while bytes
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            index += 1;
+        }
+        let name = std::str::from_utf8(&bytes[..index]).unwrap_or("");
+        if !name.eq_ignore_ascii_case(expected) {
+            return false;
+        }
+        while bytes
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            index += 1;
+        }
+        bytes.get(index) == Some(&b'(')
+    }
+
+    fn parse_concat(&mut self) -> Result<ConcatExpr, Error> {
+        let name = self.ident_spelling()?;
+        self.skip();
+        if !self.eat(b'(') {
+            return Err(Error::new(format!(
+                "unsupported: expected '(' after {name}"
+            )));
+        }
+        self.skip();
+        if self.peek() == Some(b')') {
+            return Err(Error::new("no arguments provided"));
+        }
+        let mut args = Vec::new();
+        let mut labels = Vec::new();
+        loop {
+            self.skip();
+            if self.peek() == Some(b'\'') {
+                let start = self.pos;
+                let text = self.parse_string()?;
+                labels.push(
+                    std::str::from_utf8(&self.src[start..self.pos])
+                        .unwrap()
+                        .to_string(),
+                );
+                args.push(ConcatArg::Literal(Scalar::Text(text)));
+            } else if self
+                .peek()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            {
+                let spelling = self.ident_spelling()?;
+                if spelling.eq_ignore_ascii_case("null") {
+                    args.push(ConcatArg::Literal(Scalar::Null));
+                } else {
+                    args.push(ConcatArg::Column(spelling.clone()));
+                }
+                labels.push(spelling);
+            } else {
+                return Err(Error::new(format!(
+                    "unsupported: concat argument near `{}`",
+                    self.rest()
+                )));
+            }
+            self.skip();
+            if self.eat(b',') {
+                continue;
+            }
+            if self.eat(b')') {
+                break;
+            }
+            return Err(Error::new(format!(
+                "unsupported: expected ')' after {name}"
+            )));
+        }
+        Ok(ConcatExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_aggregate_call(&self) -> bool {
