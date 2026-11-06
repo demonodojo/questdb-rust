@@ -1,0 +1,4 @@
+location	avg(id)
+東京	-1.0
+madrid	1.0
+NULL	2.0

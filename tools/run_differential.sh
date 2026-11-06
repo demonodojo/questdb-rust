@@ -168,7 +168,26 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   group_sum_id "SELECT location, sum(id) FROM sensors GROUP BY location ORDER BY location" \
   group_sum_by_value "SELECT sum(id) FROM sensors GROUP BY location ORDER BY sum(id)" \
   group_sum_reading "SELECT id, sum(reading) FROM sensors GROUP BY id ORDER BY id" \
-  group_sum_score "SELECT location, sum(score) FROM sensors GROUP BY location ORDER BY location"
+  group_sum_score "SELECT location, sum(score) FROM sensors GROUP BY location ORDER BY location" \
+  avg_id "SELECT avg(id) FROM sensors" \
+  avg_reading "SELECT avg(reading) FROM sensors" \
+  avg_score "SELECT avg(score) FROM sensors" \
+  avg_b "SELECT avg(b) FROM sensors" \
+  avg_code "SELECT avg(code) FROM sensors" \
+  avg_flags "SELECT avg(flags) FROM sensors" \
+  avg_ok "SELECT avg(ok) FROM sensors" \
+  avg_null "SELECT avg(id) FROM sensors WHERE id > 100" \
+  avg_neg_zero "SELECT avg(reading) FROM sensors WHERE id = -1" \
+  avg_zeros "SELECT avg(reading) FROM sensors WHERE reading = 0.0" \
+  avg_b_zero "SELECT avg(b) FROM sensors WHERE b = 0" \
+  avg_ts "SELECT avg(ts) FROM sensors" \
+  avg_day "SELECT avg(day) FROM sensors" \
+  avg_location "SELECT avg(location) FROM sensors" \
+  avg_case "SELECT AVG(ID) FROM sensors" \
+  avg_limit_zero "SELECT avg(id) FROM sensors LIMIT 0" \
+  group_avg_id "SELECT location, avg(id) FROM sensors GROUP BY location ORDER BY location" \
+  group_avg_reading "SELECT id, avg(reading) FROM sensors GROUP BY id ORDER BY id" \
+  group_avg_by_value "SELECT location, avg(id) FROM sensors GROUP BY location ORDER BY avg(id)"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -207,7 +226,12 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   sum_ts "SELECT sum(ts) FROM days" \
   sum_location "SELECT sum(location) FROM days" \
   sum_null "SELECT sum(id) FROM days WHERE id = NULL" \
-  group_sum_id "SELECT location, sum(id) FROM days GROUP BY location ORDER BY location"
+  group_sum_id "SELECT location, sum(id) FROM days GROUP BY location ORDER BY location" \
+  avg_id "SELECT avg(id) FROM days" \
+  avg_null "SELECT avg(id) FROM days WHERE id = NULL" \
+  avg_ts "SELECT avg(ts) FROM days" \
+  group_avg_id "SELECT location, avg(id) FROM days GROUP BY location ORDER BY location" \
+  group_avg_by_value "SELECT location, avg(id) FROM days GROUP BY location ORDER BY avg(id)"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -323,6 +347,25 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT sum(id) FROM sensors GROUP BY location ORDER BY sum(id)"),
     (os.environ["DIFF_H1"], "SELECT id, sum(reading) FROM sensors GROUP BY id ORDER BY id"),
     (os.environ["DIFF_H1"], "SELECT location, sum(score) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT avg(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT avg(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT avg(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT avg(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT avg(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT avg(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT avg(ok) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT avg(id) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT avg(reading) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT avg(reading) FROM sensors WHERE reading = 0.0"),
+    (os.environ["DIFF_H1"], "SELECT avg(b) FROM sensors WHERE b = 0"),
+    (os.environ["DIFF_H1"], "SELECT avg(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT avg(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT avg(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT AVG(ID) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT avg(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT location, avg(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT id, avg(reading) FROM sensors GROUP BY id ORDER BY id"),
+    (os.environ["DIFF_H1"], "SELECT location, avg(id) FROM sensors GROUP BY location ORDER BY avg(id)"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -360,6 +403,11 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT sum(location) FROM days"),
     (os.environ["DIFF_H2"], "SELECT sum(id) FROM days WHERE id = NULL"),
     (os.environ["DIFF_H2"], "SELECT location, sum(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT avg(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT avg(id) FROM days WHERE id = NULL"),
+    (os.environ["DIFF_H2"], "SELECT avg(ts) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT location, avg(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT location, avg(id) FROM days GROUP BY location ORDER BY avg(id)"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

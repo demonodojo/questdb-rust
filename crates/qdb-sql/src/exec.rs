@@ -280,6 +280,7 @@ struct AggColumn {
 enum Accumulator {
     Count(i64),
     Value(Option<Scalar>),
+    Average { total: Option<Scalar>, count: i64 },
 }
 
 impl Accumulator {
@@ -287,6 +288,10 @@ impl Accumulator {
         match func {
             AggFunc::Count => Self::Count(0),
             AggFunc::Min | AggFunc::Max | AggFunc::Sum => Self::Value(None),
+            AggFunc::Avg => Self::Average {
+                total: None,
+                count: 0,
+            },
         }
     }
 
@@ -294,7 +299,12 @@ impl Accumulator {
         match self {
             Self::Count(total) => Scalar::Long(*total),
             Self::Value(Some(value)) => value.clone(),
-            Self::Value(None) => Scalar::Null,
+            Self::Value(None) | Self::Average { count: 0, .. } => Scalar::Null,
+            Self::Average {
+                total: Some(total),
+                count,
+            } => average_of(total, *count),
+            Self::Average { total: None, .. } => Scalar::Null,
         }
     }
 }
@@ -321,18 +331,19 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             "there is no matching function `{name}` with the argument types: (BOOLEAN)"
         )));
     }
-    let symbol_keys = if aggregate.func == AggFunc::Sum && tag == qdb_types::TAG_SYMBOL {
-        let mut keys = Vec::new();
-        for value in &table.columns[index] {
-            if value.is_null() || keys.contains(value) {
-                continue;
+    let symbol_keys =
+        if matches!(aggregate.func, AggFunc::Sum | AggFunc::Avg) && tag == qdb_types::TAG_SYMBOL {
+            let mut keys = Vec::new();
+            for value in &table.columns[index] {
+                if value.is_null() || keys.contains(value) {
+                    continue;
+                }
+                keys.push(value.clone());
             }
-            keys.push(value.clone());
-        }
-        keys
-    } else {
-        Vec::new()
-    };
+            keys
+        } else {
+            Vec::new()
+        };
     Ok(AggColumn {
         index: Some(index),
         tag,
@@ -347,6 +358,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::Sum if input.tag == qdb_types::TAG_FLOAT => qdb_types::TAG_FLOAT,
         AggFunc::Sum if input.tag == qdb_types::TAG_DOUBLE => qdb_types::TAG_DOUBLE,
         AggFunc::Sum => qdb_types::TAG_LONG,
+        AggFunc::Avg => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max => input.tag,
     }
@@ -374,6 +386,7 @@ fn contribution(
         }
         AggFunc::Min | AggFunc::Max => Ok(Some(value.clone())),
         AggFunc::Sum => sum_addend(value, input),
+        AggFunc::Avg => avg_addend(value, input),
     }
 }
 
@@ -438,6 +451,26 @@ fn scalar_text(value: &Scalar) -> String {
     }
 }
 
+fn avg_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Error> {
+    if input.tag == qdb_types::TAG_BOOLEAN {
+        let Scalar::Boolean(bit) = value else {
+            return Ok(None);
+        };
+        return Ok(Some(Scalar::Double(if *bit { 1.0 } else { 0.0 })));
+    }
+    sum_addend(value, input)
+}
+
+fn average_of(total: &Scalar, count: i64) -> Scalar {
+    let sum = match total {
+        Scalar::Long(value) => *value as f64,
+        Scalar::Float(value) => f64::from(*value),
+        Scalar::Double(value) => *value,
+        _ => return Scalar::Null,
+    };
+    Scalar::Double(sum / count as f64)
+}
+
 fn add_sum(left: &Scalar, right: &Scalar) -> Scalar {
     match (left, right) {
         (Scalar::Long(left), Scalar::Long(right)) => Scalar::Long(left.wrapping_add(*right)),
@@ -455,6 +488,13 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
         Accumulator::Count(total) => *total += 1,
         Accumulator::Value(current) if func == AggFunc::Sum => {
             *current = Some(match current.take() {
+                None => next,
+                Some(kept) => add_sum(&kept, &next),
+            });
+        }
+        Accumulator::Average { total, count } => {
+            *count += 1;
+            *total = Some(match total.take() {
                 None => next,
                 Some(kept) => add_sum(&kept, &next),
             });
@@ -1784,10 +1824,167 @@ mod tests {
     }
 
     #[test]
+    fn avg_matches_captured_exec() {
+        let sensors = root();
+        let days =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT avg(id) FROM sensors",
+                "expected/avg_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(reading) FROM sensors",
+                "expected/avg_reading.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(score) FROM sensors",
+                "expected/avg_score.tsv",
+            ),
+            (&sensors, "SELECT avg(b) FROM sensors", "expected/avg_b.tsv"),
+            (
+                &sensors,
+                "SELECT avg(code) FROM sensors",
+                "expected/avg_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(flags) FROM sensors",
+                "expected/avg_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(ok) FROM sensors",
+                "expected/avg_ok.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(id) FROM sensors WHERE id > 100",
+                "expected/avg_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(reading) FROM sensors WHERE id = -1",
+                "expected/avg_neg_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(reading) FROM sensors WHERE reading = 0.0",
+                "expected/avg_zeros.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(b) FROM sensors WHERE b = 0",
+                "expected/avg_b_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(ts) FROM sensors",
+                "expected/avg_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(day) FROM sensors",
+                "expected/avg_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(location) FROM sensors",
+                "expected/avg_location.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT AVG(ID) FROM sensors",
+                "expected/avg_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT avg(id) FROM sensors LIMIT 0",
+                "expected/avg_limit_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT location, avg(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_avg_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id, avg(reading) FROM sensors GROUP BY id ORDER BY id",
+                "expected/group_avg_reading.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT location, avg(id) FROM sensors GROUP BY location ORDER BY avg(id)",
+                "expected/group_avg_by_value.tsv",
+            ),
+            (&days, "SELECT avg(id) FROM days", "expected/avg_id.tsv"),
+            (
+                &days,
+                "SELECT avg(id) FROM days WHERE id = NULL",
+                "expected/avg_null.tsv",
+            ),
+            (&days, "SELECT avg(ts) FROM days", "expected/avg_ts.tsv"),
+            (
+                &days,
+                "SELECT location, avg(id) FROM days GROUP BY location ORDER BY location",
+                "expected/group_avg_id.tsv",
+            ),
+            (
+                &days,
+                "SELECT location, avg(id) FROM days GROUP BY location ORDER BY avg(id)",
+                "expected/group_avg_by_value.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT avg() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT avg(*) FROM sensors").unwrap_err();
+        assert!(err.message.contains("too few arguments"), "{}", err.message);
+        let err = execute(&sensors, "SELECT avg(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> SHORT]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT avg(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT avg(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT avg(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
     fn rejects_unimplemented_sql() {
         let err = execute(&root(), "INSERT INTO sensors VALUES (1)").unwrap_err();
         assert!(err.message.contains("unsupported"), "{}", err.message);
-        let err = execute(&root(), "SELECT avg() FROM sensors").unwrap_err();
+        let err = execute(&root(), "SELECT median() FROM sensors").unwrap_err();
         assert!(err.message.contains("unsupported"), "{}", err.message);
         let err = execute(&root(), "SELECT count(ok) FROM sensors").unwrap_err();
         assert!(
