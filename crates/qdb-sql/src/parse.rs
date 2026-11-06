@@ -21,7 +21,7 @@ pub struct Query {
     pub columns: SelectList,
     pub table: String,
     pub filter: Option<Filter>,
-    pub order_by: Option<OrderBy>,
+    pub order_by: Vec<OrderBy>,
     /// `LIMIT` bounds after the single-argument form is rewritten.
     /// `LIMIT n` with `n >= 0` is `[0, n)`. A negative `n` is `[n, 0)`.
     pub limit: Option<Limit>,
@@ -60,25 +60,31 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
     let table = parser.ident()?;
     parser.skip();
     let mut filter = None;
-    let mut order_by = None;
+    let mut order_by = Vec::new();
     if parser.eat_keyword("where") {
         filter = Some(parser.parse_filter()?);
         parser.skip();
     }
     if parser.eat_keyword("order") {
         parser.expect_keyword("by")?;
-        let column = parser.ident()?;
-        parser.skip();
-        let descending = if parser.eat_keyword("desc") {
+        loop {
+            let column = parser.ident()?;
             parser.skip();
-            true
-        } else if parser.eat_keyword("asc") {
+            let descending = if parser.eat_keyword("desc") {
+                parser.skip();
+                true
+            } else if parser.eat_keyword("asc") {
+                parser.skip();
+                false
+            } else {
+                false
+            };
+            order_by.push(OrderBy { column, descending });
             parser.skip();
-            false
-        } else {
-            false
-        };
-        order_by = Some(OrderBy { column, descending });
+            if !parser.eat(b',') {
+                break;
+            }
+        }
     }
     let mut limit = None;
     if parser.eat_keyword("limit") {
@@ -439,13 +445,25 @@ mod tests {
         assert_eq!(query.table, "sensors");
         assert_eq!(
             query.order_by,
-            Some(OrderBy {
+            vec![OrderBy {
                 column: "ts".to_string(),
                 descending: false,
-            })
+            }]
         );
-        let descending = parse_query("SELECT id FROM sensors ORDER BY id DESC").unwrap();
-        assert!(descending.order_by.unwrap().descending);
+        let descending = parse_query("SELECT id FROM sensors ORDER BY location DESC, id").unwrap();
+        assert_eq!(
+            descending.order_by,
+            vec![
+                OrderBy {
+                    column: "location".to_string(),
+                    descending: true,
+                },
+                OrderBy {
+                    column: "id".to_string(),
+                    descending: false,
+                },
+            ]
+        );
         assert_eq!(query.limit, None);
         let limited = parse_query("SELECT id FROM sensors ORDER BY id LIMIT -2").unwrap();
         assert_eq!(limited.limit, Some(Limit { lo: -2, hi: 0 }));

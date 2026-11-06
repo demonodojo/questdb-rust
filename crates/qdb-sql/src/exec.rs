@@ -47,18 +47,26 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
         }
         row_ids.push(row);
     }
-    if let Some(order) = &query.order_by {
-        let index = table
-            .column_index(&order.column)
-            .ok_or_else(|| Error::new(format!("unknown ORDER BY column `{}`", order.column)))?;
-        let tag = table.meta.columns[index].tag;
+    if !query.order_by.is_empty() {
+        let mut keys = Vec::with_capacity(query.order_by.len());
+        for order in &query.order_by {
+            let index = table
+                .column_index(&order.column)
+                .ok_or_else(|| Error::new(format!("unknown ORDER BY column `{}`", order.column)))?;
+            keys.push((index, table.meta.columns[index].tag, order.descending));
+        }
         row_ids.sort_by(|a, b| {
-            let ordering = compare_asc(&table.columns[index][*a], &table.columns[index][*b], tag);
-            if order.descending {
-                ordering.reverse()
-            } else {
-                ordering
+            for (index, tag, descending) in &keys {
+                let mut ordering =
+                    compare_asc(&table.columns[*index][*a], &table.columns[*index][*b], *tag);
+                if *descending {
+                    ordering = ordering.reverse();
+                }
+                if ordering != Ordering::Equal {
+                    return ordering;
+                }
             }
+            Ordering::Equal
         });
     }
     if let Some(limit) = query.limit {
@@ -98,8 +106,10 @@ pub fn render_tsv(result: &QueryResult) -> String {
 }
 
 fn limit_follows_timestamp_order(table: &Table, query: &Query) -> Result<bool, Error> {
-    let Some(order) = &query.order_by else {
-        return Ok(true);
+    // A single designated-timestamp key uses the ordered scan. Any other key
+    // list, including `ts` plus another column, uses the sort path.
+    let [order] = query.order_by.as_slice() else {
+        return Ok(query.order_by.is_empty());
     };
     let index = table
         .column_index(&order.column)
@@ -657,6 +667,79 @@ mod tests {
                 days,
                 "SELECT note FROM days ORDER BY note DESC",
                 "expected/desc_note.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn multi_column_order_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY location, id",
+                "expected/order_location_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY location, id DESC",
+                "expected/order_location_id_desc.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY location DESC, id",
+                "expected/order_location_desc_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY location DESC, id DESC",
+                "expected/order_location_desc_id_desc.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY reading, id",
+                "expected/order_reading_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY reading DESC, id",
+                "expected/order_reading_desc_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY location",
+                "expected/order_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY location, id LIMIT 2",
+                "expected/order_location_id_limit.tsv",
+            ),
+            (
+                sensors,
+                "SELECT id FROM sensors ORDER BY ts, id DESC LIMIT -2, 1",
+                "expected/order_ts_id_mixed.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT id FROM days ORDER BY location, ts DESC",
+                "expected/order_location_ts_desc.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT id FROM days ORDER BY location DESC, id",
+                "expected/order_location_desc_id.tsv",
+            ),
+            (
+                days,
+                "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY note DESC, id",
+                "expected/order_madrid_note.tsv",
             ),
         ];
         for (root, sql, file) in cases {

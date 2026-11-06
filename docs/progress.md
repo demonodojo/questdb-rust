@@ -24,15 +24,15 @@ Tests que pasaron:
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
 | qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
-| qdb-sql | 7 ok, incluido `descending_order_matches_captured_exec` |
+| qdb-sql | 8 ok, incluido `multi_column_order_matches_captured_exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
-captured-oracle: 23 queries match tests/fixtures/h1/expected
-captured-oracle: 15 queries match tests/fixtures/h2/expected
-live-reference: 38 queries matched row counts against http://127.0.0.1:19011/exec
+captured-oracle: 31 queries match tests/fixtures/h1/expected
+captured-oracle: 18 queries match tests/fixtures/h2/expected
+live-reference: 49 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
 Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
@@ -44,11 +44,11 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 - `PARTITION BY NONE` y `DAY`, WAL desactivado, `_meta` versión 426, ficheros de columna sin sufijo de txn.
 - HOUR, MONTH, YEAR, WEEK, Parquet y particiones composite se rechazan.
 - La última partición usa `transient_row_count`. El tamaño guardado en su registro puede ser 0.
-- `LIMIT` y `ORDER BY` de una columna, ASC o DESC, están verificados. `ORDER BY` de varias columnas y el resto de SQL no.
+- `LIMIT` y `ORDER BY` de una o varias columnas, ASC o DESC, están verificados. Agregados y el resto de SQL no.
 - Sin escritura, sin red, sin el resto de tipos ni de SQL.
 - BOOLEAN/BYTE/SHORT/CHAR no separan NULL de 0; es el formato upstream.
 - Maven no está instalado, así que la suite Java no se ejecutó (`docs/blockers.md`).
 
 ## Próxima tarea
 
-Añadir `ORDER BY` de varias columnas, cada una ASC o DESC, y comprobarlo contra `/exec` en `sensors` y `days`. No abrir WAL en ese paso.
+Añadir `count()` y `count(col)` al `SELECT`, con y sin filtro, y comprobarlo contra `/exec` en `sensors` y `days`. No abrir WAL en ese paso.
