@@ -10,12 +10,18 @@ pub enum CmpOp {
     GtEq,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrderBy {
+    pub column: String,
+    pub descending: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Query {
     pub columns: SelectList,
     pub table: String,
     pub filter: Option<Filter>,
-    pub order_by: Option<String>,
+    pub order_by: Option<OrderBy>,
     /// `LIMIT` bounds after the single-argument form is rewritten.
     /// `LIMIT n` with `n >= 0` is `[0, n)`. A negative `n` is `[n, 0)`.
     pub limit: Option<Limit>,
@@ -63,12 +69,16 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         parser.expect_keyword("by")?;
         let column = parser.ident()?;
         parser.skip();
-        if parser.eat_keyword("asc") {
+        let descending = if parser.eat_keyword("desc") {
             parser.skip();
-        } else if parser.eat_keyword("desc") {
-            return Err(Error::new("unsupported: ORDER BY DESC"));
-        }
-        order_by = Some(column);
+            true
+        } else if parser.eat_keyword("asc") {
+            parser.skip();
+            false
+        } else {
+            false
+        };
+        order_by = Some(OrderBy { column, descending });
     }
     let mut limit = None;
     if parser.eat_keyword("limit") {
@@ -427,7 +437,15 @@ mod tests {
     fn parses_filter_and_rejects_select_constant() {
         let query = parse_query("SELECT id, note FROM sensors WHERE id > 1 ORDER BY ts").unwrap();
         assert_eq!(query.table, "sensors");
-        assert!(query.order_by.as_deref() == Some("ts"));
+        assert_eq!(
+            query.order_by,
+            Some(OrderBy {
+                column: "ts".to_string(),
+                descending: false,
+            })
+        );
+        let descending = parse_query("SELECT id FROM sensors ORDER BY id DESC").unwrap();
+        assert!(descending.order_by.unwrap().descending);
         assert_eq!(query.limit, None);
         let limited = parse_query("SELECT id FROM sensors ORDER BY id LIMIT -2").unwrap();
         assert_eq!(limited.limit, Some(Limit { lo: -2, hi: 0 }));

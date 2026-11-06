@@ -1,7 +1,7 @@
 //! A deliberately small SQL surface for the H1 read slice.
 //!
 //! Accepted form:
-//! `SELECT <cols>|* FROM <table> [WHERE <col> <op> <literal>] [ORDER BY <col> [ASC]] [LIMIT n | LIMIT lo, hi]`
+//! `SELECT <cols>|* FROM <table> [WHERE <col> <op> <literal>] [ORDER BY <col> [ASC|DESC]] [LIMIT n | LIMIT lo, hi]`
 //!
 //! `LIMIT n` keeps the first `n` rows after `WHERE` and `ORDER BY`. A negative
 //! `n` keeps the last `|n|` rows in that same order. `LIMIT lo, hi` keeps the

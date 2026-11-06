@@ -49,10 +49,16 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
     }
     if let Some(order) = &query.order_by {
         let index = table
-            .column_index(order)
-            .ok_or_else(|| Error::new(format!("unknown ORDER BY column `{order}`")))?;
+            .column_index(&order.column)
+            .ok_or_else(|| Error::new(format!("unknown ORDER BY column `{}`", order.column)))?;
+        let tag = table.meta.columns[index].tag;
         row_ids.sort_by(|a, b| {
-            compare_nulls_first(&table.columns[index][*a], &table.columns[index][*b])
+            let ordering = compare_asc(&table.columns[index][*a], &table.columns[index][*b], tag);
+            if order.descending {
+                ordering.reverse()
+            } else {
+                ordering
+            }
         });
     }
     if let Some(limit) = query.limit {
@@ -96,8 +102,8 @@ fn limit_follows_timestamp_order(table: &Table, query: &Query) -> Result<bool, E
         return Ok(true);
     };
     let index = table
-        .column_index(order)
-        .ok_or_else(|| Error::new(format!("unknown ORDER BY column `{order}`")))?;
+        .column_index(&order.column)
+        .ok_or_else(|| Error::new(format!("unknown ORDER BY column `{}`", order.column)))?;
     Ok(index as i32 == table.meta.timestamp_index)
 }
 
@@ -260,12 +266,27 @@ fn char_from_unit(unit: u16) -> Result<char, Error> {
     char::from_u32(u32::from(unit)).ok_or_else(|| Error::new(format!("invalid UTF-16 char {unit}")))
 }
 
-/// Nulls sort first, matching `ORDER BY id` on the 10.1.0 sensors fixture.
-fn compare_nulls_first(left: &Scalar, right: &Scalar) -> Ordering {
+/// Ascending order from QuestDB 10.1.0. Integer, string, symbol, date and
+/// timestamp nulls sort first. Float and double nulls sort last, above every
+/// finite value, and `-0.0` sorts before `0.0`.
+fn compare_asc(left: &Scalar, right: &Scalar, tag: i32) -> Ordering {
+    let nulls_last = matches!(tag, qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE);
     match (left.is_null(), right.is_null()) {
         (true, true) => Ordering::Equal,
-        (true, false) => Ordering::Less,
-        (false, true) => Ordering::Greater,
+        (true, false) => {
+            if nulls_last {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }
+        (false, true) => {
+            if nulls_last {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        }
         (false, false) => compare_values(left, right),
     }
 }
@@ -569,6 +590,79 @@ mod tests {
                 "{sql}: {}",
                 err.message
             );
+        }
+    }
+
+    #[test]
+    fn descending_order_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id DESC",
+                "expected/desc_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id DESC LIMIT 2",
+                "expected/desc_id_limit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id DESC LIMIT -1",
+                "expected/desc_id_last.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT reading FROM sensors ORDER BY reading",
+                "expected/asc_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT reading FROM sensors ORDER BY reading DESC",
+                "expected/desc_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT note FROM sensors ORDER BY note DESC",
+                "expected/desc_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location FROM sensors ORDER BY location DESC",
+                "expected/desc_location.tsv",
+            ),
+            (
+                sensors,
+                "SELECT score FROM sensors ORDER BY score DESC",
+                "expected/desc_score.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT id FROM days ORDER BY ts DESC",
+                "expected/desc_ts.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts DESC",
+                "expected/desc_madrid.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT id FROM days ORDER BY id DESC",
+                "expected/desc_id.tsv",
+            ),
+            (
+                days,
+                "SELECT note FROM days ORDER BY note DESC",
+                "expected/desc_note.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
         }
     }
 
