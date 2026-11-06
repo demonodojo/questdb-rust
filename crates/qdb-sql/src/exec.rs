@@ -205,6 +205,17 @@ fn execute_group(
         }
     }
     let input = aggregate_input(table, aggregate)?;
+    if aggregate.func == AggFunc::CountDistinct
+        && matches!(
+            input.tag,
+            qdb_types::TAG_BOOLEAN | qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE
+        )
+    {
+        return Err(Error::new(format!(
+            "there is no matching function `count_distinct` with the argument types: ({})",
+            qdb_types::type_name(input.tag)
+        )));
+    }
     let value_tag = aggregate_order_tag(&input);
     let mut groups: Vec<(Scalar, Accumulator)> = Vec::new();
     for row in 0..table.row_count() {
@@ -281,6 +292,7 @@ enum Accumulator {
     Count(i64),
     Value(Option<Scalar>),
     Average { total: Option<Scalar>, count: i64 },
+    Distinct(Vec<Scalar>),
 }
 
 impl Accumulator {
@@ -294,12 +306,14 @@ impl Accumulator {
                 total: None,
                 count: 0,
             },
+            AggFunc::CountDistinct => Self::Distinct(Vec::new()),
         }
     }
 
     fn finish(&self) -> Scalar {
         match self {
             Self::Count(total) => Scalar::Long(*total),
+            Self::Distinct(seen) => Scalar::Long(seen.len() as i64),
             Self::Value(Some(value)) => value.clone(),
             Self::Value(None) | Self::Average { count: 0, .. } => Scalar::Null,
             Self::Average {
@@ -356,7 +370,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
 
 fn aggregate_order_tag(input: &AggColumn) -> i32 {
     match input.func {
-        AggFunc::Count => qdb_types::TAG_LONG,
+        AggFunc::Count | AggFunc::CountDistinct => qdb_types::TAG_LONG,
         AggFunc::Sum if input.tag == qdb_types::TAG_FLOAT => qdb_types::TAG_FLOAT,
         AggFunc::Sum if input.tag == qdb_types::TAG_DOUBLE => qdb_types::TAG_DOUBLE,
         AggFunc::Sum => qdb_types::TAG_LONG,
@@ -381,6 +395,7 @@ fn contribution(
         AggFunc::First | AggFunc::Last => Ok(Some(value.clone())),
         _ if skipped => Ok(None),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
+        AggFunc::CountDistinct => Ok(Some(value.clone())),
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => {
             let Scalar::Boolean(bit) = value else {
                 return Ok(None);
@@ -489,6 +504,11 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
     };
     match accumulator {
         Accumulator::Count(total) => *total += 1,
+        Accumulator::Distinct(seen) => {
+            if !seen.contains(&next) {
+                seen.push(next);
+            }
+        }
         Accumulator::Value(current) if func == AggFunc::First => {
             if current.is_none() {
                 *current = Some(next);
@@ -2197,6 +2217,207 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn count_distinct_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT count_distinct(id) FROM sensors",
+                "expected/cd_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(reading) FROM sensors",
+                "expected/cd_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(score) FROM sensors",
+                "expected/cd_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(ok) FROM sensors",
+                "expected/cd_ok.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(ch) FROM sensors",
+                "expected/cd_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(note) FROM sensors",
+                "expected/cd_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(location) FROM sensors",
+                "expected/cd_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(b) FROM sensors",
+                "expected/cd_b.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(flags) FROM sensors",
+                "expected/cd_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(day) FROM sensors",
+                "expected/cd_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(ts) FROM sensors",
+                "expected/cd_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(id) FROM sensors WHERE id > 100",
+                "expected/cd_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(id) FROM sensors WHERE id = NULL",
+                "expected/cd_null_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(note) FROM sensors WHERE note = ''",
+                "expected/cd_empty_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(ch) FROM sensors WHERE ch = ''",
+                "expected/cd_empty_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(reading) FROM sensors WHERE reading = 0.0",
+                "expected/cd_zeros.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT COUNT_DISTINCT(ID) FROM sensors",
+                "expected/cd_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count_distinct(id) FROM sensors LIMIT 0",
+                "expected/cd_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, count_distinct(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_cd_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, count_distinct(note) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_cd_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, count_distinct(ch) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_cd_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, count_distinct(flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_cd_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, count_distinct(note) FROM sensors GROUP BY id ORDER BY id",
+                "expected/group_cd_by_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, count_distinct(note) FROM sensors GROUP BY location ORDER BY count_distinct(note)",
+                "expected/group_cd_by_value.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT count_distinct(id) FROM days",
+                "expected/cd_id.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT count_distinct(note) FROM days",
+                "expected/cd_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT count_distinct(location) FROM days",
+                "expected/cd_location.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT count_distinct(id) FROM days WHERE id = NULL",
+                "expected/cd_null.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT location, count_distinct(id) FROM days GROUP BY location ORDER BY location",
+                "expected/group_cd_id.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT location, count_distinct(note) FROM days GROUP BY location ORDER BY count_distinct(note)",
+                "expected/group_cd_by_value.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT count_distinct() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT count_distinct(*) FROM sensors").unwrap_err();
+        assert!(err.message.contains("too few arguments"), "{}", err.message);
+        let err = execute(&sensors, "SELECT count_distinct(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT location, count_distinct(reading) FROM sensors GROUP BY location",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `count_distinct` with the argument types: (DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT count_distinct(score) FROM sensors GROUP BY location",
+        )
+        .unwrap_err();
+        assert!(err.message.contains("(FLOAT)"), "{}", err.message);
+        let err = execute(
+            &sensors,
+            "SELECT count_distinct(ok) FROM sensors GROUP BY location",
+        )
+        .unwrap_err();
+        assert!(err.message.contains("(BOOLEAN)"), "{}", err.message);
     }
 
     #[test]

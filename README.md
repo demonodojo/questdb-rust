@@ -1,6 +1,6 @@
 # questdb-rust
 
-Reescritura en curso del motor QuestDB OSS 10.1.0 en Rust. El estado real está en `docs/progress.md`. Hoy lee tablas nativas `PARTITION BY NONE` y `PARTITION BY DAY` y responde un `SELECT` pequeño con `WHERE`, `GROUP BY` de una columna, `ORDER BY`, `LIMIT`, `count()`, `min()`, `max()`, `sum()`, `avg()`, `first()` y `last()`. No es un sustituto de QuestDB.
+Reescritura en curso del motor QuestDB OSS 10.1.0 en Rust. El estado real está en `docs/progress.md`. Hoy lee tablas nativas `PARTITION BY NONE` y `PARTITION BY DAY` y responde un `SELECT` pequeño con `WHERE`, `GROUP BY` de una columna, `ORDER BY`, `LIMIT`, `count()`, `min()`, `max()`, `sum()`, `avg()`, `first()`, `last()` y `count_distinct()`. No es un sustituto de QuestDB.
 
 ## Probar el slice
 

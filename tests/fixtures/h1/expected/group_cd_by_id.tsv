@@ -1,0 +1,5 @@
+id	count_distinct(note)
+NULL	1
+-1	1
+1	1
+2	0

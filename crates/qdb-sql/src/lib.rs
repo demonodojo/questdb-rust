@@ -3,7 +3,7 @@
 //! Accepted form:
 //! `SELECT <cols>|*|<aggregate>|<col>, <aggregate> FROM <table> [WHERE <col> <op> <literal>] [GROUP BY <col>] [ORDER BY <col>|<aggregate> [ASC|DESC] [, ...]] [LIMIT n | LIMIT lo, hi]`
 //!
-//! An aggregate is `count()`, `count(<col>)`, `min(<col>)`, `max(<col>)`, `sum(<col>)`, `avg(<col>)`, `first(<col>)` or `last(<col>)`.
+//! An aggregate is `count()`, `count(<col>)`, `min(<col>)`, `max(<col>)`, `sum(<col>)`, `avg(<col>)`, `first(<col>)`, `last(<col>)` or `count_distinct(<col>)`.
 //!
 //! `LIMIT n` keeps the first `n` rows after `WHERE` and `ORDER BY`. A negative
 //! `n` keeps the last `|n|` rows in that same order. `LIMIT lo, hi` keeps the
@@ -21,7 +21,10 @@
 //! becomes `0.0`. `avg` divides that sum by the number of values and always
 //! returns `DOUBLE`. A `BOOLEAN` counts as `0.0` or `1.0`. `first` and `last`
 //! keep the value of the earliest and latest row in read order, including null
-//! and a `CHAR` 0, and keep the column type. An aggregate without `GROUP BY` returns one
+//! and a `CHAR` 0, and keep the column type. `count_distinct` skips nulls and a
+//! `CHAR` 0, counts an empty string and a numeric zero, and treats `-0.0` as
+//! different from `0.0`. With no values it returns 0. Inside `GROUP BY` it has
+//! no `FLOAT`, `DOUBLE` or `BOOLEAN` overload. An aggregate without `GROUP BY` returns one
 //! row, or none when `LIMIT` removes it.
 //! `GROUP BY` of one column returns one row per distinct value, in first-seen
 //! order until `ORDER BY` sorts it. `-0.0` and `0.0` stay in different groups.

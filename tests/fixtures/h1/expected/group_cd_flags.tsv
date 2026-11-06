@@ -1,0 +1,4 @@
+location	count_distinct(flags)
+NULL	0
+madrid	2
+東京	1

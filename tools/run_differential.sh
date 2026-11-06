@@ -212,7 +212,31 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   group_first_id "SELECT location, first(id) FROM sensors GROUP BY location ORDER BY location" \
   group_last_id "SELECT location, last(id) FROM sensors GROUP BY location ORDER BY location" \
   group_first_reading "SELECT id, first(reading) FROM sensors GROUP BY id ORDER BY id" \
-  group_first_by_value "SELECT location, first(id) FROM sensors GROUP BY location ORDER BY first(id)"
+  group_first_by_value "SELECT location, first(id) FROM sensors GROUP BY location ORDER BY first(id)" \
+  cd_id "SELECT count_distinct(id) FROM sensors" \
+  cd_reading "SELECT count_distinct(reading) FROM sensors" \
+  cd_score "SELECT count_distinct(score) FROM sensors" \
+  cd_ok "SELECT count_distinct(ok) FROM sensors" \
+  cd_ch "SELECT count_distinct(ch) FROM sensors" \
+  cd_note "SELECT count_distinct(note) FROM sensors" \
+  cd_location "SELECT count_distinct(location) FROM sensors" \
+  cd_b "SELECT count_distinct(b) FROM sensors" \
+  cd_flags "SELECT count_distinct(flags) FROM sensors" \
+  cd_day "SELECT count_distinct(day) FROM sensors" \
+  cd_ts "SELECT count_distinct(ts) FROM sensors" \
+  cd_null "SELECT count_distinct(id) FROM sensors WHERE id > 100" \
+  cd_null_id "SELECT count_distinct(id) FROM sensors WHERE id = NULL" \
+  cd_empty_note "SELECT count_distinct(note) FROM sensors WHERE note = ''" \
+  cd_empty_ch "SELECT count_distinct(ch) FROM sensors WHERE ch = ''" \
+  cd_zeros "SELECT count_distinct(reading) FROM sensors WHERE reading = 0.0" \
+  cd_case "SELECT COUNT_DISTINCT(ID) FROM sensors" \
+  cd_limit_zero "SELECT count_distinct(id) FROM sensors LIMIT 0" \
+  group_cd_id "SELECT location, count_distinct(id) FROM sensors GROUP BY location ORDER BY location" \
+  group_cd_note "SELECT location, count_distinct(note) FROM sensors GROUP BY location ORDER BY location" \
+  group_cd_ch "SELECT location, count_distinct(ch) FROM sensors GROUP BY location ORDER BY location" \
+  group_cd_flags "SELECT location, count_distinct(flags) FROM sensors GROUP BY location ORDER BY location" \
+  group_cd_by_id "SELECT id, count_distinct(note) FROM sensors GROUP BY id ORDER BY id" \
+  group_cd_by_value "SELECT location, count_distinct(note) FROM sensors GROUP BY location ORDER BY count_distinct(note)"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -266,7 +290,13 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   first_null "SELECT first(id) FROM days WHERE id = NULL" \
   group_first_id "SELECT location, first(id) FROM days GROUP BY location ORDER BY location" \
   group_last_id "SELECT location, last(id) FROM days GROUP BY location ORDER BY location" \
-  group_last_note "SELECT location, last(note) FROM days GROUP BY location ORDER BY last(note)"
+  group_last_note "SELECT location, last(note) FROM days GROUP BY location ORDER BY last(note)" \
+  cd_id "SELECT count_distinct(id) FROM days" \
+  cd_note "SELECT count_distinct(note) FROM days" \
+  cd_location "SELECT count_distinct(location) FROM days" \
+  cd_null "SELECT count_distinct(id) FROM days WHERE id = NULL" \
+  group_cd_id "SELECT location, count_distinct(id) FROM days GROUP BY location ORDER BY location" \
+  group_cd_by_value "SELECT location, count_distinct(note) FROM days GROUP BY location ORDER BY count_distinct(note)"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -426,6 +456,30 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT location, last(id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT id, first(reading) FROM sensors GROUP BY id ORDER BY id"),
     (os.environ["DIFF_H1"], "SELECT location, first(id) FROM sensors GROUP BY location ORDER BY first(id)"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(ok) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(id) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(id) FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(note) FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(ch) FROM sensors WHERE ch = ''"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(reading) FROM sensors WHERE reading = 0.0"),
+    (os.environ["DIFF_H1"], "SELECT COUNT_DISTINCT(ID) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT count_distinct(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT location, count_distinct(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT location, count_distinct(note) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT location, count_distinct(ch) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT location, count_distinct(flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT id, count_distinct(note) FROM sensors GROUP BY id ORDER BY id"),
+    (os.environ["DIFF_H1"], "SELECT location, count_distinct(note) FROM sensors GROUP BY location ORDER BY count_distinct(note)"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -478,6 +532,12 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT location, first(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT location, last(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT location, last(note) FROM days GROUP BY location ORDER BY last(note)"),
+    (os.environ["DIFF_H2"], "SELECT count_distinct(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT count_distinct(note) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT count_distinct(location) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT count_distinct(id) FROM days WHERE id = NULL"),
+    (os.environ["DIFF_H2"], "SELECT location, count_distinct(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT location, count_distinct(note) FROM days GROUP BY location ORDER BY count_distinct(note)"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
