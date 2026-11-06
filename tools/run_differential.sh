@@ -257,7 +257,20 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   concat_order_note "SELECT concat(note, location) FROM sensors ORDER BY note" \
   concat_with_id "SELECT id, concat(note, location) FROM sensors ORDER BY concat(note, location)" \
   concat_limit_zero "SELECT concat(note, location) FROM sensors LIMIT 0" \
-  concat_where_empty "SELECT concat(note, location) FROM sensors WHERE note = ''"
+  concat_where_empty "SELECT concat(note, location) FROM sensors WHERE note = ''" \
+  length_note "SELECT length(note) FROM sensors" \
+  length_location "SELECT length(location) FROM sensors" \
+  length_tag "SELECT length(tag) FROM sensors" \
+  length_ch "SELECT length(ch) FROM sensors" \
+  length_empty "SELECT length('') FROM sensors LIMIT 1" \
+  length_null "SELECT length(null) FROM sensors LIMIT 1" \
+  length_beta "SELECT length('βeta') FROM sensors LIMIT 1" \
+  length_tokyo "SELECT length('東京') FROM sensors LIMIT 1" \
+  length_case "SELECT LENGTH(NOTE) FROM sensors" \
+  length_where_empty "SELECT length(note) FROM sensors WHERE note = ''" \
+  length_order "SELECT length(note) FROM sensors ORDER BY length(note)" \
+  length_with_id "SELECT id, length(note) FROM sensors ORDER BY length(note)" \
+  length_limit_zero "SELECT length(note) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -319,7 +332,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   group_cd_id "SELECT location, count_distinct(id) FROM days GROUP BY location ORDER BY location" \
   group_cd_by_value "SELECT location, count_distinct(note) FROM days GROUP BY location ORDER BY count_distinct(note)" \
   concat_note_location "SELECT concat(note, location) FROM days" \
-  concat_order_ts "SELECT concat(location, note) FROM days ORDER BY ts"
+  concat_order_ts "SELECT concat(location, note) FROM days ORDER BY ts" \
+  length_note "SELECT length(note) FROM days" \
+  length_location "SELECT length(location) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -524,6 +539,19 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, concat(note, location) FROM sensors ORDER BY concat(note, location)"),
     (os.environ["DIFF_H1"], "SELECT concat(note, location) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT concat(note, location) FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT length(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT length(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT length(tag) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT length(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT length('') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT length(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT length('βeta') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT length('東京') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT LENGTH(NOTE) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT length(note) FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT length(note) FROM sensors ORDER BY length(note)"),
+    (os.environ["DIFF_H1"], "SELECT id, length(note) FROM sensors ORDER BY length(note)"),
+    (os.environ["DIFF_H1"], "SELECT length(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -584,6 +612,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT location, count_distinct(note) FROM days GROUP BY location ORDER BY count_distinct(note)"),
     (os.environ["DIFF_H2"], "SELECT concat(note, location) FROM days"),
     (os.environ["DIFF_H2"], "SELECT concat(location, note) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT length(note) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT length(location) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -1,6 +1,6 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
-    ConcatArg, Filter, GroupedSelect, Proj, Query, SelectList,
+    ConcatArg, Filter, GroupedSelect, LengthExpr, Proj, Query, SelectList,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -125,10 +125,10 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
         let mut keys = Vec::with_capacity(query.order_by.len());
         for order in &query.order_by {
             if let Some(index) = resolved.iter().position(|item| {
-                item.concat_label()
+                item.expr_label()
                     .is_some_and(|label| label.eq_ignore_ascii_case(&order.column))
             }) {
-                keys.push(OrderKey::Concat(index, order.descending));
+                keys.push(OrderKey::Expr(index, order.descending));
                 continue;
             }
             let index = table
@@ -146,10 +146,10 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
                     OrderKey::Column(index, tag, _) => {
                         compare_asc(&table.columns[*index][*a], &table.columns[*index][*b], *tag)
                     }
-                    OrderKey::Concat(index, _) => compare_asc(
+                    OrderKey::Expr(index, _) => compare_asc(
                         &eval_resolved(table, *a, &resolved[*index]),
                         &eval_resolved(table, *b, &resolved[*index]),
-                        qdb_types::TAG_STRING,
+                        resolved[*index].expr_tag(),
                     ),
                 };
                 if key.descending() {
@@ -172,7 +172,9 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
         .iter()
         .map(|item| match item {
             ResolvedProj::Column { index, .. } => table.meta.columns[*index].name.clone(),
-            ResolvedProj::Concat { label, .. } => label.clone(),
+            ResolvedProj::Concat { label, .. } | ResolvedProj::Length { label, .. } => {
+                label.clone()
+            }
         })
         .collect();
     let rows = row_ids
@@ -189,13 +191,13 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
 
 enum OrderKey {
     Column(usize, i32, bool),
-    Concat(usize, bool),
+    Expr(usize, bool),
 }
 
 impl OrderKey {
     fn descending(&self) -> bool {
         match self {
-            Self::Column(_, _, descending) | Self::Concat(_, descending) => *descending,
+            Self::Column(_, _, descending) | Self::Expr(_, descending) => *descending,
         }
     }
 }
@@ -208,19 +210,31 @@ enum ResolvedProj {
         label: String,
         args: Vec<ResolvedArg>,
     },
+    Length {
+        label: String,
+        arg: ResolvedArg,
+    },
 }
 
 impl ResolvedProj {
-    fn concat_label(&self) -> Option<&str> {
+    fn expr_label(&self) -> Option<&str> {
         match self {
-            Self::Concat { label, .. } => Some(label),
+            Self::Concat { label, .. } | Self::Length { label, .. } => Some(label),
             Self::Column { .. } => None,
+        }
+    }
+
+    fn expr_tag(&self) -> i32 {
+        match self {
+            Self::Length { .. } => qdb_types::TAG_INT,
+            _ => qdb_types::TAG_STRING,
         }
     }
 }
 
 enum ResolvedArg {
     Text(String),
+    Null,
     Column { index: usize, tag: i32 },
 }
 
@@ -240,13 +254,60 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
                 .map(|arg| resolve_concat_arg(table, arg))
                 .collect::<Result<Vec<_>, _>>()?,
         }),
+        Proj::Length(expr) => resolve_length(table, expr),
+    }
+}
+
+fn resolve_length(table: &Table, expr: &LengthExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        let types = expr
+            .args
+            .iter()
+            .map(|arg| concat_arg_type(table, arg))
+            .collect::<Result<Vec<_>, _>>()?
+            .join(", ");
+        return Err(Error::new(format!(
+            "there is no matching function `length` with the argument types: ({types})"
+        )));
+    }
+    let arg = resolve_concat_arg(table, &expr.args[0])?;
+    if let ResolvedArg::Column { tag, .. } = &arg {
+        if !matches!(
+            *tag,
+            qdb_types::TAG_STRING
+                | qdb_types::TAG_SYMBOL
+                | qdb_types::TAG_VARCHAR
+                | qdb_types::TAG_CHAR
+        ) {
+            return Err(Error::new(format!(
+                "there is no matching function `length` with the argument types: ({})",
+                qdb_types::type_name(*tag)
+            )));
+        }
+    }
+    Ok(ResolvedProj::Length {
+        label: expr.label.clone(),
+        arg,
+    })
+}
+
+fn concat_arg_type(table: &Table, arg: &ConcatArg) -> Result<String, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok("NULL".to_string()),
+        ConcatArg::Literal(_) => Ok("STRING".to_string()),
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            Ok(qdb_types::type_name(table.meta.columns[index].tag).to_string())
+        }
     }
 }
 
 fn resolve_concat_arg(table: &Table, arg: &ConcatArg) -> Result<ResolvedArg, Error> {
     match arg {
         ConcatArg::Literal(Scalar::Text(text)) => Ok(ResolvedArg::Text(text.clone())),
-        ConcatArg::Literal(_) => Ok(ResolvedArg::Text(String::new())),
+        ConcatArg::Literal(_) => Ok(ResolvedArg::Null),
         ConcatArg::Column(name) => {
             let index = table
                 .column_index(name)
@@ -266,12 +327,34 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             args.iter()
                 .map(|arg| match arg {
                     ResolvedArg::Text(text) => text.clone(),
+                    ResolvedArg::Null => String::new(),
                     ResolvedArg::Column { index, tag } => {
                         cast_concat(&table.columns[*index][row], *tag)
                     }
                 })
                 .collect(),
         ),
+        ResolvedProj::Length { arg, .. } => Scalar::Int(text_length(table, row, arg)),
+    }
+}
+
+fn text_length(table: &Table, row: usize, arg: &ResolvedArg) -> i32 {
+    let text = match arg {
+        ResolvedArg::Null => None,
+        ResolvedArg::Text(text) => Some(text.as_str()),
+        ResolvedArg::Column { index, tag } => match &table.columns[*index][row] {
+            Scalar::Text(text) => Some(text.as_str()),
+            Scalar::Char(0) => None,
+            Scalar::Char(unit) => {
+                return i32::from(char::from_u32(u32::from(*unit)).is_some());
+            }
+            _ if *tag == qdb_types::TAG_CHAR => None,
+            _ => None,
+        },
+    };
+    match text {
+        Some(text) => i32::try_from(text.chars().count()).unwrap_or(i32::MAX),
+        None => -1,
     }
 }
 
@@ -2773,6 +2856,121 @@ mod tests {
         let err = execute(&sensors, "SELECT concat(missing, note) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn length_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT length(note) FROM sensors",
+                "expected/length_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length(location) FROM sensors",
+                "expected/length_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length(tag) FROM sensors",
+                "expected/length_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length(ch) FROM sensors",
+                "expected/length_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length('') FROM sensors LIMIT 1",
+                "expected/length_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length(null) FROM sensors LIMIT 1",
+                "expected/length_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length('βeta') FROM sensors LIMIT 1",
+                "expected/length_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length('東京') FROM sensors LIMIT 1",
+                "expected/length_tokyo.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT LENGTH(NOTE) FROM sensors",
+                "expected/length_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length(note) FROM sensors WHERE note = ''",
+                "expected/length_where_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length(note) FROM sensors ORDER BY length(note)",
+                "expected/length_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, length(note) FROM sensors ORDER BY length(note)",
+                "expected/length_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length(note) FROM sensors LIMIT 0",
+                "expected/length_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT length(note) FROM days",
+                "expected/length_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT length(location) FROM days ORDER BY ts",
+                "expected/length_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT length() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT length(note, location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `length` with the argument types: (STRING, SYMBOL)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT length(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT length(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `length` with the argument types: (LONG)"),
             "{}",
             err.message
         );

@@ -26,7 +26,8 @@
 //! different from `0.0`. With no values it returns 0. Inside `GROUP BY` it has
 //! no `FLOAT`, `DOUBLE` or `BOOLEAN` overload. `concat` joins two or more
 //! values into a string. A text null is empty, a numeric null is `null`, and a
-//! null float is `NaN`. An aggregate without `GROUP BY` returns one
+//! null float is `NaN`. `length` returns the character count as `INT`, or `-1`
+//! when the text is null. An aggregate without `GROUP BY` returns one
 //! row, or none when `LIMIT` removes it.
 //! `GROUP BY` of one column returns one row per distinct value, in first-seen
 //! order until `ORDER BY` sorts it. `-0.0` and `0.0` stay in different groups.

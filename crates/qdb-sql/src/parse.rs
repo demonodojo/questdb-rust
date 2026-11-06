@@ -83,6 +83,13 @@ pub enum SelectList {
 pub enum Proj {
     Column(String),
     Concat(ConcatExpr),
+    Length(LengthExpr),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LengthExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +145,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
             parser.skip();
             let column = if parser.starts_concat_call() {
                 parser.parse_concat()?.label
+            } else if parser.starts_length_call() {
+                parser.parse_length()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -191,6 +200,7 @@ enum SelectPiece {
     Column(String),
     Aggregate(AggregateExpr),
     Concat(ConcatExpr),
+    Length(LengthExpr),
 }
 
 struct Parser<'a> {
@@ -285,6 +295,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Aggregate(self.parse_aggregate()?));
             } else if self.starts_concat_call() {
                 pieces.push(SelectPiece::Concat(self.parse_concat()?));
+            } else if self.starts_length_call() {
+                pieces.push(SelectPiece::Length(self.parse_length()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -297,16 +309,15 @@ impl<'a> Parser<'a> {
             .iter()
             .filter(|piece| matches!(piece, SelectPiece::Aggregate(_)))
             .count();
-        let concat_count = pieces
+        let projected = pieces
             .iter()
-            .filter(|piece| matches!(piece, SelectPiece::Concat(_)))
-            .count();
-        if counts > 0 && concat_count > 0 {
+            .any(|piece| matches!(piece, SelectPiece::Concat(_) | SelectPiece::Length(_)));
+        if counts > 0 && projected {
             return Err(Error::new(
                 "unsupported: aggregate mixed with other select expressions",
             ));
         }
-        if counts == 0 && concat_count > 0 {
+        if counts == 0 && projected {
             let mut items = Vec::with_capacity(pieces.len());
             for piece in pieces {
                 match piece {
@@ -314,6 +325,7 @@ impl<'a> Parser<'a> {
                         items.push(Proj::Column(name.to_ascii_lowercase()))
                     }
                     SelectPiece::Concat(expr) => items.push(Proj::Concat(expr)),
+                    SelectPiece::Length(expr) => items.push(Proj::Length(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -352,8 +364,8 @@ impl<'a> Parser<'a> {
                     key = Some(name);
                 }
                 SelectPiece::Aggregate(expr) => aggregate = Some(expr),
-                SelectPiece::Concat(_) => {
-                    return Err(Error::new("internal: concat piece"));
+                SelectPiece::Concat(_) | SelectPiece::Length(_) => {
+                    return Err(Error::new("internal: projection piece"));
                 }
             }
         }
@@ -375,6 +387,85 @@ impl<'a> Parser<'a> {
 
     fn starts_concat_call(&self) -> bool {
         self.starts_named_call("concat")
+    }
+
+    fn starts_length_call(&self) -> bool {
+        self.starts_named_call("length")
+    }
+
+    fn parse_length(&mut self) -> Result<LengthExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(LengthExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn parse_call_args(&mut self, name: &str) -> Result<(Vec<String>, Vec<ConcatArg>), Error> {
+        self.skip();
+        if !self.eat(b'(') {
+            return Err(Error::new(format!(
+                "unsupported: expected '(' after {name}"
+            )));
+        }
+        self.skip();
+        if self.peek() == Some(b')') {
+            self.pos += 1;
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let mut args = Vec::new();
+        let mut labels = Vec::new();
+        loop {
+            let (label, arg) = self.parse_call_arg()?;
+            labels.push(label);
+            args.push(arg);
+            self.skip();
+            if self.eat(b',') {
+                continue;
+            }
+            if self.eat(b')') {
+                break;
+            }
+            return Err(Error::new(format!(
+                "unsupported: expected ')' after {name}"
+            )));
+        }
+        Ok((labels, args))
+    }
+
+    fn parse_call_arg(&mut self) -> Result<(String, ConcatArg), Error> {
+        self.skip();
+        if self.peek() == Some(b'\'') {
+            let start = self.pos;
+            let text = self.parse_string()?;
+            let label = std::str::from_utf8(&self.src[start..self.pos])
+                .unwrap()
+                .to_string();
+            return Ok((label, ConcatArg::Literal(Scalar::Text(text))));
+        }
+        if self
+            .peek()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+        {
+            let spelling = self.ident_spelling()?;
+            let arg = if spelling.eq_ignore_ascii_case("null") {
+                ConcatArg::Literal(Scalar::Null)
+            } else {
+                ConcatArg::Column(spelling.clone())
+            };
+            return Ok((spelling, arg));
+        }
+        Err(Error::new(format!(
+            "unsupported: function argument near `{}`",
+            self.rest()
+        )))
     }
 
     fn starts_named_call(&self, expected: &str) -> bool {
@@ -407,56 +498,9 @@ impl<'a> Parser<'a> {
 
     fn parse_concat(&mut self) -> Result<ConcatExpr, Error> {
         let name = self.ident_spelling()?;
-        self.skip();
-        if !self.eat(b'(') {
-            return Err(Error::new(format!(
-                "unsupported: expected '(' after {name}"
-            )));
-        }
-        self.skip();
-        if self.peek() == Some(b')') {
+        let (labels, args) = self.parse_call_args(&name)?;
+        if args.is_empty() {
             return Err(Error::new("no arguments provided"));
-        }
-        let mut args = Vec::new();
-        let mut labels = Vec::new();
-        loop {
-            self.skip();
-            if self.peek() == Some(b'\'') {
-                let start = self.pos;
-                let text = self.parse_string()?;
-                labels.push(
-                    std::str::from_utf8(&self.src[start..self.pos])
-                        .unwrap()
-                        .to_string(),
-                );
-                args.push(ConcatArg::Literal(Scalar::Text(text)));
-            } else if self
-                .peek()
-                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
-            {
-                let spelling = self.ident_spelling()?;
-                if spelling.eq_ignore_ascii_case("null") {
-                    args.push(ConcatArg::Literal(Scalar::Null));
-                } else {
-                    args.push(ConcatArg::Column(spelling.clone()));
-                }
-                labels.push(spelling);
-            } else {
-                return Err(Error::new(format!(
-                    "unsupported: concat argument near `{}`",
-                    self.rest()
-                )));
-            }
-            self.skip();
-            if self.eat(b',') {
-                continue;
-            }
-            if self.eat(b')') {
-                break;
-            }
-            return Err(Error::new(format!(
-                "unsupported: expected ')' after {name}"
-            )));
         }
         Ok(ConcatExpr {
             label: format!("{name}({})", labels.join(", ")),
