@@ -47,13 +47,29 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   madrid "SELECT ts, location, tag FROM sensors WHERE location = 'madrid' ORDER BY ts" \
   ok_true "SELECT id, ok FROM sensors WHERE ok = true ORDER BY ts" \
   id_null "SELECT id FROM sensors WHERE id = NULL" \
-  order_id "SELECT id FROM sensors ORDER BY id"
+  order_id "SELECT id FROM sensors ORDER BY id" \
+  limit_order_id "SELECT id FROM sensors ORDER BY id LIMIT 2" \
+  limit_ts "SELECT id FROM sensors ORDER BY ts LIMIT 1" \
+  limit_plain "SELECT id FROM sensors LIMIT 2" \
+  limit_filtered "SELECT id FROM sensors WHERE id != NULL ORDER BY id LIMIT 1" \
+  limit_neg "SELECT id FROM sensors ORDER BY id LIMIT -1" \
+  limit_zero "SELECT id FROM sensors ORDER BY id LIMIT 0" \
+  limit_range "SELECT id FROM sensors ORDER BY id LIMIT 1, 3" \
+  limit_plain "SELECT id FROM sensors ORDER BY id LIMIT -2, 1" \
+  limit_order_id "SELECT id FROM sensors ORDER BY id LIMIT ,2"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
   madrid "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts" \
   id_null "SELECT id FROM days WHERE id = NULL" \
-  notes "SELECT note FROM days ORDER BY ts"
+  notes "SELECT note FROM days ORDER BY ts" \
+  limit_ts "SELECT id FROM days ORDER BY ts LIMIT 2" \
+  limit_madrid "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts LIMIT 1" \
+  limit_notes "SELECT note FROM days ORDER BY ts LIMIT 3" \
+  limit_neg "SELECT id FROM days ORDER BY ts LIMIT -2" \
+  limit_range "SELECT id FROM days ORDER BY ts LIMIT 1, 3" \
+  limit_ts "SELECT id FROM days ORDER BY ts LIMIT -4, -2" \
+  limit_madrid "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts LIMIT 0, 1"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -66,10 +82,26 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, ok FROM sensors WHERE ok = true ORDER BY ts"),
     (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = NULL"),
     (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY id"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY id LIMIT 2"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY ts LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors LIMIT 2"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id != NULL ORDER BY id LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY id LIMIT -1"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY id LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY id LIMIT 1, 3"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY id LIMIT -2, 1"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY id LIMIT ,2"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
     (os.environ["DIFF_H2"], "SELECT note FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT id FROM days ORDER BY ts LIMIT 2"),
+    (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts LIMIT 1"),
+    (os.environ["DIFF_H2"], "SELECT note FROM days ORDER BY ts LIMIT 3"),
+    (os.environ["DIFF_H2"], "SELECT id FROM days ORDER BY ts LIMIT -2"),
+    (os.environ["DIFF_H2"], "SELECT id FROM days ORDER BY ts LIMIT 1, 3"),
+    (os.environ["DIFF_H2"], "SELECT id FROM days ORDER BY ts LIMIT -4, -2"),
+    (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts LIMIT 0, 1"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -16,6 +16,17 @@ pub struct Query {
     pub table: String,
     pub filter: Option<Filter>,
     pub order_by: Option<String>,
+    /// `LIMIT` bounds after the single-argument form is rewritten.
+    /// `LIMIT n` with `n >= 0` is `[0, n)`. A negative `n` is `[n, 0)`.
+    pub limit: Option<Limit>,
+}
+
+/// Inclusive lower bound and exclusive upper bound, as QuestDB stores them
+/// before applying them to the row count. Negative values count from the end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limit {
+    pub lo: i64,
+    pub hi: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +70,11 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         }
         order_by = Some(column);
     }
+    let mut limit = None;
+    if parser.eat_keyword("limit") {
+        limit = Some(parser.parse_limit()?);
+        parser.skip();
+    }
     if parser.eat(b';') {
         parser.skip();
     }
@@ -73,6 +89,7 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         table,
         filter,
         order_by,
+        limit,
     })
 }
 
@@ -261,6 +278,72 @@ impl<'a> Parser<'a> {
         Err(Error::new("unterminated string literal"))
     }
 
+    fn parse_limit(&mut self) -> Result<Limit, Error> {
+        self.skip();
+        let lo_present = self.starts_limit_int();
+        let lo = if lo_present {
+            self.parse_limit_int()?
+        } else {
+            0
+        };
+        self.skip();
+        if !self.eat(b',') {
+            if !lo_present {
+                return Err(Error::new(
+                    "unsupported: LIMIT requires an integer constant",
+                ));
+            }
+            return Ok(single_limit(lo));
+        }
+        self.skip();
+        if self.starts_limit_int() {
+            let hi = self.parse_limit_int()?;
+            return Ok(Limit { lo, hi });
+        }
+        if !lo_present {
+            return Err(Error::new("unsupported: limit expression expected"));
+        }
+        // `LIMIT n,` is the single-argument form.
+        Ok(single_limit(lo))
+    }
+
+    fn starts_limit_int(&self) -> bool {
+        match self.peek() {
+            Some(byte) if byte.is_ascii_digit() => true,
+            Some(b'-') => self
+                .src
+                .get(self.pos + 1)
+                .is_some_and(|byte| byte.is_ascii_digit()),
+            _ => false,
+        }
+    }
+
+    fn parse_limit_int(&mut self) -> Result<i64, Error> {
+        let start = self.pos;
+        if self.peek() == Some(b'-') {
+            self.pos += 1;
+        }
+        if !matches!(self.peek(), Some(byte) if byte.is_ascii_digit()) {
+            return Err(Error::new(
+                "unsupported: LIMIT requires an integer constant",
+            ));
+        }
+        while matches!(self.peek(), Some(byte) if byte.is_ascii_digit()) {
+            self.pos += 1;
+        }
+        if matches!(self.peek(), Some(b'.' | b'e' | b'E')) {
+            return Err(Error::new(
+                "unsupported: LIMIT requires an integer constant",
+            ));
+        }
+        let text = std::str::from_utf8(&self.src[start..self.pos]).unwrap();
+        text.parse::<i64>().map_err(|_| {
+            Error::new(format!(
+                "unsupported: LIMIT integer `{text}` is out of range"
+            ))
+        })
+    }
+
     fn parse_number(&mut self) -> Result<Scalar, Error> {
         self.skip();
         let start = self.pos;
@@ -302,6 +385,14 @@ impl<'a> Parser<'a> {
     }
 }
 
+fn single_limit(n: i64) -> Limit {
+    if n >= 0 {
+        Limit { lo: 0, hi: n }
+    } else {
+        Limit { lo: n, hi: 0 }
+    }
+}
+
 pub fn timestamp_from_literal(value: &Scalar) -> Result<Option<i64>, Error> {
     match value {
         Scalar::Null => Ok(None),
@@ -337,7 +428,18 @@ mod tests {
         let query = parse_query("SELECT id, note FROM sensors WHERE id > 1 ORDER BY ts").unwrap();
         assert_eq!(query.table, "sensors");
         assert!(query.order_by.as_deref() == Some("ts"));
+        assert_eq!(query.limit, None);
+        let limited = parse_query("SELECT id FROM sensors ORDER BY id LIMIT -2").unwrap();
+        assert_eq!(limited.limit, Some(Limit { lo: -2, hi: 0 }));
+        let range = parse_query("SELECT id FROM sensors ORDER BY id LIMIT 3, 1").unwrap();
+        assert_eq!(range.limit, Some(Limit { lo: 3, hi: 1 }));
+        let open = parse_query("SELECT id FROM sensors LIMIT ,2").unwrap();
+        assert_eq!(open.limit, Some(Limit { lo: 0, hi: 2 }));
         let err = parse_query("SELECT 1").unwrap_err();
+        assert!(err.message.contains("unsupported"), "{}", err.message);
+        let err = parse_query("SELECT id FROM sensors ORDER BY id LIMIT 2.0").unwrap_err();
+        assert!(err.message.contains("unsupported"), "{}", err.message);
+        let err = parse_query("SELECT id FROM sensors ORDER BY id LIMIT ,").unwrap_err();
         assert!(err.message.contains("unsupported"), "{}", err.message);
     }
 }

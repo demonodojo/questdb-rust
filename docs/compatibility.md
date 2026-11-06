@@ -9,7 +9,7 @@ Fecha de la última ejecución: 2026-11-06. Estados: `not-started`, `in-progress
 | NULL de INT/LONG/DATE/TIMESTAMP/FLOAT/DOUBLE/STRING/SYMBOL/VARCHAR | verified | misma prueba y `SELECT id FROM sensors WHERE id = NULL` | BOOLEAN/BYTE/SHORT/CHAR no distinguen NULL de 0 en disco |
 | `-0.0` double | verified | fila 4 de `reading` | |
 | UTF-8 / UTF-16 (`β`, `東`, `東京`, `héllo`) | verified | columnas `ch`, `note`, `location`, `tag` | |
-| `SELECT` columnas o `*`, `WHERE` comparación, `ORDER BY` ASC | verified | `qdb-sql` `select_star_and_filters_match_reference_rows`, `tools/run_differential.sh` | Sin joins, agregados, `SAMPLE BY`, funciones, `DESC`, DML |
+| `SELECT` columnas o `*`, `WHERE` comparación, `ORDER BY` ASC, `LIMIT n` y `LIMIT lo, hi` | verified | `limit_matches_captured_exec`, `limit_range_matches_captured_exec`, `tools/run_differential.sh` | Sin joins, agregados, `SAMPLE BY`, funciones, `DESC`, DML. Un `lo` negativo con `hi` positivo solo se acepta si `ORDER BY` no es el timestamp designado |
 | `col = NULL` / `col != NULL` como en 10.1.0 | verified | queries del fixture | Solo sobre el literal NULL |
 | Orden `ORDER BY id` con NULL primero | verified | comparado con `/exec` del binario 10.1.0 | No probado en otras columnas |
 | Servidor HTTP, ILP, PG Wire, QWP | not-started | — | El CLI no escucha red |

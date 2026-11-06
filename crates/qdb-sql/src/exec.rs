@@ -55,6 +55,12 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
             compare_nulls_first(&table.columns[index][*a], &table.columns[index][*b])
         });
     }
+    if let Some(limit) = query.limit {
+        if limit.lo < 0 && limit.hi > 0 && limit_follows_timestamp_order(table, query)? {
+            return Err(Error::new("LIMIT <negative>, <positive> is not allowed"));
+        }
+        apply_limit(&mut row_ids, limit.lo, limit.hi);
+    }
     let columns = projection
         .iter()
         .map(|index| table.meta.columns[*index].name.clone())
@@ -83,6 +89,44 @@ pub fn render_tsv(result: &QueryResult) -> String {
         out.push('\n');
     }
     out
+}
+
+fn limit_follows_timestamp_order(table: &Table, query: &Query) -> Result<bool, Error> {
+    let Some(order) = &query.order_by else {
+        return Ok(true);
+    };
+    let index = table
+        .column_index(order)
+        .ok_or_else(|| Error::new(format!("unknown ORDER BY column `{order}`")))?;
+    Ok(index as i32 == table.meta.timestamp_index)
+}
+
+fn apply_limit(row_ids: &mut Vec<usize>, mut lo: i64, mut hi: i64) {
+    // `ORDER BY` a non-timestamp column keeps the last `|lo|` rows when `hi` is positive.
+    if lo < 0 && hi > 0 {
+        hi = 0;
+    }
+    if lo > hi && (lo ^ hi) >= 0 {
+        std::mem::swap(&mut lo, &mut hi);
+    }
+    let len = i64::try_from(row_ids.len()).unwrap_or(i64::MAX);
+    let (start, end) = if lo >= 0 && hi >= 0 {
+        (lo, hi)
+    } else if lo < 0 {
+        (len.saturating_add(lo).max(0), len.saturating_add(hi))
+    } else {
+        (lo, len.saturating_add(hi))
+    };
+    let start = start.max(0);
+    let end = end.min(len);
+    if start >= end {
+        row_ids.clear();
+        return;
+    }
+    let start = usize::try_from(start).unwrap_or(0);
+    let end = usize::try_from(end).unwrap_or(row_ids.len());
+    row_ids.drain(end..);
+    row_ids.drain(..start);
 }
 
 fn row_matches(table: &Table, row: usize, filter: &Filter) -> Result<bool, Error> {
@@ -360,6 +404,171 @@ mod tests {
             let result = execute(&root, sql).unwrap();
             let expected = std::fs::read_to_string(root.join(file)).unwrap();
             assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn limit_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT 2",
+                "expected/limit_order_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY ts LIMIT 1",
+                "expected/limit_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors LIMIT 2",
+                "expected/limit_plain.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors WHERE id != NULL ORDER BY id LIMIT 1",
+                "expected/limit_filtered.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT -1",
+                "expected/limit_neg.tsv",
+            ),
+            (
+                sensors,
+                "SELECT id FROM sensors ORDER BY id LIMIT 0",
+                "expected/limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT id FROM days ORDER BY ts LIMIT 2",
+                "expected/limit_ts.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts LIMIT 1",
+                "expected/limit_madrid.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT note FROM days ORDER BY ts LIMIT 3",
+                "expected/limit_notes.tsv",
+            ),
+            (
+                days,
+                "SELECT id FROM days ORDER BY ts LIMIT -2",
+                "expected/limit_neg.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn limit_range_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT 1, 3",
+                "expected/limit_range.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT 3, 1",
+                "expected/limit_range.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT -3, -1",
+                "expected/limit_range.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT 1, -1",
+                "expected/limit_range.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT 2, 10",
+                "expected/limit_plain.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT 2, 2",
+                "expected/limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT ,2",
+                "expected/limit_order_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT 2,",
+                "expected/limit_order_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT -2,",
+                "expected/limit_plain.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT ,-2",
+                "expected/limit_order_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id FROM sensors ORDER BY id LIMIT -2, 1",
+                "expected/limit_plain.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT id FROM days ORDER BY ts LIMIT 1, 3",
+                "expected/limit_range.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts LIMIT 0, 1",
+                "expected/limit_madrid.tsv",
+            ),
+            (
+                days,
+                "SELECT id FROM days ORDER BY ts LIMIT -4, -2",
+                "expected/limit_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let rejected = [
+            (sensors, "SELECT id FROM sensors LIMIT -2, 1"),
+            (
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1"),
+                "SELECT id FROM sensors ORDER BY ts LIMIT -2, 1",
+            ),
+            (
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2"),
+                "SELECT id FROM days ORDER BY ts LIMIT -2, 1",
+            ),
+        ];
+        for (root, sql) in rejected {
+            let err = execute(&root, sql).unwrap_err();
+            assert!(
+                err.message.contains("LIMIT <negative>, <positive>"),
+                "{sql}: {}",
+                err.message
+            );
         }
     }
 
