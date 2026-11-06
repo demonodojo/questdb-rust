@@ -1,0 +1,11 @@
+[package]
+name = "qdb-sql"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Small SELECT subset over a read-only QuestDB table"
+
+[dependencies]
+qdb-storage = { path = "../qdb-storage" }
+qdb-types = { path = "../qdb-types" }

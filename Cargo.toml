@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/qdb-types",
+    "crates/qdb-platform",
+    "crates/qdb-storage",
+    "crates/qdb-sql",
+    "crates/qdb-server",
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.85"

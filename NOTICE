@@ -1,0 +1,9 @@
+questdb-rust is an independent reimplementation of the QuestDB 10.1.0
+open-source database engine.
+
+QuestDB is copyright QuestDB and licensed under the Apache License, Version 2.0.
+The pinned source used as the behavior reference lives in reference/questdb
+(gitignored) at commit e11c837f8a169b533540bd6fa57ef3d520b68ad9.
+That tree is not linked into the Rust binary.
+
+This port is licensed under the Apache License, Version 2.0.
