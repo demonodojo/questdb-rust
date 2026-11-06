@@ -21,6 +21,8 @@ pub struct Query {
     pub columns: SelectList,
     pub table: String,
     pub filter: Option<Filter>,
+    /// One `GROUP BY` column. Several columns are rejected.
+    pub group_by: Option<String>,
     pub order_by: Vec<OrderBy>,
     /// `LIMIT` bounds after the single-argument form is rewritten.
     /// `LIMIT n` with `n >= 0` is `[0, n)`. A negative `n` is `[n, 0)`.
@@ -43,11 +45,22 @@ pub struct CountExpr {
     pub column: Option<String>,
 }
 
+/// One grouping column plus `count`, in select-list order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupedSelect {
+    /// Column spelling from the select list, used as the result header.
+    pub key: String,
+    pub count: CountExpr,
+    /// Position of the key in the output row.
+    pub key_at: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectList {
     Star,
     Columns(Vec<String>),
     Count(CountExpr),
+    Grouped(GroupedSelect),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,11 +87,25 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         filter = Some(parser.parse_filter()?);
         parser.skip();
     }
+    let mut group_by = None;
+    if parser.eat_keyword("group") {
+        parser.expect_keyword("by")?;
+        let column = parser.ident()?;
+        parser.skip();
+        if parser.peek() == Some(b',') {
+            return Err(Error::new("unsupported: multiple GROUP BY columns"));
+        }
+        group_by = Some(column);
+    }
     if parser.eat_keyword("order") {
         parser.expect_keyword("by")?;
         loop {
-            let column = parser.ident()?;
+            let mut column = parser.ident()?;
             parser.skip();
+            if parser.peek() == Some(b'(') {
+                column = parser.parse_order_call(column)?;
+                parser.skip();
+            }
             let descending = if parser.eat_keyword("desc") {
                 parser.skip();
                 true
@@ -113,9 +140,15 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         columns,
         table,
         filter,
+        group_by,
         order_by,
         limit,
     })
+}
+
+enum SelectPiece {
+    Column(String),
+    Count(CountExpr),
 }
 
 struct Parser<'a> {
@@ -198,33 +231,71 @@ impl<'a> Parser<'a> {
         if self.eat(b'*') {
             return Ok(SelectList::Star);
         }
-        if self.starts_count_call() {
-            let count = self.parse_count()?;
-            self.skip();
-            if self.peek() == Some(b',') {
-                return Err(Error::new(
-                    "unsupported: aggregate mixed with other select expressions",
-                ));
-            }
-            return Ok(SelectList::Count(count));
-        }
-        if !matches!(self.peek(), Some(b) if b.is_ascii_alphabetic() || b == b'_') {
+        if !self.starts_value() {
             return Err(Error::new(
                 "unsupported: SELECT list must name columns or `*`",
             ));
         }
-        let mut columns = Vec::new();
+        let mut pieces = Vec::new();
         loop {
-            columns.push(self.ident()?);
+            self.skip();
+            if self.starts_count_call() {
+                pieces.push(SelectPiece::Count(self.parse_count()?));
+            } else {
+                pieces.push(SelectPiece::Column(self.ident_spelling()?));
+            }
             self.skip();
             if !self.eat(b',') {
                 break;
             }
         }
-        if columns.is_empty() {
-            return Err(Error::new("unsupported: empty select list"));
+        let counts = pieces
+            .iter()
+            .filter(|piece| matches!(piece, SelectPiece::Count(_)))
+            .count();
+        if counts == 0 {
+            let mut columns = Vec::with_capacity(pieces.len());
+            for piece in pieces {
+                let SelectPiece::Column(name) = piece else {
+                    return Err(Error::new("internal: column piece"));
+                };
+                columns.push(name.to_ascii_lowercase());
+            }
+            return Ok(SelectList::Columns(columns));
         }
-        Ok(SelectList::Columns(columns))
+        if counts != 1 || pieces.len() > 2 {
+            return Err(Error::new(
+                "unsupported: aggregate mixed with other select expressions",
+            ));
+        }
+        if pieces.len() == 1 {
+            let Some(SelectPiece::Count(count)) = pieces.pop() else {
+                return Err(Error::new("internal: count piece"));
+            };
+            return Ok(SelectList::Count(count));
+        }
+        let mut key = None;
+        let mut key_at = 0;
+        let mut count = None;
+        for (index, piece) in pieces.into_iter().enumerate() {
+            match piece {
+                SelectPiece::Column(name) => {
+                    key_at = index;
+                    key = Some(name);
+                }
+                SelectPiece::Count(expr) => count = Some(expr),
+            }
+        }
+        let (Some(key), Some(count)) = (key, count) else {
+            return Err(Error::new(
+                "unsupported: aggregate mixed with other select expressions",
+            ));
+        };
+        Ok(SelectList::Grouped(GroupedSelect { key, count, key_at }))
+    }
+
+    fn starts_value(&self) -> bool {
+        matches!(self.peek(), Some(byte) if byte.is_ascii_alphabetic() || byte == b'_')
     }
 
     fn starts_count_call(&self) -> bool {
@@ -276,6 +347,27 @@ impl<'a> Parser<'a> {
             None => format!("{name}()"),
         };
         Ok(CountExpr { label, column })
+    }
+
+    fn parse_order_call(&mut self, name: String) -> Result<String, Error> {
+        self.skip();
+        if !self.eat(b'(') {
+            return Err(Error::new("unsupported: expected '(' after ORDER BY"));
+        }
+        self.skip();
+        let argument = if self.eat(b'*') || self.peek() == Some(b')') {
+            None
+        } else {
+            Some(self.ident()?)
+        };
+        self.skip();
+        if !self.eat(b')') {
+            return Err(Error::new("unsupported: expected ')' after ORDER BY"));
+        }
+        Ok(match argument {
+            Some(argument) => format!("{name}({argument})"),
+            None => format!("{name}()"),
+        })
     }
 
     fn ident_spelling(&mut self) -> Result<String, Error> {

@@ -1,6 +1,6 @@
 use crate::parse::{
-    date_from_literal, parse_query, timestamp_from_literal, CmpOp, CountExpr, Filter, Query,
-    SelectList,
+    date_from_literal, parse_query, timestamp_from_literal, CmpOp, CountExpr, Filter,
+    GroupedSelect, Query, SelectList,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{Error, Scalar};
@@ -26,8 +26,22 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
             query.table, table.name
         )));
     }
+    if query.group_by.is_some()
+        && !matches!(
+            &query.columns,
+            SelectList::Count(_) | SelectList::Grouped(_)
+        )
+    {
+        return Err(Error::new("unsupported: GROUP BY without count()"));
+    }
     let projection = match &query.columns {
-        SelectList::Count(count) => return execute_count(table, query, count),
+        SelectList::Count(count) if query.group_by.is_none() => {
+            return execute_count(table, query, count);
+        }
+        SelectList::Count(count) => return execute_group(table, query, None, count),
+        SelectList::Grouped(grouped) => {
+            return execute_group(table, query, Some(grouped), &grouped.count);
+        }
         SelectList::Star => (0..table.meta.columns.len()).collect::<Vec<_>>(),
         SelectList::Columns(names) => {
             let mut indexes = Vec::with_capacity(names.len());
@@ -116,20 +130,7 @@ fn execute_count(table: &Table, query: &Query, count: &CountExpr) -> Result<Quer
             )));
         }
     }
-    let counted = if let Some(name) = &count.column {
-        let index = table
-            .column_index(name)
-            .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
-        let tag = table.meta.columns[index].tag;
-        if tag == qdb_types::TAG_BOOLEAN {
-            return Err(Error::new(
-                "there is no matching function `count` with the argument types: (BOOLEAN)",
-            ));
-        }
-        Some((index, tag))
-    } else {
-        None
-    };
+    let counted = counted_column(table, count)?;
     let mut total = 0i64;
     for row in 0..table.row_count() {
         if let Some(filter) = &query.filter {
@@ -137,13 +138,7 @@ fn execute_count(table: &Table, query: &Query, count: &CountExpr) -> Result<Quer
                 continue;
             }
         }
-        if let Some((index, tag)) = counted {
-            let value = &table.columns[index][row];
-            if value.is_null() || (tag == qdb_types::TAG_CHAR && matches!(value, Scalar::Char(0))) {
-                continue;
-            }
-        }
-        total += 1;
+        total += count_increment(&table.columns, row, counted);
     }
     let mut row_ids = vec![0];
     if let Some(limit) = query.limit {
@@ -161,6 +156,134 @@ fn execute_count(table: &Table, query: &Query, count: &CountExpr) -> Result<Quer
         columns: vec![count.label.clone()],
         rows,
     })
+}
+
+fn execute_group(
+    table: &Table,
+    query: &Query,
+    grouped: Option<&GroupedSelect>,
+    count: &CountExpr,
+) -> Result<QueryResult, Error> {
+    let group_name = query
+        .group_by
+        .as_deref()
+        .ok_or_else(|| Error::new("unsupported: aggregate mixed with other select expressions"))?;
+    let key_index = if let Some(grouped) = grouped {
+        let select_index = table
+            .column_index(&grouped.key)
+            .ok_or_else(|| Error::new(format!("Invalid column: {}", grouped.key)))?;
+        let group_index = table
+            .column_index(group_name)
+            .ok_or_else(|| Error::new(format!("Invalid column: {group_name}")))?;
+        if select_index != group_index {
+            return Err(Error::new(
+                "column must appear in GROUP BY clause or aggregate function",
+            ));
+        }
+        select_index
+    } else {
+        table
+            .column_index(group_name)
+            .ok_or_else(|| Error::new(format!("Invalid column: {group_name}")))?
+    };
+    for order in &query.order_by {
+        let by_count = order.column.eq_ignore_ascii_case(&count.label);
+        let by_key = order.column.eq_ignore_ascii_case(group_name);
+        if !by_count && !by_key {
+            return Err(Error::new(format!(
+                "ORDER BY expressions must appear in select list. Invalid column: {}",
+                order.column
+            )));
+        }
+    }
+    let counted = counted_column(table, count)?;
+    let mut groups: Vec<(Scalar, i64)> = Vec::new();
+    for row in 0..table.row_count() {
+        if let Some(filter) = &query.filter {
+            if !row_matches(table, row, filter)? {
+                continue;
+            }
+        }
+        let key = table.columns[key_index][row].clone();
+        let increment = count_increment(&table.columns, row, counted);
+        if let Some(group) = groups.iter_mut().find(|(found, _)| found == &key) {
+            group.1 += increment;
+        } else {
+            groups.push((key, increment));
+        }
+    }
+    let tag = table.meta.columns[key_index].tag;
+    groups.sort_by(|left, right| {
+        for order in &query.order_by {
+            let mut ordering = if order.column.eq_ignore_ascii_case(&count.label) {
+                left.1.cmp(&right.1)
+            } else {
+                compare_asc(&left.0, &right.0, tag)
+            };
+            if order.descending {
+                ordering = ordering.reverse();
+            }
+            if ordering != Ordering::Equal {
+                return ordering;
+            }
+        }
+        Ordering::Equal
+    });
+    let mut row_ids: Vec<usize> = (0..groups.len()).collect();
+    if let Some(limit) = query.limit {
+        if limit.lo < 0 && limit.hi > 0 && limit_follows_timestamp_order(table, query)? {
+            return Err(Error::new("LIMIT <negative>, <positive> is not allowed"));
+        }
+        apply_limit(&mut row_ids, limit.lo, limit.hi);
+    }
+    let columns = match grouped {
+        Some(grouped) if grouped.key_at == 0 => {
+            vec![grouped.key.clone(), count.label.clone()]
+        }
+        Some(grouped) => vec![count.label.clone(), grouped.key.clone()],
+        None => vec![count.label.clone()],
+    };
+    let rows = row_ids
+        .into_iter()
+        .map(|index| {
+            let (key, total) = &groups[index];
+            let count_value = Scalar::Long(*total);
+            match grouped {
+                Some(grouped) if grouped.key_at == 0 => vec![key.clone(), count_value],
+                Some(_) => vec![count_value, key.clone()],
+                None => vec![count_value],
+            }
+        })
+        .collect();
+    Ok(QueryResult { columns, rows })
+}
+
+fn counted_column(table: &Table, count: &CountExpr) -> Result<Option<(usize, i32)>, Error> {
+    let Some(name) = &count.column else {
+        return Ok(None);
+    };
+    let index = table
+        .column_index(name)
+        .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+    let tag = table.meta.columns[index].tag;
+    if tag == qdb_types::TAG_BOOLEAN {
+        return Err(Error::new(
+            "there is no matching function `count` with the argument types: (BOOLEAN)",
+        ));
+    }
+    Ok(Some((index, tag)))
+}
+
+fn count_increment(columns: &[Vec<Scalar>], row: usize, counted: Option<(usize, i32)>) -> i64 {
+    let Some((index, tag)) = counted else {
+        return 1;
+    };
+    let value = &columns[index][row];
+    if value.is_null() || (tag == qdb_types::TAG_CHAR && matches!(value, Scalar::Char(0))) {
+        0
+    } else {
+        1
+    }
 }
 
 fn limit_follows_timestamp_order(table: &Table, query: &Query) -> Result<bool, Error> {
@@ -895,6 +1018,181 @@ mod tests {
         }
         let err = execute(&sensors, "SELECT count() FROM sensors ORDER BY id").unwrap_err();
         assert!(err.message.contains("ORDER BY"), "{}", err.message);
+    }
+
+    fn sorted_body(text: &str) -> (String, Vec<String>) {
+        let mut lines = text.lines();
+        let header = lines.next().unwrap_or("").to_string();
+        let mut body: Vec<String> = lines.map(ToOwned::to_owned).collect();
+        body.sort();
+        (header, body)
+    }
+
+    #[test]
+    fn group_by_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let unordered = [
+            (
+                sensors.clone(),
+                "SELECT id, count() FROM sensors GROUP BY id",
+                "expected/group_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, count() FROM sensors WHERE id > 100 GROUP BY id",
+                "expected/group_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, count() FROM sensors WHERE location = 'madrid' GROUP BY location",
+                "expected/group_madrid.tsv",
+            ),
+        ];
+        for (root, sql, file) in unordered {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(
+                sorted_body(&render_tsv(&result)),
+                sorted_body(&expected),
+                "{sql}"
+            );
+        }
+        let ordered = [
+            (
+                sensors.clone(),
+                "SELECT id, count() FROM sensors GROUP BY id ORDER BY id",
+                "expected/group_id_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, count() FROM sensors GROUP BY id ORDER BY id DESC",
+                "expected/group_id_desc.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, count() FROM sensors GROUP BY id ORDER BY id LIMIT 2",
+                "expected/group_id_limit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, count() FROM sensors GROUP BY id ORDER BY id LIMIT -2, 1",
+                "expected/group_id_tail.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, count() FROM sensors GROUP BY id ORDER BY id LIMIT 0",
+                "expected/group_id_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, count(note) FROM sensors GROUP BY id ORDER BY id",
+                "expected/group_id_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, count(ch) FROM sensors GROUP BY id ORDER BY id",
+                "expected/group_id_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, count(b) FROM sensors GROUP BY id ORDER BY id",
+                "expected/group_id_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT location, count() FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT note, count() FROM sensors GROUP BY note ORDER BY note",
+                "expected/group_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT reading, count() FROM sensors GROUP BY reading ORDER BY reading",
+                "expected/group_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ch, count() FROM sensors GROUP BY ch ORDER BY ch",
+                "expected/group_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ID, COUNT() FROM sensors GROUP BY ID ORDER BY ID",
+                "expected/group_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count() FROM sensors GROUP BY location ORDER BY location",
+                "expected/group_count_location.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT id, count() FROM days GROUP BY id ORDER BY id",
+                "expected/group_id.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT location, count() FROM days GROUP BY location ORDER BY location",
+                "expected/group_location.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT location, count(id) FROM days WHERE location = 'madrid' GROUP BY location",
+                "expected/group_madrid.tsv",
+            ),
+            (
+                days,
+                "SELECT id, count() FROM days WHERE id = NULL GROUP BY id",
+                "expected/group_null_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in ordered {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let by_count = execute(
+            &sensors,
+            "SELECT location, count() FROM sensors GROUP BY location ORDER BY count() DESC",
+        )
+        .unwrap();
+        assert_eq!(by_count.rows[0][0], Scalar::Text("madrid".to_string()));
+        assert_eq!(by_count.rows[0][1], Scalar::Long(2));
+        let swapped = execute(
+            &sensors,
+            "SELECT count(), id FROM sensors GROUP BY id ORDER BY id",
+        )
+        .unwrap();
+        assert_eq!(
+            swapped.columns,
+            vec!["count()".to_string(), "id".to_string()]
+        );
+        assert_eq!(swapped.rows[0], vec![Scalar::Long(1), Scalar::Null]);
+        let err = execute(
+            &sensors,
+            "SELECT id, count() FROM sensors GROUP BY location",
+        )
+        .unwrap_err();
+        assert!(err.message.contains("GROUP BY"), "{}", err.message);
+        let err =
+            execute(&sensors, "SELECT id, count() FROM sensors GROUP BY missing").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT id, count() FROM sensors").unwrap_err();
+        assert!(err.message.contains("unsupported"), "{}", err.message);
+        let err = execute(
+            &sensors,
+            "SELECT id, count() FROM sensors GROUP BY id, note",
+        )
+        .unwrap_err();
+        assert!(err.message.contains("multiple GROUP BY"), "{}", err.message);
     }
 
     #[test]

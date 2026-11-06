@@ -19,6 +19,15 @@ if [[ ! -x "$BIN" ]]; then
   echo "error: qdb binary was not produced" >&2
   exit 1
 fi
+sort_tsv() {
+  local src="$1"
+  local dest="$2"
+  {
+    head -n 1 "$src"
+    tail -n +2 "$src" | LC_ALL=C sort
+  } > "$dest"
+}
+
 compare_captured() {
   local data="$1"
   shift
@@ -27,15 +36,24 @@ compare_captured() {
     local name="$1"
     local sql="$2"
     shift 2
-    local got
+    local got expected
     got="$(mktemp)"
+    expected="$(mktemp)"
     "$BIN" query --data-dir "$data" --sql "$sql" > "$got"
-    if ! diff -u "$data/expected/${name}.tsv" "$got"; then
+    # GROUP BY without ORDER BY has no defined row order in 10.1.0.
+    if [[ "$sql" == *"GROUP BY"* && "$sql" != *"ORDER BY"* ]]; then
+      sort_tsv "$data/expected/${name}.tsv" "$expected"
+      sort_tsv "$got" "$got.sorted"
+      mv "$got.sorted" "$got"
+    else
+      cp "$data/expected/${name}.tsv" "$expected"
+    fi
+    if ! diff -u "$expected" "$got"; then
       echo "error: rust output differs from captured reference for ${name}" >&2
-      rm -f "$got"
+      rm -f "$got" "$expected"
       exit 1
     fi
-    rm -f "$got"
+    rm -f "$got" "$expected"
     count=$((count + 1))
   done
   echo "captured-oracle: ${count} queries match ${data#"$ROOT_DIR/"}/expected"
@@ -82,7 +100,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   count_one "SELECT count() FROM sensors WHERE id = NULL" \
   count_two "SELECT count() FROM sensors WHERE location = 'madrid'" \
   count_zero "SELECT count() FROM sensors WHERE id > 100" \
-  count_limit_zero "SELECT count() FROM sensors LIMIT 0"
+  count_limit_zero "SELECT count() FROM sensors LIMIT 0" \
+  group_id "SELECT id, count() FROM sensors GROUP BY id" \
+  group_id_order "SELECT id, count() FROM sensors GROUP BY id ORDER BY id" \
+  group_id_desc "SELECT id, count() FROM sensors GROUP BY id ORDER BY id DESC" \
+  group_id_limit "SELECT id, count() FROM sensors GROUP BY id ORDER BY id LIMIT 2" \
+  group_id_tail "SELECT id, count() FROM sensors GROUP BY id ORDER BY id LIMIT -2, 1" \
+  group_id_limit_zero "SELECT id, count() FROM sensors GROUP BY id ORDER BY id LIMIT 0" \
+  group_id_note "SELECT id, count(note) FROM sensors GROUP BY id ORDER BY id" \
+  group_id_ch "SELECT id, count(ch) FROM sensors GROUP BY id ORDER BY id" \
+  group_id_byte "SELECT id, count(b) FROM sensors GROUP BY id ORDER BY id" \
+  group_location "SELECT location, count() FROM sensors GROUP BY location ORDER BY location" \
+  group_note "SELECT note, count() FROM sensors GROUP BY note ORDER BY note" \
+  group_reading "SELECT reading, count() FROM sensors GROUP BY reading ORDER BY reading" \
+  group_ch "SELECT ch, count() FROM sensors GROUP BY ch ORDER BY ch" \
+  group_empty "SELECT id, count() FROM sensors WHERE id > 100 GROUP BY id" \
+  group_madrid "SELECT location, count() FROM sensors WHERE location = 'madrid' GROUP BY location" \
+  group_case "SELECT ID, COUNT() FROM sensors GROUP BY ID ORDER BY ID" \
+  group_count_location "SELECT count() FROM sensors GROUP BY location ORDER BY location"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -106,7 +141,11 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   count_all "SELECT count() FROM days" \
   count_id "SELECT count(id) FROM days" \
   count_note "SELECT count(note) FROM days" \
-  count_madrid "SELECT count(location) FROM days WHERE location = 'madrid'"
+  count_madrid "SELECT count(location) FROM days WHERE location = 'madrid'" \
+  group_id "SELECT id, count() FROM days GROUP BY id ORDER BY id" \
+  group_location "SELECT location, count() FROM days GROUP BY location ORDER BY location" \
+  group_madrid "SELECT location, count(id) FROM days WHERE location = 'madrid' GROUP BY location" \
+  group_null_id "SELECT id, count() FROM days WHERE id = NULL GROUP BY id"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -154,6 +193,23 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT count() FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H1"], "SELECT count() FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT count() FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT id, count() FROM sensors GROUP BY id"),
+    (os.environ["DIFF_H1"], "SELECT id, count() FROM sensors GROUP BY id ORDER BY id"),
+    (os.environ["DIFF_H1"], "SELECT id, count() FROM sensors GROUP BY id ORDER BY id DESC"),
+    (os.environ["DIFF_H1"], "SELECT id, count() FROM sensors GROUP BY id ORDER BY id LIMIT 2"),
+    (os.environ["DIFF_H1"], "SELECT id, count() FROM sensors GROUP BY id ORDER BY id LIMIT -2, 1"),
+    (os.environ["DIFF_H1"], "SELECT id, count() FROM sensors GROUP BY id ORDER BY id LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT id, count(note) FROM sensors GROUP BY id ORDER BY id"),
+    (os.environ["DIFF_H1"], "SELECT id, count(ch) FROM sensors GROUP BY id ORDER BY id"),
+    (os.environ["DIFF_H1"], "SELECT id, count(b) FROM sensors GROUP BY id ORDER BY id"),
+    (os.environ["DIFF_H1"], "SELECT location, count() FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT note, count() FROM sensors GROUP BY note ORDER BY note"),
+    (os.environ["DIFF_H1"], "SELECT reading, count() FROM sensors GROUP BY reading ORDER BY reading"),
+    (os.environ["DIFF_H1"], "SELECT ch, count() FROM sensors GROUP BY ch ORDER BY ch"),
+    (os.environ["DIFF_H1"], "SELECT id, count() FROM sensors WHERE id > 100 GROUP BY id"),
+    (os.environ["DIFF_H1"], "SELECT location, count() FROM sensors WHERE location = 'madrid' GROUP BY location"),
+    (os.environ["DIFF_H1"], "SELECT ID, COUNT() FROM sensors GROUP BY ID ORDER BY ID"),
+    (os.environ["DIFF_H1"], "SELECT count() FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -176,6 +232,10 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT count(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT count(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT count(location) FROM days WHERE location = 'madrid'"),
+    (os.environ["DIFF_H2"], "SELECT id, count() FROM days GROUP BY id ORDER BY id"),
+    (os.environ["DIFF_H2"], "SELECT location, count() FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT location, count(id) FROM days WHERE location = 'madrid' GROUP BY location"),
+    (os.environ["DIFF_H2"], "SELECT id, count() FROM days WHERE id = NULL GROUP BY id"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

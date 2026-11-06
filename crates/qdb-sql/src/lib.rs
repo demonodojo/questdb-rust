@@ -1,7 +1,7 @@
 //! A deliberately small SQL surface for the H1 read slice.
 //!
 //! Accepted form:
-//! `SELECT <cols>|*|count()|count(<col>) FROM <table> [WHERE <col> <op> <literal>] [ORDER BY <col> [ASC|DESC] [, ...]] [LIMIT n | LIMIT lo, hi]`
+//! `SELECT <cols>|*|count()|count(<col>)|<col>, count() FROM <table> [WHERE <col> <op> <literal>] [GROUP BY <col>] [ORDER BY <col>|count() [ASC|DESC] [, ...]] [LIMIT n | LIMIT lo, hi]`
 //!
 //! `LIMIT n` keeps the first `n` rows after `WHERE` and `ORDER BY`. A negative
 //! `n` keeps the last `|n|` rows in that same order. `LIMIT lo, hi` keeps the
@@ -12,6 +12,8 @@
 //! `count()` counts filtered rows. `count(col)` skips nulls, and also a `CHAR`
 //! whose stored value is 0. `count` of a `BOOLEAN` is rejected. An aggregate
 //! without `GROUP BY` returns one row, or none when `LIMIT` removes it.
+//! `GROUP BY` of one column returns one row per distinct value, in first-seen
+//! order until `ORDER BY` sorts it. `-0.0` and `0.0` stay in different groups.
 //! Anything else, including `SELECT 1`, DML and joins, returns
 //! `unsupported`.
 //! Comparison with a NULL literal follows the QuestDB 10.1.0 result captured for
