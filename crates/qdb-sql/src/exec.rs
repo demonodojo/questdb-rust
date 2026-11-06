@@ -342,6 +342,28 @@ mod tests {
     }
 
     #[test]
+    fn day_partitions_match_captured_exec() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            ("SELECT * FROM days ORDER BY ts", "expected/select_star.tsv"),
+            (
+                "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts",
+                "expected/madrid.tsv",
+            ),
+            (
+                "SELECT id FROM days WHERE id = NULL",
+                "expected/id_null.tsv",
+            ),
+            ("SELECT note FROM days ORDER BY ts", "expected/notes.tsv"),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
     fn rejects_unimplemented_sql() {
         let err = execute(&root(), "INSERT INTO sensors VALUES (1)").unwrap_err();
         assert!(err.message.contains("unsupported"), "{}", err.message);

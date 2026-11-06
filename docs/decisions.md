@@ -10,6 +10,10 @@ Solo `PARTITION BY NONE`, WAL desactivado, `_meta` versión 426 y columnas sin s
 
 BOOLEAN, BYTE, SHORT y CHAR guardan el nulo como 0. El lector repite ese hecho: un byte 0 booleano es `false`, un char 0 es vacío. No se inventa un tercer estado que el disco no tiene.
 
+## 2026-11-06 — Particiones DAY nativas
+
+El lector abre `PARTITION BY DAY` además de `NONE`. El nombre del directorio sale del timestamp de partición en microsegundos y del name txn del `_txn`. La partición activa usa `transient_row_count` aunque el tamaño guardado en el registro sea distinto; en el fixture `days` ese tamaño es 0 y hay 2 filas. Parquet y particiones composite se rechazan. HOUR, MONTH, YEAR y WEEK siguen fuera.
+
 ## 2026-11-06 — SQL propio, no un motor embebido
 
 El `SELECT` de H1 está escrito en `qdb-sql`. No envuelve DataFusion ni el parser de QuestDB. `SELECT 1`, DML y agregados responden `unsupported`.

@@ -1,8 +1,8 @@
 use crate::column::{read_column, read_symbol_map};
 use crate::meta::{parse_meta, ColumnMeta, TableMeta};
-use crate::txn::{parse_txn, TxnHeader};
+use crate::txn::{parse_txn, PartitionRecord, TxnHeader};
 use qdb_platform::{FileSystem, StdFs};
-use qdb_types::{Error, Scalar};
+use qdb_types::{civil_from_unix_days, Error, Scalar, PARTITION_BY_DAY, PARTITION_BY_NONE};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -43,13 +43,6 @@ pub fn open_table_with<F: FileSystem>(
     let txn_bytes = fs.read(&table_dir.join("_txn"))?;
     let meta = parse_meta(&meta_bytes)?;
     let txn = parse_txn(&txn_bytes)?;
-    if txn.fixed_row_count != 0 {
-        return Err(Error::new(format!(
-            "PARTITION BY NONE table `{}` has fixed_row_count {}; this reader only supports the single default partition",
-            table_name, txn.fixed_row_count
-        )));
-    }
-    let rows = txn.row_count()?;
     let symbol_columns = meta
         .columns
         .iter()
@@ -61,13 +54,7 @@ pub fn open_table_with<F: FileSystem>(
             txn.symbol_counts.len()
         )));
     }
-    let partition = table_dir.join("default");
-    if !fs.is_dir(&partition) {
-        return Err(Error::new(format!(
-            "missing default partition {}",
-            partition.display()
-        )));
-    }
+    let partitions = partition_slices(&meta, &txn)?;
     let mut symbols = Vec::new();
     for column in &meta.columns {
         if let Some(symbol_index) = column.symbol_index {
@@ -77,17 +64,29 @@ pub fn open_table_with<F: FileSystem>(
             symbols.push(read_symbol_map(&chars, &offsets, count, &column.name)?);
         }
     }
-    let mut columns = Vec::with_capacity(meta.columns.len());
-    for column in &meta.columns {
-        let data = fs.read(&column_path(&partition, &column.name, "d"))?;
-        let aux = if needs_aux(column) {
-            Some(fs.read(&column_path(&partition, &column.name, "i"))?)
-        } else {
-            None
-        };
-        let symbol_values = column.symbol_index.map(|index| symbols[index].as_slice());
-        let values = read_column(column, rows, &data, aux.as_deref(), symbol_values)?;
-        columns.push(values);
+    let mut columns = meta.columns.iter().map(|_| Vec::new()).collect::<Vec<_>>();
+    for partition in &partitions {
+        let partition_dir = table_dir.join(&partition.dir);
+        if !fs.is_dir(&partition_dir) {
+            return Err(Error::new(format!(
+                "missing partition {} of table `{table_name}`",
+                partition_dir.display()
+            )));
+        }
+        if partition.rows == 0 {
+            continue;
+        }
+        for (index, column) in meta.columns.iter().enumerate() {
+            let data = fs.read(&column_path(&partition_dir, &column.name, "d"))?;
+            let aux = if needs_aux(column) {
+                Some(fs.read(&column_path(&partition_dir, &column.name, "i"))?)
+            } else {
+                None
+            };
+            let symbol_values = column.symbol_index.map(|index| symbols[index].as_slice());
+            let values = read_column(column, partition.rows, &data, aux.as_deref(), symbol_values)?;
+            columns[index].extend(values);
+        }
     }
     Ok(Table {
         name: table_name.to_string(),
@@ -95,6 +94,86 @@ pub fn open_table_with<F: FileSystem>(
         txn,
         columns,
     })
+}
+
+struct PartitionSlice {
+    dir: String,
+    rows: usize,
+}
+
+fn partition_slices(meta: &TableMeta, txn: &TxnHeader) -> Result<Vec<PartitionSlice>, Error> {
+    if meta.partition_by == PARTITION_BY_NONE {
+        if txn.fixed_row_count != 0 {
+            return Err(Error::new(format!(
+                "PARTITION BY NONE table has fixed_row_count {}",
+                txn.fixed_row_count
+            )));
+        }
+        return Ok(vec![PartitionSlice {
+            dir: "default".to_string(),
+            rows: usize::try_from(txn.transient_row_count)
+                .map_err(|_| Error::new("_txn: transient row count does not fit usize"))?,
+        }]);
+    }
+    if meta.partition_by != PARTITION_BY_DAY {
+        return Err(Error::new(format!(
+            "unsupported partition by {}",
+            meta.partition_by
+        )));
+    }
+    if txn.partitions.is_empty() {
+        if txn.fixed_row_count != 0 || txn.transient_row_count != 0 {
+            return Err(Error::new(
+                "_txn: DAY table has rows but no partition records",
+            ));
+        }
+        return Ok(Vec::new());
+    }
+    let last = txn.partitions.len() - 1;
+    let mut fixed = 0i64;
+    let mut slices = Vec::with_capacity(txn.partitions.len());
+    for (index, partition) in txn.partitions.iter().enumerate() {
+        let rows = if index == last {
+            txn.transient_row_count
+        } else {
+            let stored = i64::try_from(partition.stored_row_count).map_err(|_| {
+                Error::new("_txn: partition row count does not fit a signed 64-bit integer")
+            })?;
+            fixed = fixed
+                .checked_add(stored)
+                .ok_or_else(|| Error::new("_txn: fixed row count overflow"))?;
+            stored
+        };
+        if rows < 0 {
+            return Err(Error::new(format!(
+                "_txn: negative partition row count {rows}"
+            )));
+        }
+        slices.push(PartitionSlice {
+            dir: day_partition_dir(partition)?,
+            rows: usize::try_from(rows)
+                .map_err(|_| Error::new("_txn: partition row count does not fit usize"))?,
+        });
+    }
+    if fixed != txn.fixed_row_count {
+        return Err(Error::new(format!(
+            "_txn: non-last partitions sum to {fixed} rows but fixed_row_count is {}",
+            txn.fixed_row_count
+        )));
+    }
+    Ok(slices)
+}
+
+fn day_partition_dir(partition: &PartitionRecord) -> Result<String, Error> {
+    const MICROS_PER_DAY: i64 = 86_400 * 1_000_000;
+    let days = partition.timestamp.div_euclid(MICROS_PER_DAY);
+    let (year, month, day) = civil_from_unix_days(days);
+    let mut name = format!("{year:04}-{month:02}-{day:02}");
+    if partition.name_txn > -1 {
+        name.push('.');
+        name.push_str(&partition.name_txn.to_string());
+    }
+    Ok(name)
 }
 
 fn needs_aux(column: &ColumnMeta) -> bool {
@@ -244,6 +323,65 @@ mod tests {
         assert_eq!(day[1], Scalar::Null);
         assert_eq!(day[2], Scalar::Date(0));
         assert_eq!(day[3], Scalar::Date(1_592_224_200_000));
+    }
+
+    #[test]
+    fn reads_two_day_partitions_including_name_txn_suffix() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let table = open_table(&root, "days").unwrap();
+        assert_eq!(table.meta.partition_by, PARTITION_BY_DAY);
+        assert!(!table.meta.wal_enabled);
+        assert_eq!(table.txn.fixed_row_count, 2);
+        assert_eq!(table.txn.transient_row_count, 2);
+        assert_eq!(table.txn.partitions.len(), 2);
+        assert_eq!(table.txn.partitions[0].name_txn, -1);
+        assert_eq!(table.txn.partitions[0].stored_row_count, 2);
+        assert_eq!(table.txn.partitions[0].timestamp, 1_577_923_200_000_000);
+        assert_eq!(table.txn.partitions[1].name_txn, 1);
+        assert_eq!(table.txn.partitions[1].stored_row_count, 0);
+        assert_eq!(table.txn.partitions[1].timestamp, 1_578_009_600_000_000);
+        assert_eq!(table.row_count(), 4);
+
+        let ts = &table.columns[table.column_index("ts").unwrap()];
+        assert_eq!(
+            ts,
+            &vec![
+                Scalar::Timestamp(1_577_934_245_000_000),
+                Scalar::Timestamp(1_578_006_000_000_000),
+                Scalar::Timestamp(1_578_009_600_000_000),
+                Scalar::Timestamp(1_578_054_600_000_000),
+            ]
+        );
+        let id = &table.columns[table.column_index("id").unwrap()];
+        assert_eq!(
+            id,
+            &vec![
+                Scalar::Long(1),
+                Scalar::Long(2),
+                Scalar::Long(3),
+                Scalar::Null,
+            ]
+        );
+        let note = &table.columns[table.column_index("note").unwrap()];
+        assert_eq!(
+            note,
+            &vec![
+                Scalar::Text("alpha".to_string()),
+                Scalar::Null,
+                Scalar::Text("beta".to_string()),
+                Scalar::Text("東京".to_string()),
+            ]
+        );
+        let location = &table.columns[table.column_index("location").unwrap()];
+        assert_eq!(
+            location,
+            &vec![
+                Scalar::Text("madrid".to_string()),
+                Scalar::Null,
+                Scalar::Text("madrid".to_string()),
+                Scalar::Text("東京".to_string()),
+            ]
+        );
     }
 
     #[test]

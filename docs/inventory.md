@@ -65,7 +65,7 @@ El i64 de min timestamp en ese `_txn` vale `Long.MAX_VALUE`. El max timestamp va
 
 Símbolos: un slot de 8 bytes por columna SYMBOL dentro del registro (`count` i32 + transient i32) a partir de offset 132 del registro. El mapa vive en la raíz de la tabla: `<col>.o` (cabecera 64, luego i64 de inicio en `<col>.c` por clave) y `<col>.c` (strings UTF-16). La clave nula en `<col>.d` es `Integer.MIN_VALUE`.
 
-Partición `PARTITION BY NONE`: directorio `default/`. Columna fija `<col>.d`. STRING y VARCHAR añaden `<col>.i`.
+Partición `PARTITION BY NONE`: directorio `default/`. `PARTITION BY DAY` (`PartitionBy.DAY` = 0): el `_txn` guarda 4 i64 por partición (timestamp, tamaño enmascarado, name txn, versión). El directorio es `YYYY-MM-DD` y, si name txn es mayor que -1, `YYYY-MM-DD.{nameTxn}`. En `tests/fixtures/h2` el segundo día es `2020-01-03.1` y el tamaño almacenado de esa partición activa es 0; las filas salen de `transient_row_count`. `fixed_row_count` es la suma de las particiones anteriores. Columna fija `<col>.d`. STRING y VARCHAR añaden `<col>.i`. El mapa SYMBOL sigue en la raíz de la tabla.
 
 | Tag | Nombre | Ancho | Nulo en disco |
 | --- | --- | --- | --- |

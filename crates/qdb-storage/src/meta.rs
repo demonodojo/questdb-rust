@@ -1,7 +1,9 @@
 //! `_meta` layout from `TableUtils.writeMetadata` in QuestDB 10.1.0.
 
 use crate::bytes::{i32_at, utf16_str_at};
-use qdb_types::{type_name, type_tag, Error, METADATA_VERSION_10_1_0, PARTITION_BY_NONE};
+use qdb_types::{
+    type_name, type_tag, Error, METADATA_VERSION_10_1_0, PARTITION_BY_DAY, PARTITION_BY_NONE,
+};
 
 const META_OFFSET_COUNT: usize = 0;
 const META_OFFSET_PARTITION_BY: usize = 4;
@@ -42,9 +44,9 @@ pub fn parse_meta(bytes: &[u8]) -> Result<TableMeta, Error> {
     }
     let column_count = column_count as usize;
     let partition_by = i32_at(bytes, META_OFFSET_PARTITION_BY, "_meta partition by")?;
-    if partition_by != PARTITION_BY_NONE {
+    if partition_by != PARTITION_BY_NONE && partition_by != PARTITION_BY_DAY {
         return Err(Error::new(format!(
-            "unsupported partition by {partition_by}; this reader only opens PARTITION BY NONE ({PARTITION_BY_NONE})"
+            "unsupported partition by {partition_by}; this reader opens NONE ({PARTITION_BY_NONE}) and DAY ({PARTITION_BY_DAY})"
         )));
     }
     let timestamp_index = i32_at(bytes, META_OFFSET_TIMESTAMP_INDEX, "_meta timestamp index")?;

@@ -6,8 +6,10 @@ use qdb_types::Error;
 const TX_BASE_OFFSET_VERSION: usize = 0;
 const TX_BASE_OFFSET_A: usize = 8;
 const TX_BASE_OFFSET_SYMBOLS_SIZE_A: usize = 12;
+const TX_BASE_OFFSET_PARTITIONS_SIZE_A: usize = 16;
 const TX_BASE_OFFSET_B: usize = 32;
 const TX_BASE_OFFSET_SYMBOLS_SIZE_B: usize = 36;
+const TX_BASE_OFFSET_PARTITIONS_SIZE_B: usize = 40;
 const TX_OFFSET_TXN: usize = 0;
 const TX_OFFSET_TRANSIENT_ROW_COUNT: usize = 8;
 const TX_OFFSET_FIXED_ROW_COUNT: usize = 16;
@@ -15,6 +17,20 @@ const TX_OFFSET_MIN_TIMESTAMP: usize = 24;
 const TX_OFFSET_MAX_TIMESTAMP: usize = 32;
 const TX_OFFSET_MAP_WRITER_COUNT: usize = 128;
 const SYMBOL_WRITER_SLOT: usize = 8;
+const PARTITION_RECORD_BYTES: usize = 32;
+/// Low 44 bits of the partition size word. Flag bits above that are not a row count.
+const PARTITION_SIZE_MASK: u64 = (1 << 44) - 1;
+const PARTITION_PARQUET_FORMAT_BIT: u64 = 1 << 61;
+const PARTITION_COMPOSITE_BIT: u64 = 1 << 61;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartitionRecord {
+    pub timestamp: i64,
+    /// Row count stored in the partition record. The active partition's count lives in
+    /// `TxnHeader::transient_row_count` and can disagree with this field.
+    pub stored_row_count: u64,
+    pub name_txn: i64,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxnHeader {
@@ -25,6 +41,7 @@ pub struct TxnHeader {
     pub max_timestamp: i64,
     /// Distinct values per symbol column, in symbol-column order.
     pub symbol_counts: Vec<i32>,
+    pub partitions: Vec<PartitionRecord>,
 }
 
 impl TxnHeader {
@@ -46,20 +63,35 @@ impl TxnHeader {
 pub fn parse_txn(bytes: &[u8]) -> Result<TxnHeader, Error> {
     let version = i64_at(bytes, TX_BASE_OFFSET_VERSION, "_txn version")?;
     let use_a = version & 1 == 0;
-    let (base, symbols_size) = if use_a {
+    let (base, symbols_size, partitions_size) = if use_a {
         (
             i32_at(bytes, TX_BASE_OFFSET_A, "_txn offset A")?,
             i32_at(bytes, TX_BASE_OFFSET_SYMBOLS_SIZE_A, "_txn symbols size A")?,
+            i32_at(
+                bytes,
+                TX_BASE_OFFSET_PARTITIONS_SIZE_A,
+                "_txn partitions size A",
+            )?,
         )
     } else {
         (
             i32_at(bytes, TX_BASE_OFFSET_B, "_txn offset B")?,
             i32_at(bytes, TX_BASE_OFFSET_SYMBOLS_SIZE_B, "_txn symbols size B")?,
+            i32_at(
+                bytes,
+                TX_BASE_OFFSET_PARTITIONS_SIZE_B,
+                "_txn partitions size B",
+            )?,
         )
     };
-    if base < 0 || symbols_size < 0 || symbols_size % SYMBOL_WRITER_SLOT as i32 != 0 {
+    if base < 0
+        || symbols_size < 0
+        || symbols_size % SYMBOL_WRITER_SLOT as i32 != 0
+        || partitions_size < 0
+        || partitions_size as usize % PARTITION_RECORD_BYTES != 0
+    {
         return Err(Error::new(format!(
-            "_txn: invalid section base={base} symbols_size={symbols_size}"
+            "_txn: invalid section base={base} symbols_size={symbols_size} partitions_size={partitions_size}"
         )));
     }
     let base = base as usize;
@@ -101,6 +133,7 @@ pub fn parse_txn(bytes: &[u8]) -> Result<TxnHeader, Error> {
         }
         symbol_counts.push(count);
     }
+    let partitions = read_partitions(bytes, base, symbols_size as usize, partitions_size as usize)?;
     Ok(TxnHeader {
         txn,
         transient_row_count,
@@ -108,5 +141,57 @@ pub fn parse_txn(bytes: &[u8]) -> Result<TxnHeader, Error> {
         min_timestamp,
         max_timestamp,
         symbol_counts,
+        partitions,
     })
+}
+
+fn read_partitions(
+    bytes: &[u8],
+    base: usize,
+    symbols_size: usize,
+    partitions_size: usize,
+) -> Result<Vec<PartitionRecord>, Error> {
+    let size_at = base + TX_OFFSET_MAP_WRITER_COUNT + 4 + symbols_size;
+    let recorded = i32_at(bytes, size_at, "_txn partition table size")?;
+    if recorded < 0 || recorded as usize != partitions_size {
+        return Err(Error::new(format!(
+            "_txn: partition table size {recorded} does not match header {partitions_size}"
+        )));
+    }
+    let mut partitions = Vec::with_capacity(partitions_size / PARTITION_RECORD_BYTES);
+    let mut previous_timestamp = i64::MIN;
+    for index in 0..partitions_size / PARTITION_RECORD_BYTES {
+        let at = size_at + 4 + index * PARTITION_RECORD_BYTES;
+        let timestamp = i64_at(bytes, at, "_txn partition timestamp")?;
+        if index > 0 && timestamp <= previous_timestamp {
+            return Err(Error::new(format!(
+                "_txn: partition timestamp {timestamp} is not after {previous_timestamp}"
+            )));
+        }
+        previous_timestamp = timestamp;
+        let masked = i64_at(bytes, at + 8, "_txn partition size")? as u64;
+        if masked & PARTITION_PARQUET_FORMAT_BIT != 0 {
+            return Err(Error::new(format!(
+                "_txn: partition {index} is parquet and this reader only opens native columns"
+            )));
+        }
+        let version = i64_at(bytes, at + 24, "_txn partition version")? as u64;
+        if version & PARTITION_COMPOSITE_BIT != 0 {
+            return Err(Error::new(format!(
+                "_txn: partition {index} is composite and this reader only opens plain directories"
+            )));
+        }
+        let name_txn = i64_at(bytes, at + 16, "_txn partition name txn")?;
+        if name_txn < -1 {
+            return Err(Error::new(format!(
+                "_txn: partition {index} name txn {name_txn} is invalid"
+            )));
+        }
+        partitions.push(PartitionRecord {
+            timestamp,
+            stored_row_count: masked & PARTITION_SIZE_MASK,
+            name_txn,
+        });
+    }
+    Ok(partitions)
 }

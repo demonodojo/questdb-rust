@@ -2,13 +2,14 @@
 
 ## Hito actual
 
-H0 y H1 cumplidos el 2026-11-06. El port no está terminado.
+H0 y H1 cumplidos. La lectura de `PARTITION BY DAY` de dos días también, el 2026-11-06. El port no está terminado.
 
 ## Qué hay
 
 - Referencia fijada: tag `10.1.0`, commit `e11c837f8a169b533540bd6fa57ef3d520b68ad9`. Detalle en `docs/upstream.md`.
 - Inventario medido en `docs/inventory.md`.
-- Fixture real `tests/fixtures/h1`: tabla `sensors`, 4 filas, escrita por el binario 10.1.0, leída de nuevo después de reiniciar el servidor (`count() = 4`).
+- Fixture real `tests/fixtures/h1`: tabla `sensors`, 4 filas, `PARTITION BY NONE`.
+- Fixture real `tests/fixtures/h2`: tabla `days`, 4 filas en `2020-01-02` y `2020-01-03.1`, `PARTITION BY DAY`, WAL off. El sufijo `.1` es el name txn de la segunda partición.
 - Workspace `qdb-types`, `qdb-platform`, `qdb-storage`, `qdb-sql`, `qdb-server`.
 - CLI: `qdb query --data-dir tests/fixtures/h1 --sql "..."`.
 
@@ -22,29 +23,31 @@ Tests que pasaron:
 | --- | --- |
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
-| qdb-storage | 3 ok, incluido `reads_original_sensors_fixture` |
-| qdb-sql | 3 ok, incluido el `SELECT` con filtros del fixture |
+| qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
+| qdb-sql | 4 ok, incluido el `SELECT` de `days` contra el TSV capturado de `/exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
 captured-oracle: 6 queries match tests/fixtures/h1/expected
-live-reference: NOT RUNNING at http://127.0.0.1:19011/exec
-compared only against captured output from QuestDB 10.1.0; this is not a live differential run
+captured-oracle: 4 queries match tests/fixtures/h2/expected
+live-reference: 10 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
-Esas seis salidas se capturaron antes, con el servidor vivo, desde `GET /exec`. El TSV de `SELECT *` coincide con el JSON de QuestDB, incluyendo `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`.
+Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
 
 `cargo tree -p qdb-server` solo muestra los cinco crates del workspace.
 
 ## Limitaciones
 
-- Solo `PARTITION BY NONE`, WAL desactivado, `_meta` versión 426, ficheros de columna sin sufijo de txn.
+- `PARTITION BY NONE` y `DAY`, WAL desactivado, `_meta` versión 426, ficheros de columna sin sufijo de txn.
+- HOUR, MONTH, YEAR, WEEK, Parquet y particiones composite se rechazan.
+- La última partición usa `transient_row_count`. El tamaño guardado en su registro puede ser 0.
 - Sin escritura, sin red, sin el resto de tipos ni de SQL.
 - BOOLEAN/BYTE/SHORT/CHAR no separan NULL de 0; es el formato upstream.
 - Maven no está instalado, así que la suite Java no se ejecutó (`docs/blockers.md`).
 
 ## Próxima tarea
 
-Generar con el binario 10.1.0 una segunda tabla `PARTITION BY DAY` de dos días, no WAL, y extender `qdb-storage` para leer la lista de particiones del `_txn` (timestamp, tamaño, name txn) y los directorios `YYYY-MM-DD`. Añadir un test que compare las filas con `/exec` o con un TSV capturado. No abrir WAL en ese paso.
+Añadir `LIMIT n` al `SELECT` de `qdb-sql` y comprobarlo contra `/exec` en `sensors` y `days`. No abrir WAL en ese paso.

@@ -8,6 +8,8 @@ use std::fmt;
 /// Metadata format version written by QuestDB 10.1.0 (`ColumnType.VERSION`).
 pub const METADATA_VERSION_10_1_0: i32 = 426;
 
+/// `PartitionBy.DAY`.
+pub const PARTITION_BY_DAY: i32 = 0;
 /// `PartitionBy.NONE`.
 pub const PARTITION_BY_NONE: i32 = 3;
 

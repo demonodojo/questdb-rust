@@ -22,7 +22,7 @@ fn run(args: Vec<String>) -> Result<(), Error> {
     if args.first().map(String::as_str) != Some("query") {
         return Err(Error::new(
             "usage: qdb query --data-dir DIR --sql SQL\n\
-             reads a PARTITION BY NONE table and prints a tab-separated result",
+             reads a PARTITION BY NONE or DAY table and prints a tab-separated result",
         ));
     }
     let mut data_dir: Option<PathBuf> = None;

@@ -19,43 +19,60 @@ if [[ ! -x "$BIN" ]]; then
   echo "error: qdb binary was not produced" >&2
   exit 1
 fi
-DATA="$ROOT_DIR/tests/fixtures/h1"
-declare -a NAMES=(select_star id_gt_1 madrid ok_true id_null order_id)
-declare -a SQLS=(
-  "SELECT * FROM sensors ORDER BY ts"
-  "SELECT id, note, location, tag FROM sensors WHERE id > 1"
-  "SELECT ts, location, tag FROM sensors WHERE location = 'madrid' ORDER BY ts"
-  "SELECT id, ok FROM sensors WHERE ok = true ORDER BY ts"
-  "SELECT id FROM sensors WHERE id = NULL"
-  "SELECT id FROM sensors ORDER BY id"
-)
-for i in "${!NAMES[@]}"; do
-  got="$(mktemp)"
-  "$BIN" query --data-dir "$DATA" --sql "${SQLS[$i]}" > "$got"
-  if ! diff -u "$DATA/expected/${NAMES[$i]}.tsv" "$got"; then
-    echo "error: rust output differs from captured reference for ${NAMES[$i]}" >&2
+compare_captured() {
+  local data="$1"
+  shift
+  local count=0
+  while [[ $# -ge 2 ]]; do
+    local name="$1"
+    local sql="$2"
+    shift 2
+    local got
+    got="$(mktemp)"
+    "$BIN" query --data-dir "$data" --sql "$sql" > "$got"
+    if ! diff -u "$data/expected/${name}.tsv" "$got"; then
+      echo "error: rust output differs from captured reference for ${name}" >&2
+      rm -f "$got"
+      exit 1
+    fi
     rm -f "$got"
-    exit 1
-  fi
-  rm -f "$got"
-done
-echo "captured-oracle: 6 queries match tests/fixtures/h1/expected"
+    count=$((count + 1))
+  done
+  echo "captured-oracle: ${count} queries match ${data#"$ROOT_DIR/"}/expected"
+}
+
+compare_captured "$ROOT_DIR/tests/fixtures/h1" \
+  select_star "SELECT * FROM sensors ORDER BY ts" \
+  id_gt_1 "SELECT id, note, location, tag FROM sensors WHERE id > 1" \
+  madrid "SELECT ts, location, tag FROM sensors WHERE location = 'madrid' ORDER BY ts" \
+  ok_true "SELECT id, ok FROM sensors WHERE ok = true ORDER BY ts" \
+  id_null "SELECT id FROM sensors WHERE id = NULL" \
+  order_id "SELECT id FROM sensors ORDER BY id"
+
+compare_captured "$ROOT_DIR/tests/fixtures/h2" \
+  select_star "SELECT * FROM days ORDER BY ts" \
+  madrid "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts" \
+  id_null "SELECT id FROM days WHERE id = NULL" \
+  notes "SELECT note FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
-  DIFF_ROOT="$DATA" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
+  DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
 import json, os, subprocess, sys, urllib.parse, urllib.request
 http = sys.argv[1]
 queries = [
-    "SELECT * FROM sensors ORDER BY ts",
-    "SELECT id, note, location, tag FROM sensors WHERE id > 1",
-    "SELECT ts, location, tag FROM sensors WHERE location = 'madrid' ORDER BY ts",
-    "SELECT id, ok FROM sensors WHERE ok = true ORDER BY ts",
-    "SELECT id FROM sensors WHERE id = NULL",
-    "SELECT id FROM sensors ORDER BY id",
+    (os.environ["DIFF_H1"], "SELECT * FROM sensors ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id, note, location, tag FROM sensors WHERE id > 1"),
+    (os.environ["DIFF_H1"], "SELECT ts, location, tag FROM sensors WHERE location = 'madrid' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id, ok FROM sensors WHERE ok = true ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY id"),
+    (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
+    (os.environ["DIFF_H2"], "SELECT note FROM days ORDER BY ts"),
 ]
-root = os.environ.get("DIFF_ROOT")
 bin_path = os.environ["DIFF_BIN"]
-for sql in queries:
+for root, sql in queries:
     url = http + "?" + urllib.parse.urlencode({"query": sql})
     with urllib.request.urlopen(url) as response:
         payload = json.load(response)
