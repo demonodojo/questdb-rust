@@ -9,7 +9,7 @@ Fecha de la última ejecución: 2026-11-06. Estados: `not-started`, `in-progress
 | NULL de INT/LONG/DATE/TIMESTAMP/FLOAT/DOUBLE/STRING/SYMBOL/VARCHAR | verified | misma prueba y `SELECT id FROM sensors WHERE id = NULL` | BOOLEAN/BYTE/SHORT/CHAR no distinguen NULL de 0 en disco |
 | `-0.0` double | verified | fila 4 de `reading` | |
 | UTF-8 / UTF-16 (`β`, `東`, `東京`, `héllo`) | verified | columnas `ch`, `note`, `location`, `tag` | |
-| `SELECT` columnas o `*`, `WHERE` comparación, `ORDER BY` de varias columnas ASC o DESC, `LIMIT` | verified | `multi_column_order_matches_captured_exec`, `tools/run_differential.sh` | Sin joins, agregados, `SAMPLE BY`, funciones, DML. `LIMIT <negative>, <positive>` se rechaza sin `ORDER BY` o si la única clave es el timestamp designado |
+| `SELECT` columnas o `*`, `count()` y `count(col)`, `WHERE`, `ORDER BY`, `LIMIT` | verified | `count_matches_captured_exec`, `tools/run_differential.sh` | Sin `GROUP BY`, joins, otras funciones ni DML. `count(BOOLEAN)` se rechaza. `count(CHAR)` no cuenta el valor 0 |
 | `col = NULL` / `col != NULL` como en 10.1.0 | verified | queries del fixture | Solo sobre el literal NULL |
 | Orden `ORDER BY`: NULL primero en enteros, texto, símbolo, fecha y timestamp; NULL al final en FLOAT y DOUBLE | verified | `descending_order_matches_captured_exec` | `DESC` invierte ese orden. `-0.0` queda antes que `0.0` |
 | Servidor HTTP, ILP, PG Wire, QWP | not-started | — | El CLI no escucha red |

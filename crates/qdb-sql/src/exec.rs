@@ -1,5 +1,6 @@
 use crate::parse::{
-    date_from_literal, parse_query, timestamp_from_literal, CmpOp, Filter, Query, SelectList,
+    date_from_literal, parse_query, timestamp_from_literal, CmpOp, CountExpr, Filter, Query,
+    SelectList,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{Error, Scalar};
@@ -26,6 +27,7 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
         )));
     }
     let projection = match &query.columns {
+        SelectList::Count(count) => return execute_count(table, query, count),
         SelectList::Star => (0..table.meta.columns.len()).collect::<Vec<_>>(),
         SelectList::Columns(names) => {
             let mut indexes = Vec::with_capacity(names.len());
@@ -103,6 +105,62 @@ pub fn render_tsv(result: &QueryResult) -> String {
         out.push('\n');
     }
     out
+}
+
+fn execute_count(table: &Table, query: &Query, count: &CountExpr) -> Result<QueryResult, Error> {
+    for order in &query.order_by {
+        if !order.column.eq_ignore_ascii_case(&count.label) {
+            return Err(Error::new(format!(
+                "ORDER BY expressions must appear in select list. Invalid column: {}",
+                order.column
+            )));
+        }
+    }
+    let counted = if let Some(name) = &count.column {
+        let index = table
+            .column_index(name)
+            .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+        let tag = table.meta.columns[index].tag;
+        if tag == qdb_types::TAG_BOOLEAN {
+            return Err(Error::new(
+                "there is no matching function `count` with the argument types: (BOOLEAN)",
+            ));
+        }
+        Some((index, tag))
+    } else {
+        None
+    };
+    let mut total = 0i64;
+    for row in 0..table.row_count() {
+        if let Some(filter) = &query.filter {
+            if !row_matches(table, row, filter)? {
+                continue;
+            }
+        }
+        if let Some((index, tag)) = counted {
+            let value = &table.columns[index][row];
+            if value.is_null() || (tag == qdb_types::TAG_CHAR && matches!(value, Scalar::Char(0))) {
+                continue;
+            }
+        }
+        total += 1;
+    }
+    let mut row_ids = vec![0];
+    if let Some(limit) = query.limit {
+        if limit.lo < 0 && limit.hi > 0 && limit_follows_timestamp_order(table, query)? {
+            return Err(Error::new("LIMIT <negative>, <positive> is not allowed"));
+        }
+        apply_limit(&mut row_ids, limit.lo, limit.hi);
+    }
+    let rows = if row_ids.is_empty() {
+        Vec::new()
+    } else {
+        vec![vec![Scalar::Long(total)]]
+    };
+    Ok(QueryResult {
+        columns: vec![count.label.clone()],
+        rows,
+    })
 }
 
 fn limit_follows_timestamp_order(table: &Table, query: &Query) -> Result<bool, Error> {
@@ -750,10 +808,106 @@ mod tests {
     }
 
     #[test]
+    fn count_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT count() FROM sensors",
+                "expected/count_all.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count(*) FROM sensors",
+                "expected/count_all.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count(id) FROM sensors",
+                "expected/count_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count(note) FROM sensors",
+                "expected/count_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count(reading) FROM sensors",
+                "expected/count_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count(ch) FROM sensors",
+                "expected/count_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count(b) FROM sensors",
+                "expected/count_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count() FROM sensors WHERE id = NULL",
+                "expected/count_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count() FROM sensors WHERE location = 'madrid'",
+                "expected/count_two.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count() FROM sensors WHERE id > 100",
+                "expected/count_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT count() FROM sensors LIMIT 0",
+                "expected/count_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT count() FROM days",
+                "expected/count_all.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT count(id) FROM days",
+                "expected/count_id.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT count(note) FROM days",
+                "expected/count_note.tsv",
+            ),
+            (
+                days,
+                "SELECT count(location) FROM days WHERE location = 'madrid'",
+                "expected/count_madrid.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT count() FROM sensors ORDER BY id").unwrap_err();
+        assert!(err.message.contains("ORDER BY"), "{}", err.message);
+    }
+
+    #[test]
     fn rejects_unimplemented_sql() {
         let err = execute(&root(), "INSERT INTO sensors VALUES (1)").unwrap_err();
         assert!(err.message.contains("unsupported"), "{}", err.message);
-        let err = execute(&root(), "SELECT count() FROM sensors").unwrap_err();
+        let err = execute(&root(), "SELECT sum() FROM sensors").unwrap_err();
         assert!(err.message.contains("unsupported"), "{}", err.message);
+        let err = execute(&root(), "SELECT count(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("no matching function"),
+            "{}",
+            err.message
+        );
     }
 }

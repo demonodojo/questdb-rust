@@ -36,9 +36,18 @@ pub struct Limit {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CountExpr {
+    /// Result column name, such as `count()` or `count(id)`.
+    pub label: String,
+    /// `None` for `count()` and `count(*)`.
+    pub column: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectList {
     Star,
     Columns(Vec<String>),
+    Count(CountExpr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -189,6 +198,16 @@ impl<'a> Parser<'a> {
         if self.eat(b'*') {
             return Ok(SelectList::Star);
         }
+        if self.starts_count_call() {
+            let count = self.parse_count()?;
+            self.skip();
+            if self.peek() == Some(b',') {
+                return Err(Error::new(
+                    "unsupported: aggregate mixed with other select expressions",
+                ));
+            }
+            return Ok(SelectList::Count(count));
+        }
         if !matches!(self.peek(), Some(b) if b.is_ascii_alphabetic() || b == b'_') {
             return Err(Error::new(
                 "unsupported: SELECT list must name columns or `*`",
@@ -206,6 +225,78 @@ impl<'a> Parser<'a> {
             return Err(Error::new("unsupported: empty select list"));
         }
         Ok(SelectList::Columns(columns))
+    }
+
+    fn starts_count_call(&self) -> bool {
+        let bytes = &self.src[self.pos..];
+        let Some(first) = bytes.first() else {
+            return false;
+        };
+        if !first.is_ascii_alphabetic() && *first != b'_' {
+            return false;
+        }
+        let mut index = 1;
+        while bytes
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            index += 1;
+        }
+        let name = std::str::from_utf8(&bytes[..index]).unwrap_or("");
+        if !name.eq_ignore_ascii_case("count") {
+            return false;
+        }
+        while bytes
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            index += 1;
+        }
+        bytes.get(index) == Some(&b'(')
+    }
+
+    fn parse_count(&mut self) -> Result<CountExpr, Error> {
+        let name = self.ident_spelling()?;
+        self.skip();
+        if !self.eat(b'(') {
+            return Err(Error::new("unsupported: expected '(' after count"));
+        }
+        self.skip();
+        let column = if self.eat(b'*') || self.peek() == Some(b')') {
+            None
+        } else {
+            Some(self.ident_spelling()?)
+        };
+        self.skip();
+        if !self.eat(b')') {
+            return Err(Error::new("unsupported: expected ')' after count"));
+        }
+        let label = match &column {
+            Some(column) => format!("{name}({column})"),
+            None => format!("{name}()"),
+        };
+        Ok(CountExpr { label, column })
+    }
+
+    fn ident_spelling(&mut self) -> Result<String, Error> {
+        self.skip();
+        let start = self.pos;
+        let first = self
+            .peek()
+            .ok_or_else(|| Error::new(format!("expected identifier near `{}`", self.rest())))?;
+        if !first.is_ascii_alphabetic() && first != b'_' {
+            return Err(Error::new(format!(
+                "expected identifier near `{}`",
+                self.rest()
+            )));
+        }
+        self.pos += 1;
+        while matches!(self.peek(), Some(byte) if byte.is_ascii_alphanumeric() || byte == b'_') {
+            self.pos += 1;
+        }
+        Ok(std::str::from_utf8(&self.src[start..self.pos])
+            .unwrap()
+            .to_string())
     }
 
     fn parse_filter(&mut self) -> Result<Filter, Error> {
