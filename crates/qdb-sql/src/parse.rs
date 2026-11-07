@@ -119,6 +119,7 @@ pub enum Proj {
     DateTrunc(DateTruncExpr),
     TimestampFloor(TimestampFloorExpr),
     TimestampCeil(TimestampCeilExpr),
+    IsLeapYear(IsLeapYearExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -394,6 +395,13 @@ pub struct TimestampCeilExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `is_leap_year(timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IsLeapYearExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -594,6 +602,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_timestamp_floor()?.label
             } else if parser.starts_timestamp_ceil_call() {
                 parser.parse_timestamp_ceil()?.label
+            } else if parser.starts_is_leap_year_call() {
+                parser.parse_is_leap_year()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -707,6 +717,7 @@ enum SelectPiece {
     DateTrunc(DateTruncExpr),
     TimestampFloor(TimestampFloorExpr),
     TimestampCeil(TimestampCeilExpr),
+    IsLeapYear(IsLeapYearExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -882,6 +893,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::TimestampFloor(self.parse_timestamp_floor()?));
             } else if self.starts_timestamp_ceil_call() {
                 pieces.push(SelectPiece::TimestampCeil(self.parse_timestamp_ceil()?));
+            } else if self.starts_is_leap_year_call() {
+                pieces.push(SelectPiece::IsLeapYear(self.parse_is_leap_year()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -958,6 +971,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::DateTrunc(_)
                     | SelectPiece::TimestampFloor(_)
                     | SelectPiece::TimestampCeil(_)
+                    | SelectPiece::IsLeapYear(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -1020,6 +1034,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::DateTrunc(expr) => items.push(Proj::DateTrunc(expr)),
                     SelectPiece::TimestampFloor(expr) => items.push(Proj::TimestampFloor(expr)),
                     SelectPiece::TimestampCeil(expr) => items.push(Proj::TimestampCeil(expr)),
+                    SelectPiece::IsLeapYear(expr) => items.push(Proj::IsLeapYear(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -1106,6 +1121,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::DateTrunc(_)
                 | SelectPiece::TimestampFloor(_)
                 | SelectPiece::TimestampCeil(_)
+                | SelectPiece::IsLeapYear(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1352,6 +1368,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_is_leap_year_call(&self) -> bool {
+        self.starts_named_call("is_leap_year")
+    }
+
+    fn parse_is_leap_year(&mut self) -> Result<IsLeapYearExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `is_leap_year` requires arguments: is_leap_year(TIMESTAMP)".to_string(),
+            ));
+        }
+        Ok(IsLeapYearExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

@@ -2,11 +2,12 @@ use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, DateDiffExpr, DateTruncExpr,
     DayExpr, DayOfWeekExpr, ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr,
-    LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, MicrosExpr, MillisExpr, MinuteExpr,
-    MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
-    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr,
-    SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
-    TimestampCeilExpr, TimestampFloorExpr, TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, MicrosExpr, MillisExpr,
+    MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
+    ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
+    SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
+    SubstrExpr, TimestampCeilExpr, TimestampFloorExpr, TrimEnd, TrimExpr, UpperExpr,
+    WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -220,6 +221,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::DateTrunc { label, .. }
             | ResolvedProj::TimestampFloor { label, .. }
             | ResolvedProj::TimestampCeil { label, .. }
+            | ResolvedProj::IsLeapYear { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -438,6 +440,10 @@ enum ResolvedProj {
         unit: char,
         value: DateDiffSide,
     },
+    IsLeapYear {
+        label: String,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -593,6 +599,7 @@ impl ResolvedProj {
             | Self::DateTrunc { label, .. }
             | Self::TimestampFloor { label, .. }
             | Self::TimestampCeil { label, .. }
+            | Self::IsLeapYear { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -633,6 +640,7 @@ impl ResolvedProj {
             Self::DateTrunc { .. } | Self::TimestampFloor { .. } | Self::TimestampCeil { .. } => {
                 qdb_types::TAG_TIMESTAMP
             }
+            Self::IsLeapYear { .. } => qdb_types::TAG_BOOLEAN,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -719,6 +727,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::DateTrunc(expr) => resolve_date_trunc(table, expr),
         Proj::TimestampFloor(expr) => resolve_timestamp_floor(table, expr),
         Proj::TimestampCeil(expr) => resolve_timestamp_ceil(table, expr),
+        Proj::IsLeapYear(expr) => resolve_is_leap_year(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1373,6 +1382,23 @@ enum DateDiffSide {
     Micros(i64),
     Column { index: usize },
     Null,
+}
+
+fn resolve_is_leap_year(table: &Table, expr: &IsLeapYearExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `is_leap_year`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::IsLeapYear {
+        label: expr.label.clone(),
+        value: date_trunc_timestamp(table, &expr.args[0])?,
+    })
+}
+
+fn is_leap_year(year: i32) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
 fn resolve_timestamp_ceil(table: &Table, expr: &TimestampCeilExpr) -> Result<ResolvedProj, Error> {
@@ -3946,6 +3972,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Some(micros) => Scalar::Timestamp(timestamp_ceil_micros(*unit, micros)),
             None => Scalar::Null,
         },
+        ResolvedProj::IsLeapYear { value, .. } => {
+            let year = datediff_micros(table, row, value).map(|micros| dateadd_parts(micros).0);
+            Scalar::Boolean(year.is_some_and(is_leap_year))
+        }
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
         ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
             Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
@@ -12810,6 +12840,108 @@ mod tests {
         let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn is_leap_year_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT is_leap_year(ts) FROM sensors",
+                "expected/ly_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_leap_year(id) FROM sensors",
+                "expected/ly_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_leap_year('2020-01-02T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/ly_2020.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_leap_year('2019-12-31T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/ly_2019.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_leap_year('1900-01-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/ly_1900.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_leap_year('2000-01-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/ly_2000.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_leap_year(null) FROM sensors LIMIT 1",
+                "expected/ly_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT IS_LEAP_YEAR(TS) FROM sensors LIMIT 1",
+                "expected/ly_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_leap_year(ts) FROM sensors WHERE id = 1",
+                "expected/ly_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_leap_year(ts) FROM sensors LIMIT 0",
+                "expected/ly_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT is_leap_year(ts) FROM days ORDER BY ts",
+                "expected/ly_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT is_leap_year() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `is_leap_year` requires arguments: is_leap_year(TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT is_leap_year(ts, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `is_leap_year`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT is_leap_year(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT is_leap_year('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT is_leap_year(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
             "{}",
             err.message
         );

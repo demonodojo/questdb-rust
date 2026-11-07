@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — is_leap_year()
+
+`is_leap_year(instante)` devuelve `BOOLEAN`. Usa la regla gregoriana: 2020 y 2000 son bisiestos, 1900 y 2019 no. Un nulo devuelve `false`. Un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — timestamp_ceil()
 
 `timestamp_ceil(unidad, instante)` devuelve `TIMESTAMP`. La unidad es una sola letra: `n`, `U`, `T`, `s`, `m`, `h`, `d`, `w`, `M` o `y`. Avanza siempre al siguiente límite, también cuando el instante ya cae en el límite. `n` y `U` se quedan en el microsegundo. Un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.

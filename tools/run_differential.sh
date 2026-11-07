@@ -1057,7 +1057,17 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tc_case "SELECT TIMESTAMP_CEIL('d', TS) FROM sensors LIMIT 1" \
   tc_order "SELECT timestamp_ceil('h', id) FROM sensors ORDER BY timestamp_ceil('h', id)" \
   tc_where "SELECT timestamp_ceil('d', ts) FROM sensors WHERE id = 1" \
-  tc_zero "SELECT timestamp_ceil('d', ts) FROM sensors LIMIT 0"
+  tc_zero "SELECT timestamp_ceil('d', ts) FROM sensors LIMIT 0" \
+  ly_ts "SELECT is_leap_year(ts) FROM sensors" \
+  ly_id "SELECT is_leap_year(id) FROM sensors" \
+  ly_2020 "SELECT is_leap_year('2020-01-02T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  ly_2019 "SELECT is_leap_year('2019-12-31T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  ly_1900 "SELECT is_leap_year('1900-01-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  ly_2000 "SELECT is_leap_year('2000-01-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  ly_null "SELECT is_leap_year(null) FROM sensors LIMIT 1" \
+  ly_case "SELECT IS_LEAP_YEAR(TS) FROM sensors LIMIT 1" \
+  ly_where "SELECT is_leap_year(ts) FROM sensors WHERE id = 1" \
+  ly_zero "SELECT is_leap_year(ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1188,7 +1198,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   wy_ts "SELECT week_of_year(ts) FROM days ORDER BY ts" \
   dt_hour "SELECT date_trunc('hour', ts) FROM days ORDER BY ts" \
   tf_hour "SELECT timestamp_floor('h', ts) FROM days ORDER BY ts" \
-  tc_hour "SELECT timestamp_ceil('h', ts) FROM days ORDER BY ts"
+  tc_hour "SELECT timestamp_ceil('h', ts) FROM days ORDER BY ts" \
+  ly_days "SELECT is_leap_year(ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2193,6 +2204,16 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT timestamp_ceil('h', id) FROM sensors ORDER BY timestamp_ceil('h', id)"),
     (os.environ["DIFF_H1"], "SELECT timestamp_ceil('d', ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT timestamp_ceil('d', ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT is_leap_year(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT is_leap_year(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT is_leap_year('2020-01-02T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_leap_year('2019-12-31T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_leap_year('1900-01-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_leap_year('2000-01-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_leap_year(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT IS_LEAP_YEAR(TS) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_leap_year(ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT is_leap_year(ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2322,6 +2343,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT date_trunc('hour', ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT timestamp_floor('h', ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT timestamp_ceil('h', ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT is_leap_year(ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
