@@ -1725,19 +1725,32 @@ fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
     })
 }
 
-fn apply_i64(op: ArithOp, left: i64, right: i64) -> i64 {
-    match op {
+fn apply_i64(op: ArithOp, left: i64, right: i64) -> Option<i64> {
+    if op == ArithOp::Div && right == 0 {
+        return None;
+    }
+    Some(match op {
         ArithOp::Add => left.wrapping_add(right),
         ArithOp::Sub => left.wrapping_sub(right),
         ArithOp::Mul => left.wrapping_mul(right),
-    }
+        ArithOp::Div => left.wrapping_div(right),
+    })
 }
 
-fn apply_f64(op: ArithOp, left: f64, right: f64) -> f64 {
-    match op {
+fn apply_f64(op: ArithOp, left: f64, right: f64) -> Option<f64> {
+    if op == ArithOp::Div && right == 0.0 {
+        return None;
+    }
+    let value = match op {
         ArithOp::Add => left + right,
         ArithOp::Sub => left - right,
         ArithOp::Mul => left * right,
+        ArithOp::Div => left / right,
+    };
+    if op == ArithOp::Div && !value.is_finite() {
+        None
+    } else {
+        Some(value)
     }
 }
 
@@ -1755,16 +1768,17 @@ fn add_value(
     }
     match (result_tag, left, literal) {
         (qdb_types::TAG_LONG, Scalar::Long(left), Scalar::Long(right)) => {
-            Scalar::Long(apply_i64(op, *left, *right))
+            apply_i64(op, *left, *right).map_or(Scalar::Null, Scalar::Long)
         }
         (qdb_types::TAG_INT, Scalar::Int(left), Scalar::Long(right)) => {
-            Scalar::Int(apply_i64(op, i64::from(*left), *right) as i32)
+            apply_i64(op, i64::from(*left), *right)
+                .map_or(Scalar::Null, |value| Scalar::Int(value as i32))
         }
         (qdb_types::TAG_DOUBLE, Scalar::Double(left), Scalar::Long(right)) => {
-            Scalar::Double(apply_f64(op, *left, *right as f64))
+            apply_f64(op, *left, *right as f64).map_or(Scalar::Null, Scalar::Double)
         }
         (qdb_types::TAG_DOUBLE, Scalar::Double(left), Scalar::Double(right)) => {
-            Scalar::Double(apply_f64(op, *left, *right))
+            apply_f64(op, *left, *right).map_or(Scalar::Null, Scalar::Double)
         }
         _ => Scalar::Null,
     }
@@ -15579,6 +15593,76 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn dv_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id / 2 FROM sensors",
+                "expected/dv_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id / 2 FROM sensors WHERE id = 1",
+                "expected/dv_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id / 2 FROM sensors WHERE id = 2",
+                "expected/dv_two.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id / 2 FROM sensors WHERE id > 100",
+                "expected/dv_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id / null FROM sensors",
+                "expected/dv_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id / 0 FROM sensors",
+                "expected/dv_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT reading / 2 FROM sensors",
+                "expected/dv_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags / 2 FROM sensors",
+                "expected/dv_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id / 2 FROM sensors LIMIT 0",
+                "expected/dv_lim0.tsv",
+            ),
+            (&days, "SELECT id / 2 FROM days", "expected/dv_days.tsv"),
+            (
+                &days,
+                "SELECT id / null FROM days",
+                "expected/dv_days_null.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT missing / 2 FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

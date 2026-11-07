@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — división
+
+`value / other` divide una columna por una constante y conserva el tipo numérico de la columna. Un nulo hace nulo el resultado. Dividir por `0` también devuelve NULL. La división entera trunca hacia cero. `-0.0 / 2` es `-0.0`. `id / 2` es `0`, `1`, NULL y `0`. En `days` es `0`, `1`, `1` y NULL. `id / null` es NULL en las cuatro filas. `id / 0` es NULL en las cuatro filas. `reading / 2` es `0.75`, NULL, `0.0` y `-0.0`. `flags / 2` es `5`, NULL, `0` y `21`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — producto
 
 `value * other` multiplica una columna por una constante y conserva el tipo numérico de la columna. Un nulo hace nulo el resultado. `-0.0 * 0` es `-0.0`. `id * 2` es `2`, `4`, NULL y `-2`. En `days` es `2`, `4`, `6` y NULL. `id * null` es NULL en las cuatro filas. `reading * 0` es `0.0`, NULL, `0.0` y `-0.0`. `flags * 2` es `20`, NULL, `0` y `84`. Se contrastó con `/exec` en `sensors` y `days`.

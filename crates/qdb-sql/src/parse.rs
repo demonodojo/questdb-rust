@@ -844,12 +844,13 @@ pub struct InListExpr {
     pub args: Vec<ConcatArg>,
 }
 
-/// `+`, `-` or `*` of a column and a constant.
+/// `+`, `-`, `*` or `/` of a column and a constant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArithOp {
     Add,
     Sub,
     Mul,
+    Div,
 }
 
 impl ArithOp {
@@ -858,11 +859,12 @@ impl ArithOp {
             Self::Add => "+",
             Self::Sub => "-",
             Self::Mul => "*",
+            Self::Div => "/",
         }
     }
 }
 
-/// `value + other` adds, subtracts or multiplies a constant and a column.
+/// `value + other` adds, subtracts, multiplies or divides a column and a constant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddExpr {
     pub label: String,
@@ -2114,7 +2116,7 @@ impl<'a> Parser<'a> {
         while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
             pos += 1;
         }
-        matches!(self.src.get(pos), Some(b'+' | b'-' | b'*'))
+        matches!(self.src.get(pos), Some(b'+' | b'-' | b'*' | b'/'))
     }
 
     fn parse_add(&mut self, name: String) -> Result<AddExpr, Error> {
@@ -2125,9 +2127,11 @@ impl<'a> Parser<'a> {
             ArithOp::Add
         } else if self.eat(b'*') {
             ArithOp::Mul
+        } else if self.eat(b'/') {
+            ArithOp::Div
         } else {
             return Err(Error::new(
-                "unsupported: expected '+', '-' or '*' after column".to_string(),
+                "unsupported: expected '+', '-', '*' or '/' after column".to_string(),
             ));
         };
         let literal = self.parse_literal()?;
