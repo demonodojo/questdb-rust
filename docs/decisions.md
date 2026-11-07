@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `::double`
+
+`column::double` convierte una columna a `DOUBLE`. El encabezado es `id::double`. Un nulo sigue siendo `NULL` y un texto que no es un número es `NULL`. `id::double` es `1.0`, `2.0`, `NULL` y `-1.0`. En `days` es `1.0`, `2.0`, `3.0` y `NULL`. `flags::double` es `10.0`, `NULL`, `0.0` y `42.0`. `note::double` es `NULL`, `NULL`, `NULL` y `NULL`. `reading::double` es `1.5`, `NULL`, `0.0` y `-0.0`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `::int`
 
 `column::int` convierte una columna a `INT`. El encabezado es `id::int`. Un nulo sigue siendo `NULL` y un texto que no es un número es `NULL`. `id::int` es `1`, `2`, `NULL` y `-1`. En `days` es `1`, `2`, `3` y `NULL`. `flags::int` es `10`, `NULL`, `0` y `42`. `note::int` es `NULL`, `NULL`, `NULL` y `NULL`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.
