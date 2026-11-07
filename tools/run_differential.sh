@@ -2251,7 +2251,22 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   qd_grp "SELECT quantile_disc(flags, 0.5) FROM sensors GROUP BY location ORDER BY location" \
   qd_grp_r "SELECT quantile_disc(reading, 0.5) FROM sensors GROUP BY location ORDER BY location" \
   qd_lim0 "SELECT quantile_disc(flags, 0.5) FROM sensors LIMIT 0" \
-  qd_case "SELECT QUANTILE_DISC(flags, 0.5) FROM sensors"
+  qd_case "SELECT QUANTILE_DISC(flags, 0.5) FROM sensors" \
+  gl_all "SELECT glob(note, 'a*') FROM sensors" \
+  gl_one "SELECT glob(note, 'a*') FROM sensors WHERE id = 1" \
+  gl_null "SELECT glob(note, 'a*') FROM sensors WHERE id = 2" \
+  gl_z "SELECT glob(note, 'z*') FROM sensors WHERE id = 1" \
+  gl_empty "SELECT glob(note, '*') FROM sensors WHERE note = ''" \
+  gl_q "SELECT glob(note, '?lpha') FROM sensors WHERE id = 1" \
+  gl_beta "SELECT glob(note, 'β*') FROM sensors WHERE id = -1" \
+  gl_class "SELECT glob(note, '[a-z]*') FROM sensors WHERE id = 1" \
+  gl_tag "SELECT glob(tag, 'v*') FROM sensors WHERE id = 1" \
+  gl_sym "SELECT glob(location, 'ma*') FROM sensors WHERE id = 1" \
+  gl_char "SELECT glob(ch, 'A') FROM sensors WHERE id = 1" \
+  gl_lit "SELECT glob('alpha', 'a*') FROM sensors LIMIT 1" \
+  gl_case "SELECT GLOB(note, 'a*') FROM sensors WHERE id = 1" \
+  gl_none "SELECT glob(note, 'a*') FROM sensors WHERE id > 100" \
+  gl_lim0 "SELECT glob(note, 'a*') FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2506,7 +2521,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   qc_days "SELECT quantile_cont(id, 0.5) FROM days" \
   qc_days_grp "SELECT quantile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location" \
   qd_days "SELECT quantile_disc(id, 0.5) FROM days" \
-  qd_days_grp "SELECT quantile_disc(id, 0.5) FROM days GROUP BY location ORDER BY location"
+  qd_days_grp "SELECT quantile_disc(id, 0.5) FROM days GROUP BY location ORDER BY location" \
+  gl_days "SELECT glob(note, 'a*') FROM days" \
+  gl_days_one "SELECT glob(note, 'a*') FROM days WHERE id = 1"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4705,6 +4722,21 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT quantile_disc(reading, 0.5) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT quantile_disc(flags, 0.5) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT QUANTILE_DISC(flags, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT glob(note, 'a*') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT glob(note, 'a*') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT glob(note, 'a*') FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT glob(note, 'z*') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT glob(note, '*') FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT glob(note, '?lpha') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT glob(note, 'β*') FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT glob(note, '[a-z]*') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT glob(tag, 'v*') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT glob(location, 'ma*') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT glob(ch, 'A') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT glob('alpha', 'a*') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT GLOB(note, 'a*') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT glob(note, 'a*') FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT glob(note, 'a*') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4958,6 +4990,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT quantile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT quantile_disc(id, 0.5) FROM days"),
     (os.environ["DIFF_H2"], "SELECT quantile_disc(id, 0.5) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT glob(note, 'a*') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT glob(note, 'a*') FROM days WHERE id = 1"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -221,6 +221,7 @@ pub enum Proj {
     Trim(TrimExpr),
     Replace(ReplaceExpr),
     StartsWith(StartsWithExpr),
+    Glob(GlobExpr),
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
@@ -345,6 +346,13 @@ pub struct ReplaceExpr {
 /// `starts_with(text, prefix)` returns a boolean.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartsWithExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `glob(text, pattern)` matches a constant glob and returns a boolean.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlobExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -855,6 +863,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_replace()?.label
             } else if parser.starts_starts_with_call() {
                 parser.parse_starts_with()?.label
+            } else if parser.starts_glob_call() {
+                parser.parse_glob()?.label
             } else if parser.starts_strpos_call() {
                 parser.parse_strpos()?.label
             } else if parser.starts_split_part_call() {
@@ -1040,6 +1050,7 @@ enum SelectPiece {
     Trim(TrimExpr),
     Replace(ReplaceExpr),
     StartsWith(StartsWithExpr),
+    Glob(GlobExpr),
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
@@ -1212,6 +1223,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Replace(self.parse_replace()?));
             } else if self.starts_starts_with_call() {
                 pieces.push(SelectPiece::StartsWith(self.parse_starts_with()?));
+            } else if self.starts_glob_call() {
+                pieces.push(SelectPiece::Glob(self.parse_glob()?));
             } else if self.starts_strpos_call() {
                 pieces.push(SelectPiece::StrPos(self.parse_strpos()?));
             } else if self.starts_split_part_call() {
@@ -1362,6 +1375,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Trim(_)
                     | SelectPiece::Replace(_)
                     | SelectPiece::StartsWith(_)
+                    | SelectPiece::Glob(_)
                     | SelectPiece::StrPos(_)
                     | SelectPiece::SplitPart(_)
                     | SelectPiece::Pad(_)
@@ -1447,6 +1461,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Trim(expr) => items.push(Proj::Trim(expr)),
                     SelectPiece::Replace(expr) => items.push(Proj::Replace(expr)),
                     SelectPiece::StartsWith(expr) => items.push(Proj::StartsWith(expr)),
+                    SelectPiece::Glob(expr) => items.push(Proj::Glob(expr)),
                     SelectPiece::StrPos(expr) => items.push(Proj::StrPos(expr)),
                     SelectPiece::SplitPart(expr) => items.push(Proj::SplitPart(expr)),
                     SelectPiece::Pad(expr) => items.push(Proj::Pad(expr)),
@@ -1558,6 +1573,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Trim(_)
                 | SelectPiece::Replace(_)
                 | SelectPiece::StartsWith(_)
+                | SelectPiece::Glob(_)
                 | SelectPiece::StrPos(_)
                 | SelectPiece::SplitPart(_)
                 | SelectPiece::Pad(_)
@@ -2846,6 +2862,25 @@ impl<'a> Parser<'a> {
 
     fn starts_starts_with_call(&self) -> bool {
         self.starts_named_call("starts_with")
+    }
+
+    fn starts_glob_call(&self) -> bool {
+        self.starts_named_call("glob")
+    }
+
+    fn parse_glob(&mut self) -> Result<GlobExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(GlobExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn parse_starts_with(&mut self) -> Result<StartsWithExpr, Error> {

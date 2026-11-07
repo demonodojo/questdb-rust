@@ -3,14 +3,14 @@ use crate::parse::{
     AggregateExpr, AggregateExtra, AsinExpr, Atan2Expr, AtanExpr, CastExpr, CeilExpr, CmpOp,
     CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
     DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, ExpExpr, ExtractExpr,
-    Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr, IsEndOfMonthExpr, IsLeapYearExpr,
-    LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MillisExpr, MinuteExpr,
-    MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
-    RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr,
-    SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams,
-    SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr,
-    TimestampFloorExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr,
-    UpperExpr, WeekOfYearExpr, YearExpr,
+    Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IsEndOfMonthExpr,
+    IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr,
+    MillisExpr, MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj,
+    Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
+    RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
+    SizePrettyExpr, SparkParams, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
+    TanExpr, TimestampCeilExpr, TimestampFloorExpr, ToDateExpr, ToStrExpr, ToTimestampExpr,
+    TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -213,6 +213,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Trim { label, .. }
             | ResolvedProj::Replace { label, .. }
             | ResolvedProj::StartsWith { label, .. }
+            | ResolvedProj::Glob { label, .. }
             | ResolvedProj::StrPos { label, .. }
             | ResolvedProj::SplitPart { label, .. }
             | ResolvedProj::Pad { label, .. }
@@ -345,6 +346,11 @@ enum ResolvedProj {
         label: String,
         value: ResolvedArg,
         prefix: ResolvedArg,
+    },
+    Glob {
+        label: String,
+        value: ResolvedArg,
+        pattern: Vec<u8>,
     },
     StrPos {
         label: String,
@@ -712,6 +718,7 @@ impl ResolvedProj {
             | Self::Trim { label, .. }
             | Self::Replace { label, .. }
             | Self::StartsWith { label, .. }
+            | Self::Glob { label, .. }
             | Self::StrPos { label, .. }
             | Self::SplitPart { label, .. }
             | Self::Pad { label, .. }
@@ -840,7 +847,7 @@ impl ResolvedProj {
                     qdb_types::TAG_FLOAT
                 }
             }
-            Self::StartsWith { .. } => qdb_types::TAG_BOOLEAN,
+            Self::StartsWith { .. } | Self::Glob { .. } => qdb_types::TAG_BOOLEAN,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -883,6 +890,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Trim(expr) => resolve_trim(table, expr),
         Proj::Replace(expr) => resolve_replace(table, expr),
         Proj::StartsWith(expr) => resolve_starts_with(table, expr),
+        Proj::Glob(expr) => resolve_glob(table, expr),
         Proj::StrPos(expr) => resolve_strpos(table, expr),
         Proj::SplitPart(expr) => resolve_split_part(table, expr),
         Proj::Pad(expr) => resolve_pad(table, expr),
@@ -5210,6 +5218,29 @@ fn resolve_strpos(table: &Table, expr: &StrPosExpr) -> Result<ResolvedProj, Erro
     })
 }
 
+fn resolve_glob(table: &Table, expr: &GlobExpr) -> Result<ResolvedProj, Error> {
+    let pattern_literal = expr.args.len() == 2
+        && replace_text_ok(table, &expr.args[0])
+        && matches!(
+            expr.args[1],
+            ConcatArg::Literal(Scalar::Text(_)) | ConcatArg::Literal(Scalar::Null)
+        );
+    if !pattern_literal {
+        return Err(text_type_error(table, "glob", &expr.args));
+    }
+    let ConcatArg::Literal(Scalar::Text(text)) = &expr.args[1] else {
+        return Err(Error::new("glob pattern must not be null or empty"));
+    };
+    if text.is_empty() {
+        return Err(Error::new("glob pattern must not be null or empty"));
+    }
+    Ok(ResolvedProj::Glob {
+        label: expr.label.clone(),
+        value: resolve_concat_arg(table, &expr.args[0])?,
+        pattern: text.as_bytes().to_vec(),
+    })
+}
+
 fn resolve_starts_with(table: &Table, expr: &StartsWithExpr) -> Result<ResolvedProj, Error> {
     if expr.args.len() != 2 || expr.args.iter().any(|arg| !replace_text_ok(table, arg)) {
         return Err(text_type_error(table, "starts_with", &expr.args));
@@ -5261,6 +5292,132 @@ fn replace_text_ok(table: &Table, arg: &ConcatArg) -> bool {
                     | qdb_types::TAG_CHAR
             )
         }),
+    }
+}
+
+fn glob_match(name: &[u8], pattern: &[u8]) -> bool {
+    glob_match_at(name, 0, pattern, 0)
+}
+
+fn glob_match_at(name: &[u8], mut name_at: usize, pattern: &[u8], mut pattern_at: usize) -> bool {
+    let name_len = name.len();
+    let pattern_len = pattern.len();
+    while name_at < name_len && pattern_at < pattern_len {
+        let current = name[name_at];
+        match pattern[pattern_at] {
+            b'*' => {
+                pattern_at += 1;
+                while pattern_at < pattern_len && pattern[pattern_at] == b'*' {
+                    pattern_at += 1;
+                }
+                if pattern_at == pattern_len {
+                    return true;
+                }
+                while name_at < name_len {
+                    if glob_match_at(name, name_at, pattern, pattern_at) {
+                        return true;
+                    }
+                    name_at += 1;
+                }
+                return false;
+            }
+            b'?' => {
+                name_at += 1;
+                pattern_at += 1;
+            }
+            b'[' => {
+                pattern_at += 1;
+                let Some(next) = glob_bracket(name, name_at, pattern, pattern_at) else {
+                    return false;
+                };
+                pattern_at = next;
+                name_at += 1;
+            }
+            b'\\' => {
+                if pattern_at + 1 < pattern_len {
+                    let escaped = pattern[pattern_at + 1];
+                    if matches!(escaped, b'*' | b'?' | b'[' | b']' | b'\\') {
+                        pattern_at += 1;
+                        if current != pattern[pattern_at] {
+                            return false;
+                        }
+                        name_at += 1;
+                        pattern_at += 1;
+                        continue;
+                    }
+                }
+                if current != b'\\' {
+                    return false;
+                }
+                name_at += 1;
+                pattern_at += 1;
+            }
+            b'/' => {
+                if current != b'/' && current != b'\\' {
+                    return false;
+                }
+                name_at += 1;
+                pattern_at += 1;
+            }
+            token => {
+                if current != token {
+                    return false;
+                }
+                name_at += 1;
+                pattern_at += 1;
+            }
+        }
+    }
+    while pattern_at < pattern_len && pattern[pattern_at] == b'*' {
+        pattern_at += 1;
+    }
+    pattern_at == pattern_len && name_at == name_len
+}
+
+fn glob_bracket(
+    name: &[u8],
+    name_at: usize,
+    pattern: &[u8],
+    mut pattern_at: usize,
+) -> Option<usize> {
+    if pattern_at == pattern.len() || name_at >= name.len() {
+        return None;
+    }
+    let current = name[name_at] as i8;
+    let mut invert = false;
+    if pattern[pattern_at] == b'!' {
+        invert = true;
+        pattern_at += 1;
+    }
+    let mut found = invert;
+    let start = pattern_at;
+    let mut closed = false;
+    while pattern_at < pattern.len() {
+        let token = pattern[pattern_at];
+        if token == b']' && pattern_at > start {
+            closed = true;
+            pattern_at += 1;
+            break;
+        }
+        let matches = if pattern_at + 2 < pattern.len()
+            && pattern[pattern_at + 1] == b'-'
+            && pattern[pattern_at + 2] != b']'
+        {
+            let end = pattern[pattern_at + 2] as i8;
+            pattern_at += 3;
+            current >= token as i8 && current <= end
+        } else {
+            pattern_at += 1;
+            current == token as i8
+        };
+        if found == invert && matches {
+            found = !invert;
+        }
+    }
+    if closed && found {
+        Some(pattern_at)
+    } else {
+        None
     }
 }
 
@@ -6039,6 +6196,13 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                     },
                 }
             }
+        }
+        ResolvedProj::Glob { value, pattern, .. } => {
+            let matched = match text_of(table, row, value) {
+                Some(value) => glob_match(value.as_bytes(), pattern),
+                None => false,
+            };
+            Scalar::Boolean(matched)
         }
         ResolvedProj::StartsWith { value, prefix, .. } => {
             let matched = match (text_of(table, row, value), text_of(table, row, prefix)) {
@@ -13893,6 +14057,161 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn glob_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT glob(note, 'a*') FROM sensors",
+                "expected/gl_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(note, 'a*') FROM sensors WHERE id = 1",
+                "expected/gl_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(note, 'a*') FROM sensors WHERE id = 2",
+                "expected/gl_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(note, 'z*') FROM sensors WHERE id = 1",
+                "expected/gl_z.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(note, '*') FROM sensors WHERE note = ''",
+                "expected/gl_empty.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(note, '?lpha') FROM sensors WHERE id = 1",
+                "expected/gl_q.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(note, 'β*') FROM sensors WHERE id = -1",
+                "expected/gl_beta.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(note, '[a-z]*') FROM sensors WHERE id = 1",
+                "expected/gl_class.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(tag, 'v*') FROM sensors WHERE id = 1",
+                "expected/gl_tag.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(location, 'ma*') FROM sensors WHERE id = 1",
+                "expected/gl_sym.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(ch, 'A') FROM sensors WHERE id = 1",
+                "expected/gl_char.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob('alpha', 'a*') FROM sensors LIMIT 1",
+                "expected/gl_lit.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT GLOB(note, 'a*') FROM sensors WHERE id = 1",
+                "expected/gl_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(note, 'a*') FROM sensors WHERE id > 100",
+                "expected/gl_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT glob(note, 'a*') FROM sensors LIMIT 0",
+                "expected/gl_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT glob(note, 'a*') FROM days",
+                "expected/gl_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT glob(note, 'a*') FROM days WHERE id = 1",
+                "expected/gl_days_one.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT glob() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("function `glob` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT glob(note, '') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("glob pattern must not be null or empty"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT glob(note, null) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("glob pattern must not be null or empty"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT glob(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `glob` with the argument types: (STRING)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT glob(note, tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `glob` with the argument types: (STRING, VARCHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT glob(note, 'a*', 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `glob` with the argument types: (STRING, STRING, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT glob(flags, '1*') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `glob` with the argument types: (INT, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT glob(missing, 'a*') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

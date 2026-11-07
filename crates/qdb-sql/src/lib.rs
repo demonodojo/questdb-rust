@@ -38,7 +38,8 @@
 //! `replace` substitutes non-overlapping matches. A null argument stays null,
 //! and an empty search leaves the text unchanged. `starts_with` returns a
 //! boolean. A null text or prefix is false, and an empty prefix matches any
-//! non-null text. `strpos` and `position` return the 1-based index of the first
+//! non-null text. `glob` matches text against a constant pattern and returns a
+//! boolean. A null text is false, and the pattern must not be null or empty. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
 //! widest numeric argument and skips nulls. `to_str` formats a timestamp with a

@@ -1,0 +1,2 @@
+glob(note, 'a*')
+false

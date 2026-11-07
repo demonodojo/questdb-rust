@@ -1,0 +1,5 @@
+glob(note, 'a*')
+true
+false
+false
+false

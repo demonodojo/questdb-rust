@@ -1,0 +1,2 @@
+glob(location, 'ma*')
+true
