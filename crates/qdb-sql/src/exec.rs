@@ -1988,6 +1988,7 @@ fn apply_i64(op: ArithOp, left: i64, right: i64) -> Option<i64> {
         ArithOp::Mod => left.wrapping_rem(right),
         ArithOp::BitAnd => left & right,
         ArithOp::BitOr => left | right,
+        ArithOp::BitXor => left ^ right,
     })
 }
 
@@ -2001,7 +2002,7 @@ fn apply_f64(op: ArithOp, left: f64, right: f64) -> Option<f64> {
         ArithOp::Mul => left * right,
         ArithOp::Div => left / right,
         ArithOp::Mod => left % right,
-        ArithOp::BitAnd | ArithOp::BitOr => return None,
+        ArithOp::BitAnd | ArithOp::BitOr | ArithOp::BitXor => return None,
     };
     if matches!(op, ArithOp::Div | ArithOp::Mod) && !value.is_finite() {
         None
@@ -16997,6 +16998,51 @@ mod tests {
             assert_eq!(render_tsv(&result), expected, "{sql}");
         }
         let err = execute(&sensors, "SELECT id | missing FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn bx_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id ^ id FROM sensors",
+                "expected/vx_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id ^ id FROM sensors WHERE id = 1",
+                "expected/vx_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id ^ id FROM sensors WHERE id > 100",
+                "expected/vx_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id ^ flags FROM sensors",
+                "expected/vx_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags ^ id FROM sensors",
+                "expected/vx_rev.tsv",
+            ),
+            (&days, "SELECT id ^ id FROM days", "expected/vx_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id ^ missing FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `^`
+
+`left ^ right` es el XOR bit a bit de dos columnas enteras. El encabezado es `id ^ id` y el tipo es `LONG`. Un operando nulo es `NULL`. `id ^ id` es `0`, `0`, `NULL` y `0`. En `days` es `0`, `0`, `0` y `NULL`. `id ^ flags` y `flags ^ id` son `11`, `NULL`, `NULL` y `-43`. Una columna ausente se rechaza con `Invalid column: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `|`
 
 `left | right` es el OR bit a bit de dos columnas enteras. El encabezado es `id | id` y el tipo es `LONG`. Un operando nulo es `NULL`. `id | id` es `1`, `2`, `NULL` y `-1`. En `days` es `1`, `2`, `3` y `NULL`. `id | flags` y `flags | id` son `11`, `NULL`, `NULL` y `-1`. Una columna ausente se rechaza con `Invalid column: missing`. Se contrastó con `/exec` en `sensors` y `days`.
