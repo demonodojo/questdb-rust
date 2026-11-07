@@ -138,6 +138,7 @@ pub enum Proj {
     Cos(CosExpr),
     Tan(TanExpr),
     Asin(AsinExpr),
+    Acos(AcosExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -543,6 +544,13 @@ pub struct AsinExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `acos(number)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcosExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `power(base, exponent)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerExpr {
@@ -745,6 +753,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_ceil()?.label
             } else if parser.starts_sign_call() {
                 parser.parse_sign()?.label
+            } else if parser.starts_acos_call() {
+                parser.parse_acos()?.label
             } else if parser.starts_asin_call() {
                 parser.parse_asin()?.label
             } else if parser.starts_tan_call() {
@@ -877,6 +887,7 @@ enum SelectPiece {
     Cos(CosExpr),
     Tan(TanExpr),
     Asin(AsinExpr),
+    Acos(AcosExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -1080,6 +1091,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Ceil(self.parse_ceil()?));
             } else if self.starts_sign_call() {
                 pieces.push(SelectPiece::Sign(self.parse_sign()?));
+            } else if self.starts_acos_call() {
+                pieces.push(SelectPiece::Acos(self.parse_acos()?));
             } else if self.starts_asin_call() {
                 pieces.push(SelectPiece::Asin(self.parse_asin()?));
             } else if self.starts_tan_call() {
@@ -1175,6 +1188,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Cos(_)
                     | SelectPiece::Tan(_)
                     | SelectPiece::Asin(_)
+                    | SelectPiece::Acos(_)
                     | SelectPiece::Power(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
@@ -1254,6 +1268,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Cos(expr) => items.push(Proj::Cos(expr)),
                     SelectPiece::Tan(expr) => items.push(Proj::Tan(expr)),
                     SelectPiece::Asin(expr) => items.push(Proj::Asin(expr)),
+                    SelectPiece::Acos(expr) => items.push(Proj::Acos(expr)),
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
@@ -1355,6 +1370,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Cos(_)
                 | SelectPiece::Tan(_)
                 | SelectPiece::Asin(_)
+                | SelectPiece::Acos(_)
                 | SelectPiece::Power(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
@@ -1522,6 +1538,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(PowerExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_acos_call(&self) -> bool {
+        self.starts_named_call("acos")
+    }
+
+    fn parse_acos(&mut self) -> Result<AcosExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `acos` requires arguments: acos(DOUBLE)".to_string(),
+            ));
+        }
+        Ok(AcosExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

@@ -1,15 +1,15 @@
 use crate::parse::{
-    date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
-    AsinExpr, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr, DateAddExpr,
-    DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr,
-    ExpExpr, ExtractExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr,
-    IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr,
-    MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj,
-    Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
-    SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
-    SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr,
-    TimestampFloorExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, UpperExpr,
-    WeekOfYearExpr, YearExpr,
+    date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AggFunc,
+    AggregateExpr, AsinExpr, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr,
+    DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr,
+    DaysInMonthExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect,
+    HourExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr,
+    Md5Expr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr,
+    Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
+    RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
+    SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TanExpr,
+    TimestampCeilExpr, TimestampFloorExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd,
+    TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -259,6 +259,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Cos { label, .. }
             | ResolvedProj::Tan { label, .. }
             | ResolvedProj::Asin { label, .. }
+            | ResolvedProj::Acos { label, .. }
             | ResolvedProj::Power { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
@@ -555,6 +556,10 @@ enum ResolvedProj {
         label: String,
         input: SinInput,
     },
+    Acos {
+        label: String,
+        input: SinInput,
+    },
     Power {
         label: String,
         base: SqrtInput,
@@ -716,6 +721,7 @@ impl ResolvedProj {
             | Self::Cos { label, .. }
             | Self::Tan { label, .. }
             | Self::Asin { label, .. }
+            | Self::Acos { label, .. }
             | Self::Power { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
@@ -770,6 +776,7 @@ impl ResolvedProj {
             | Self::Cos { .. }
             | Self::Tan { .. }
             | Self::Asin { .. }
+            | Self::Acos { .. }
             | Self::Power { .. }
             | Self::Ln { .. }
             | Self::Log { .. }
@@ -873,6 +880,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Cos(expr) => resolve_cos(table, expr),
         Proj::Tan(expr) => resolve_tan(table, expr),
         Proj::Asin(expr) => resolve_asin(table, expr),
+        Proj::Acos(expr) => resolve_acos(table, expr),
         Proj::Power(expr) => resolve_power(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
@@ -1364,6 +1372,13 @@ fn resolve_asin(table: &Table, expr: &AsinExpr) -> Result<ResolvedProj, Error> {
     Ok(ResolvedProj::Asin {
         label: expr.label.clone(),
         input: resolve_real_arg(table, "asin", &expr.args)?,
+    })
+}
+
+fn resolve_acos(table: &Table, expr: &AcosExpr) -> Result<ResolvedProj, Error> {
+    Ok(ResolvedProj::Acos {
+        label: expr.label.clone(),
+        input: resolve_real_arg(table, "acos", &expr.args)?,
     })
 }
 
@@ -5411,6 +5426,7 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         ResolvedProj::Cos { input, .. } => cos_scalar(table, row, input),
         ResolvedProj::Tan { input, .. } => tan_scalar(table, row, input),
         ResolvedProj::Asin { input, .. } => asin_scalar(table, row, input),
+        ResolvedProj::Acos { input, .. } => acos_scalar(table, row, input),
         _ => Ok(eval_resolved(table, row, item)),
     }
 }
@@ -5492,6 +5508,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Err(_) => Scalar::Null,
         },
         ResolvedProj::Asin { input, .. } => match asin_scalar(table, row, input) {
+            Ok(value) => value,
+            Err(_) => Scalar::Null,
+        },
+        ResolvedProj::Acos { input, .. } => match acos_scalar(table, row, input) {
             Ok(value) => value,
             Err(_) => Scalar::Null,
         },
@@ -5825,6 +5845,10 @@ fn tan_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar, Err
 
 fn asin_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar, Error> {
     real_apply(table, row, input, f64::asin)
+}
+
+fn acos_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar, Error> {
+    real_apply(table, row, input, f64::acos)
 }
 
 fn real_apply(
@@ -15787,6 +15811,203 @@ mod tests {
             err.message
         );
         let result = execute(&sensors, "SELECT asin(note) FROM sensors LIMIT 0").unwrap();
+        assert_eq!(result.rows.len(), 0);
+    }
+
+    #[test]
+    fn acos_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT acos(0) FROM sensors LIMIT 1",
+                "expected/ac_zero_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(1) FROM sensors LIMIT 1",
+                "expected/ac_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(-1) FROM sensors LIMIT 1",
+                "expected/ac_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(0.5) FROM sensors LIMIT 1",
+                "expected/ac_half.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(-0.0) FROM sensors LIMIT 1",
+                "expected/ac_neg0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(2) FROM sensors LIMIT 1",
+                "expected/ac_two.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(null) FROM sensors LIMIT 1",
+                "expected/ac_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(id) FROM sensors",
+                "expected/ac_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(reading) FROM sensors",
+                "expected/ac_read.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(b) FROM sensors",
+                "expected/ac_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(ts) FROM sensors LIMIT 1",
+                "expected/ac_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos('0.5') FROM sensors LIMIT 1",
+                "expected/ac_text.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos('1.5d') FROM sensors LIMIT 1",
+                "expected/ac_suffix.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(' 1') FROM sensors LIMIT 1",
+                "expected/ac_ws.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos('NaN') FROM sensors LIMIT 1",
+                "expected/ac_nan.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ACOS(1) FROM sensors LIMIT 1",
+                "expected/ac_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(note) FROM sensors WHERE id = 2",
+                "expected/ac_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(id) FROM sensors WHERE id = 1",
+                "expected/ac_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(id) FROM sensors ORDER BY acos(id)",
+                "expected/ac_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(id) FROM sensors LIMIT 0",
+                "expected/ac_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT acos(ch) FROM sensors LIMIT 0",
+                "expected/ac_ch0.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT acos(id) FROM days ORDER BY ts",
+                "expected/ac_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT acos() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `acos` requires arguments: acos(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT acos(1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `acos`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT acos(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `acos` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT acos(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `acos` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT acos('nope') FROM sensors LIMIT 0").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `nope` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT acos('') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT acos('A') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT acos(note) FROM sensors LIMIT 1").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT acos(ch) FROM sensors WHERE id = 2").unwrap_err();
+        assert!(
+            err.message.contains("[CHAR -> DOUBLE]") && err.message.contains('\0'),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT acos(tag) FROM sensors LIMIT 1").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let result = execute(&sensors, "SELECT acos(note) FROM sensors LIMIT 0").unwrap();
         assert_eq!(result.rows.len(), 0);
     }
 
