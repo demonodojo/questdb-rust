@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — menos unario
+
+`-value` niega una columna y conserva el tipo numérico, también en `BYTE`, `SHORT` y `FLOAT`. El encabezado es `-(id)`. Un nulo sigue nulo. Negar `-0.0` da `0.0` y negar `0.0` da `-0.0`. El mínimo de `BYTE` y de `SHORT` no cambia. `-(id)` es `-1`, `-2`, NULL y `1`. En `days` es `-1`, `-2`, `-3` y NULL. `-(reading)` es `-1.5`, NULL, `-0.0` y `0.0`. `-(flags)` es `-10`, NULL, `0` y `-42`. `-(score)` es `-1.25`, NULL, `-0.0` y `1.5`. `-(b)` es `-3`, `0`, `-128` y `-1`. `-(code)` es `-7`, `0`, `-32768` y `-1`. `BOOLEAN` no tiene operador. Un texto se intenta leer como `DOUBLE` y `alpha` se rechaza. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — resto
 
 `value % other` devuelve el resto de dividir una columna por una constante y conserva el tipo numérico de la columna. Un nulo hace nulo el resultado. El resto de dividir por `0` también es NULL. El signo del resto sigue al dividendo. `-1 % 2` es `-1`. `id % 2` es `1`, `0`, NULL y `-1`. En `days` es `1`, `0`, `1` y NULL. `id % null` es NULL en las cuatro filas. `id % 0` es NULL en las cuatro filas. `reading % 2` es `1.5`, NULL, `0.0` y `-0.0`. `flags % 2` es `0`, NULL, `0` y `0`. Se contrastó con `/exec` en `sensors` y `days`.

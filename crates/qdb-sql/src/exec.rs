@@ -6,7 +6,7 @@ use crate::parse::{
     DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr,
     GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr,
     LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr,
-    MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query,
+    MinuteExpr, MonthExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query,
     QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
     RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
     SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
@@ -290,6 +290,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::InList { label, .. }
             | ResolvedProj::Eq { label, .. }
             | ResolvedProj::Add { label, .. }
+            | ResolvedProj::Neg { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
             | ResolvedProj::Exp { label, .. }
@@ -705,6 +706,11 @@ enum ResolvedProj {
         literal: Scalar,
         op: ArithOp,
     },
+    Neg {
+        label: String,
+        index: usize,
+        result_tag: i32,
+    },
     Ln {
         label: String,
         input: SqrtInput,
@@ -884,6 +890,7 @@ impl ResolvedProj {
             | Self::InList { label, .. }
             | Self::Eq { label, .. }
             | Self::Add { label, .. }
+            | Self::Neg { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
             | Self::Exp { label, .. }
@@ -958,7 +965,8 @@ impl ResolvedProj {
             | Self::Pi { .. } => qdb_types::TAG_DOUBLE,
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
-            | Self::Add { result_tag, .. } => *result_tag,
+            | Self::Add { result_tag, .. }
+            | Self::Neg { result_tag, .. } => *result_tag,
             Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
                 if *wide {
                     qdb_types::TAG_DOUBLE
@@ -1085,6 +1093,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::InList(expr) => resolve_in_list(table, expr),
         Proj::Eq(expr) => resolve_eq(table, expr),
         Proj::Add(expr) => resolve_add(table, expr),
+        Proj::Neg(expr) => resolve_neg(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
         Proj::Exp(expr) => resolve_exp(table, expr),
@@ -1723,6 +1732,60 @@ fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
         literal: expr.literal.clone(),
         op: expr.op,
     })
+}
+
+fn resolve_neg(table: &Table, expr: &NegExpr) -> Result<ResolvedProj, Error> {
+    let Some(index) = table.column_index(&expr.value) else {
+        return Err(Error::new(format!("Invalid column: {}", expr.value)));
+    };
+    let tag = table.meta.columns[index].tag;
+    let result_tag = match tag {
+        qdb_types::TAG_BYTE
+        | qdb_types::TAG_SHORT
+        | qdb_types::TAG_INT
+        | qdb_types::TAG_LONG
+        | qdb_types::TAG_FLOAT
+        | qdb_types::TAG_DOUBLE => tag,
+        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR => qdb_types::TAG_DOUBLE,
+        other => {
+            return Err(Error::new(format!(
+                "there is no matching operator `-` with the argument type: {}",
+                qdb_types::type_name(other)
+            )))
+        }
+    };
+    Ok(ResolvedProj::Neg {
+        label: expr.label.clone(),
+        index,
+        result_tag,
+    })
+}
+
+fn neg_value(table: &Table, row: usize, index: usize) -> Result<Scalar, Error> {
+    let tag = table.meta.columns[index].tag;
+    match &table.columns[index][row] {
+        Scalar::Null => Ok(Scalar::Null),
+        Scalar::Byte(number) => Ok(Scalar::Byte(number.wrapping_neg())),
+        Scalar::Short(number) => Ok(Scalar::Short(number.wrapping_neg())),
+        Scalar::Int(number) => Ok(Scalar::Int(number.wrapping_neg())),
+        Scalar::Long(number) => Ok(Scalar::Long(number.wrapping_neg())),
+        Scalar::Float(number) => Ok(Scalar::Float(-number)),
+        Scalar::Double(number) => Ok(Scalar::Double(-number)),
+        Scalar::Text(text) => {
+            let kind = if tag == qdb_types::TAG_VARCHAR {
+                "VARCHAR"
+            } else {
+                "STRING"
+            };
+            match parse_questdb_f64(text) {
+                Some(number) => Ok(Scalar::Double(-number)),
+                None => Err(Error::new(format!(
+                    "inconvertible value: `{text}` [{kind} -> DOUBLE]"
+                ))),
+            }
+        }
+        _ => Err(Error::new("internal: unary minus")),
+    }
 }
 
 fn apply_i64(op: ArithOp, left: i64, right: i64) -> Option<i64> {
@@ -7128,6 +7191,7 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         ResolvedProj::Degrees { input, .. } => degrees_scalar(table, row, input),
         ResolvedProj::Radians { input, .. } => radians_scalar(table, row, input),
         ResolvedProj::Cot { input, .. } => cot_scalar(table, row, input),
+        ResolvedProj::Neg { index, .. } => neg_value(table, row, *index),
         ResolvedProj::Eq {
             index, op, literal, ..
         } => eq_value(table, row, *index, *op, literal),
@@ -7220,6 +7284,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             op,
             ..
         } => add_value(table, row, *index, *result_tag, literal, *op),
+        ResolvedProj::Neg { index, .. } => neg_value(table, row, *index).unwrap_or(Scalar::Null),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15597,6 +15662,82 @@ mod tests {
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn ng_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (&sensors, "SELECT -id FROM sensors", "expected/ng_all.tsv"),
+            (
+                &sensors,
+                "SELECT -id FROM sensors WHERE id = 1",
+                "expected/ng_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT -id FROM sensors WHERE id = -1",
+                "expected/ng_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT -id FROM sensors WHERE id > 100",
+                "expected/ng_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT -reading FROM sensors",
+                "expected/ng_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT -flags FROM sensors",
+                "expected/ng_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT -score FROM sensors",
+                "expected/ng_score.tsv",
+            ),
+            (&sensors, "SELECT -b FROM sensors", "expected/ng_byte.tsv"),
+            (
+                &sensors,
+                "SELECT -code FROM sensors",
+                "expected/ng_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT -id FROM sensors LIMIT 0",
+                "expected/ng_lim0.tsv",
+            ),
+            (&days, "SELECT -id FROM days", "expected/ng_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT -missing FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT -ok FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching operator `-` with the argument type: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT -note FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
             "{}",
             err.message
         );
