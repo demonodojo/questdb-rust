@@ -140,7 +140,7 @@ impl fmt::Display for Scalar {
 }
 
 pub fn format_f64(v: f64) -> String {
-    if v.is_nan() {
+    if !v.is_finite() {
         return "NULL".to_string();
     }
     if v == 0.0 {

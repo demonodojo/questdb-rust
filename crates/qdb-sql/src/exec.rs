@@ -1,9 +1,9 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
-    CeilExpr, CmpOp, ConcatArg, Filter, FloorExpr, GroupedSelect, LengthExpr, LowerExpr, PadExpr,
-    PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SignExpr,
-    SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd,
-    TrimExpr, UpperExpr,
+    CeilExpr, CmpOp, ConcatArg, Filter, FloorExpr, GroupedSelect, LengthExpr, LnExpr, LowerExpr,
+    PadExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr,
+    SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
+    TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -200,7 +200,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
             | ResolvedProj::Sqrt { label, .. }
-            | ResolvedProj::Power { label, .. } => label.clone(),
+            | ResolvedProj::Power { label, .. }
+            | ResolvedProj::Ln { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -334,6 +335,10 @@ enum ResolvedProj {
         base: SqrtInput,
         exponent: SqrtInput,
     },
+    Ln {
+        label: String,
+        input: SqrtInput,
+    },
 }
 
 enum SqrtInput {
@@ -423,7 +428,8 @@ impl ResolvedProj {
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
             | Self::Sqrt { label, .. }
-            | Self::Power { label, .. } => Some(label),
+            | Self::Power { label, .. }
+            | Self::Ln { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -434,7 +440,7 @@ impl ResolvedProj {
             Self::Abs { result_tag, .. } => *result_tag,
             Self::Round { .. } => qdb_types::TAG_DOUBLE,
             Self::Sign { result_tag, .. } => *result_tag,
-            Self::Sqrt { .. } | Self::Power { .. } => qdb_types::TAG_DOUBLE,
+            Self::Sqrt { .. } | Self::Power { .. } | Self::Ln { .. } => qdb_types::TAG_DOUBLE,
             Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
                 if *wide {
                     qdb_types::TAG_DOUBLE
@@ -497,6 +503,36 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Sign(expr) => resolve_sign(table, expr),
         Proj::Sqrt(expr) => resolve_sqrt(table, expr),
         Proj::Power(expr) => resolve_power(table, expr),
+        Proj::Ln(expr) => resolve_ln(table, expr),
+    }
+}
+
+fn resolve_ln(table: &Table, expr: &LnExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `ln`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let input = ln_input(table, &expr.args[0])?;
+    Ok(ResolvedProj::Ln {
+        label: expr.label.clone(),
+        input,
+    })
+}
+
+fn ln_input(table: &Table, arg: &ConcatArg) -> Result<SqrtInput, Error> {
+    match power_input(table, arg) {
+        Ok(input) => Ok(input),
+        Err(err) if err.message.starts_with("expression type mismatch") => {
+            Err(match concat_arg_type(table, arg) {
+                Ok(actual) => Error::new(format!(
+                "argument type mismatch for function `ln` at #1 expected: DOUBLE, actual: {actual}"
+            )),
+                Err(column) => column,
+            })
+        }
+        Err(err) => Err(err),
     }
 }
 
@@ -1514,6 +1550,17 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Ceil { input, wide, .. } => ceil_value(table, row, input, *wide),
         ResolvedProj::Sign { input, .. } => sign_value(table, row, input),
         ResolvedProj::Power { base, exponent, .. } => power_value(table, row, base, exponent),
+        ResolvedProj::Ln { input, .. } => match sqrt_number(table, row, input) {
+            Some(value) => {
+                let result = value.ln();
+                if result.is_nan() {
+                    Scalar::Null
+                } else {
+                    Scalar::Double(result)
+                }
+            }
+            None => Scalar::Null,
+        },
         ResolvedProj::Sqrt { input, .. } => match sqrt_number(table, row, input) {
             Some(value) => {
                 let result = value.sqrt();
@@ -8058,6 +8105,140 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT power(missing, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn ln_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT ln(reading) FROM sensors",
+                "expected/ln_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(score) FROM sensors",
+                "expected/ln_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(id) FROM sensors",
+                "expected/ln_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(flags) FROM sensors",
+                "expected/ln_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(b) FROM sensors",
+                "expected/ln_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(code) FROM sensors",
+                "expected/ln_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(1) FROM sensors LIMIT 1",
+                "expected/ln_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(0) FROM sensors LIMIT 1",
+                "expected/ln_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(-1) FROM sensors LIMIT 1",
+                "expected/ln_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(null) FROM sensors LIMIT 1",
+                "expected/ln_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT LN(READING) FROM sensors",
+                "expected/ln_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(id) FROM sensors ORDER BY ln(id)",
+                "expected/ln_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(reading) FROM sensors ORDER BY ln(reading)",
+                "expected/ln_reading_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, ln(id) FROM sensors ORDER BY ln(id)",
+                "expected/ln_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(id) FROM sensors WHERE id = 1",
+                "expected/ln_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ln(id) FROM sensors LIMIT 0",
+                "expected/ln_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT ln(id) FROM days ORDER BY ts",
+                "expected/ln_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT ln() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `ln` requires arguments: ln(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ln(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `ln` at #1 expected: DOUBLE, actual: STRING"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ln(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `ln` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ln(id, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("wrong number of arguments for function `ln`; expected: 1, provided: 2"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ln(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
