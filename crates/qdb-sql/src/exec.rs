@@ -7,8 +7,8 @@ use crate::parse::{
     LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MillisExpr, MinuteExpr,
     MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
     RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr,
-    SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SplitPartExpr,
-    SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr,
+    SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams,
+    SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr,
     TimestampFloorExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr,
     UpperExpr, WeekOfYearExpr, YearExpr,
 };
@@ -7141,7 +7141,7 @@ fn execute_aggregate(
     let rows = if row_ids.is_empty() {
         Vec::new()
     } else {
-        vec![vec![accumulator.finish()]]
+        vec![vec![accumulator_value(&accumulator)?]]
     };
     Ok(QueryResult {
         columns: vec![aggregate.label.clone()],
@@ -7216,6 +7216,9 @@ fn execute_group(
             groups.push((key, accumulator));
         }
     }
+    for (_, accumulator) in &groups {
+        accumulator_value(accumulator)?;
+    }
     let tag = table.meta.columns[key_index].tag;
     groups.sort_by(|left, right| {
         for order in &query.order_by {
@@ -7247,18 +7250,16 @@ fn execute_group(
         Some(grouped) => vec![aggregate.label.clone(), grouped.key.clone()],
         None => vec![aggregate.label.clone()],
     };
-    let rows = row_ids
-        .into_iter()
-        .map(|index| {
-            let (key, accumulator) = &groups[index];
-            let value = accumulator.finish();
-            match grouped {
-                Some(grouped) if grouped.key_at == 0 => vec![key.clone(), value],
-                Some(_) => vec![value, key.clone()],
-                None => vec![value],
-            }
-        })
-        .collect();
+    let mut rows = Vec::new();
+    for index in row_ids {
+        let (key, accumulator) = &groups[index];
+        let value = accumulator_value(accumulator)?;
+        rows.push(match grouped {
+            Some(grouped) if grouped.key_at == 0 => vec![key.clone(), value],
+            Some(_) => vec![value, key.clone()],
+            None => vec![value],
+        });
+    }
     Ok(QueryResult { columns, rows })
 }
 
@@ -7329,6 +7330,10 @@ enum Accumulator {
     },
     Twap {
         samples: Vec<(i64, f64)>,
+    },
+    Sparkline {
+        values: Vec<f64>,
+        params: Option<SparkParams>,
     },
     Corr {
         mean_y: f64,
@@ -7497,6 +7502,10 @@ impl Accumulator {
             AggFunc::Twap => Self::Twap {
                 samples: Vec::new(),
             },
+            AggFunc::Sparkline => Self::Sparkline {
+                values: Vec::new(),
+                params: None,
+            },
             AggFunc::CovarPop | AggFunc::CovarSamp => Self::Covar {
                 mean_y: 0.0,
                 mean_x: 0.0,
@@ -7598,6 +7607,9 @@ impl Accumulator {
                 }
             }
             Self::Twap { samples } => twap_scalar(samples),
+            Self::Sparkline { values, params } => {
+                sparkline_scalar(values, *params).unwrap_or(Scalar::Null)
+            }
             Self::Vwap { notional, volume } => {
                 if *volume > 0.0 {
                     let result = *notional / *volume;
@@ -7718,6 +7730,31 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         .column_index(name)
         .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
     let tag = table.meta.columns[index].tag;
+    if aggregate.func == AggFunc::Sparkline {
+        if let Some(extra) = &aggregate.fourth_type {
+            let mut types = vec![qdb_types::type_name(tag).to_string()];
+            for token in extra.split(", ") {
+                if let Some(column) = token.strip_prefix("col:") {
+                    let other = table
+                        .column_index(column)
+                        .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
+                    types.push(qdb_types::type_name(table.meta.columns[other].tag).to_string());
+                } else {
+                    types.push(token.to_string());
+                }
+            }
+            return Err(Error::new(format!(
+                "there is no matching function `sparkline` with the argument types: ({})",
+                types.join(", ")
+            )));
+        }
+        if matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL) {
+            return Err(Error::new(format!(
+                "there is no matching function `sparkline` with the argument types: ({})",
+                qdb_types::type_name(tag)
+            )));
+        }
+    }
     if matches!(aggregate.func, AggFunc::FirstNotNull | AggFunc::LastNotNull) {
         let fname = null_agg_name(aggregate.func);
         if let Some(extra) = &aggregate.extra {
@@ -7949,6 +7986,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::Skewness
         | AggFunc::SkewnessPop
         | AggFunc::KurtosisPop => qdb_types::TAG_DOUBLE,
+        AggFunc::Sparkline => qdb_types::TAG_VARCHAR,
         AggFunc::Mode => mode_result_tag(input.tag),
         AggFunc::ApproxMedian | AggFunc::ApproxPercentile => qdb_types::TAG_DOUBLE,
         AggFunc::ArgMax => arg_max_result_tag(input.tag, input.pair_tag),
@@ -7979,6 +8017,12 @@ fn contribution(
         value.is_null() || (input.tag == qdb_types::TAG_CHAR && matches!(value, Scalar::Char(0)));
     match input.func {
         AggFunc::First | AggFunc::Last => Ok(Some(value.clone())),
+        AggFunc::Sparkline => {
+            if value.is_null() {
+                return Ok(None);
+            }
+            geomean_addend(value, input, "sparkline")
+        }
         _ if skipped => Ok(None),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
             if matches!(input.tag, qdb_types::TAG_BYTE | qdb_types::TAG_SHORT) =>
@@ -8254,6 +8298,96 @@ fn covar_value(value: &Scalar, tag: i32) -> Result<Option<f64>, Error> {
     }
 }
 
+const SPARK_CHARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+fn accumulator_value(accumulator: &Accumulator) -> Result<Scalar, Error> {
+    if let Accumulator::Sparkline { values, params } = accumulator {
+        sparkline_scalar(values, *params)
+    } else {
+        Ok(accumulator.finish())
+    }
+}
+
+fn sparkline_scalar(values: &[f64], params: Option<SparkParams>) -> Result<Scalar, Error> {
+    if values.is_empty() {
+        return Ok(Scalar::Null);
+    }
+    let (user_min, user_max, width) = match params {
+        Some(params) => {
+            let width = match params.width {
+                Some(width) if width >= 1 => width as usize,
+                _ => return Err(Error::new("width must be a positive integer")),
+            };
+            (
+                params.min_bits.map(f64::from_bits),
+                params.max_bits.map(f64::from_bits),
+                width,
+            )
+        }
+        None => (None, None, values.len()),
+    };
+    if let (Some(min), Some(max)) = (user_min, user_max) {
+        if min > max {
+            return Err(Error::new(format!(
+                "sparkline() min must not exceed max [min={}, max={}]",
+                spark_bound_text(min),
+                spark_bound_text(max)
+            )));
+        }
+    }
+    let mut min = values[0];
+    let mut max = values[0];
+    for value in &values[1..] {
+        if *value < min {
+            min = *value;
+        }
+        if *value > max {
+            max = *value;
+        }
+    }
+    if let Some(bound) = user_min {
+        min = bound;
+    }
+    if let Some(bound) = user_max {
+        max = bound;
+    }
+    let range = max - min;
+    let mut text = String::new();
+    if width >= values.len() {
+        for value in values {
+            text.push(spark_char(*value, min, range));
+        }
+    } else {
+        let bucket = values.len() as f64 / width as f64;
+        for index in 0..width {
+            let from = (index as f64 * bucket) as usize;
+            let to = ((index + 1) as f64 * bucket) as usize;
+            let mut sum = 0.0;
+            for value in &values[from..to] {
+                sum += *value;
+            }
+            let average = sum / (to - from) as f64;
+            text.push(spark_char(average, min, range));
+        }
+    }
+    Ok(Scalar::Text(text))
+}
+
+fn spark_bound_text(value: f64) -> String {
+    format!("{value:?}")
+}
+
+fn spark_char(value: f64, min: f64, range: f64) -> char {
+    if range == 0.0 {
+        return SPARK_CHARS[SPARK_CHARS.len() - 1];
+    }
+    let upper = min + range;
+    let clamped = min.max(upper.min(value));
+    let index = ((clamped - min) / range * (SPARK_CHARS.len() - 1) as f64) as i32;
+    let index = if index < 0 { 0 } else { index as usize };
+    SPARK_CHARS[index.min(SPARK_CHARS.len() - 1)]
+}
+
 fn twap_pair(
     table: &Table,
     tag: i32,
@@ -8424,6 +8558,24 @@ fn corr_result(sum_xy: f64, sum_y: f64, sum_x: f64, count: i64) -> Scalar {
 
 fn start_accumulator(aggregate: &AggregateExpr, input: &AggColumn) -> Accumulator {
     let mut accumulator = Accumulator::start(aggregate.func);
+    if let Accumulator::Sparkline { params, .. } = &mut accumulator {
+        if aggregate.precision_more {
+            *params = Some(SparkParams {
+                min_bits: match aggregate.third_value {
+                    Some(Scalar::Double(number)) => Some(number.to_bits()),
+                    _ => None,
+                },
+                max_bits: match aggregate.separator {
+                    Some(Scalar::Double(number)) => Some(number.to_bits()),
+                    _ => None,
+                },
+                width: match aggregate.precision {
+                    Some(Scalar::Long(number)) => i32::try_from(number).ok(),
+                    _ => None,
+                },
+            });
+        }
+    }
     if let Accumulator::StringAgg { delimiter, .. } = &mut accumulator {
         *delimiter = input.delimiter;
     }
@@ -9781,6 +9933,14 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
                 *invalid = true;
             } else {
                 *sum_ln += next.ln();
+            }
+        }
+        Accumulator::Sparkline { values, .. } => {
+            let Scalar::Double(value) = next else {
+                return;
+            };
+            if value.is_finite() {
+                values.push(value);
             }
         }
         Accumulator::Skewness {
@@ -24577,6 +24737,270 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn sparkline_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT sparkline(flags) FROM sensors",
+                "expected/sl_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(flags) FROM sensors WHERE id = 1",
+                "expected/sl_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(flags) FROM sensors WHERE id > 100",
+                "expected/sl_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(reading) FROM sensors",
+                "expected/sl_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(score) FROM sensors",
+                "expected/sl_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(b) FROM sensors",
+                "expected/sl_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(id) FROM sensors",
+                "expected/sl_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(code) FROM sensors",
+                "expected/sl_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(day) FROM sensors",
+                "expected/sl_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(ts) FROM sensors",
+                "expected/sl_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/sl_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(flags) FROM sensors LIMIT 0",
+                "expected/sl_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT SPARKLINE(flags) FROM sensors",
+                "expected/sl_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(flags, 0, 42, 2) FROM sensors",
+                "expected/sl_width.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(flags, 0, 100, 2) FROM sensors",
+                "expected/sl_wide.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(reading, 0, 1.5, 2) FROM sensors",
+                "expected/sl_read_w.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(flags, 0, 42, 10) FROM sensors",
+                "expected/sl_full.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(flags, null, null, 3) FROM sensors",
+                "expected/sl_auto.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT sparkline(flags) FROM sensors WHERE id = -1",
+                "expected/sl_neg.tsv",
+            ),
+            (
+                &days,
+                "SELECT sparkline(id) FROM days",
+                "expected/sl_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT sparkline(id) FROM days GROUP BY location ORDER BY location",
+                "expected/sl_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT sparkline() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `sparkline` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(flags, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `sparkline` with the argument types: (INT, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(flags, 1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `sparkline` with the argument types: (INT, INT, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT sparkline(flags, 0, 42, 2, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `sparkline` with the argument types: (INT, INT, INT, INT, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(flags, reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `sparkline` with the argument types: (INT, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT sparkline(flags, 0, 42, 2.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `sparkline` with the argument types: (INT, INT, INT, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `sparkline` with the argument types: (BOOLEAN)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `sparkline` with the argument types: (SYMBOL)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(ch) FROM sensors WHERE id = 2").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: \0 [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT sparkline(flags, 'a', 42, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: a [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(flags, 0, 42, 0) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("width must be a positive integer"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT sparkline(flags, 0, 42, null) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("width must be a positive integer"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sparkline(flags, 5, 1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("sparkline() min must not exceed max [min=5.0, max=1.0]"),
+            "{}",
+            err.message
+        );
+        let result = execute(
+            &sensors,
+            "SELECT sparkline(flags, 0, 42, 0) FROM sensors WHERE id > 100",
+        )
+        .unwrap();
+        assert_eq!(render_tsv(&result), "sparkline(flags, 0, 42, 0)\nNULL\n");
     }
 
     #[test]

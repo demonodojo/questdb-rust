@@ -77,6 +77,7 @@ pub enum AggFunc {
     Skewness,
     SkewnessPop,
     KurtosisPop,
+    Sparkline,
     Mode,
     ApproxMedian,
     ApproxPercentile,
@@ -111,6 +112,54 @@ pub struct AggregateExpr {
     pub third_value: Option<Scalar>,
     /// Type name of a fourth `approx_percentile` argument, when present.
     pub fourth_type: Option<String>,
+}
+
+/// Constant `min`, `max` and `width` of `sparkline`. `None` means the SQL NULL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SparkParams {
+    pub min_bits: Option<u64>,
+    pub max_bits: Option<u64>,
+    pub width: Option<i32>,
+}
+
+struct ParsedSpark {
+    matched: bool,
+    min_bits: Option<u64>,
+    max_bits: Option<u64>,
+    width: Option<i32>,
+    suffix: String,
+    mismatch: Option<String>,
+}
+
+enum SparkBound {
+    Auto,
+    Number(f64),
+}
+
+fn spark_bound(value: &Scalar, kind: &str) -> Result<Option<SparkBound>, Error> {
+    if kind.starts_with("col:") {
+        return Ok(None);
+    }
+    match value {
+        Scalar::Null => Ok(Some(SparkBound::Auto)),
+        Scalar::Double(number) => Ok(Some(SparkBound::Number(*number))),
+        Scalar::Long(number) => Ok(Some(SparkBound::Number(*number as f64))),
+        Scalar::Text(text) => {
+            let parsed = text.parse::<f64>().ok().filter(|number| number.is_finite());
+            let Some(number) = parsed else {
+                if text.chars().count() <= 1 {
+                    return Err(Error::new(format!(
+                        "inconvertible value: {text} [CHAR -> DOUBLE]"
+                    )));
+                }
+                return Err(Error::new(format!(
+                    "inconvertible value: `{text}` [STRING -> DOUBLE]"
+                )));
+            };
+            Ok(Some(SparkBound::Number(number)))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn median_literal_type(number: &Scalar) -> &'static str {
@@ -3097,6 +3146,7 @@ impl<'a> Parser<'a> {
                 | "skewness"
                 | "skewness_pop"
                 | "kurtosis_pop"
+                | "sparkline"
                 | "mode"
                 | "approx_median"
                 | "approx_percentile"
@@ -3168,6 +3218,7 @@ impl<'a> Parser<'a> {
             "skewness" => AggFunc::Skewness,
             "skewness_pop" => AggFunc::SkewnessPop,
             "kurtosis_pop" => AggFunc::KurtosisPop,
+            "sparkline" => AggFunc::Sparkline,
             "mode" => AggFunc::Mode,
             "approx_median" => AggFunc::ApproxMedian,
             "approx_percentile" => AggFunc::ApproxPercentile,
@@ -3246,6 +3297,7 @@ impl<'a> Parser<'a> {
         let mut separator_label = None;
         let mut pair = None;
         let mut extra = None;
+        let mut spark_label = None;
         if matches!(func, AggFunc::StringAgg | AggFunc::StringDistinctAgg)
             && self.peek() == Some(b',')
         {
@@ -3612,6 +3664,22 @@ impl<'a> Parser<'a> {
             }
             self.skip();
         }
+        if func == AggFunc::Sparkline && self.peek() == Some(b',') {
+            let column_name = column.clone().unwrap_or_default();
+            let parsed = self.parse_spark_args()?;
+            if parsed.matched {
+                precision_more = true;
+                precision = parsed.width.map(|width| Scalar::Long(i64::from(width)));
+                third_value = parsed
+                    .min_bits
+                    .map(|bits| Scalar::Double(f64::from_bits(bits)));
+                separator = parsed
+                    .max_bits
+                    .map(|bits| Scalar::Double(f64::from_bits(bits)));
+            }
+            spark_label = Some(format!("{column_name}, {}", parsed.suffix));
+            fourth_type = parsed.mismatch;
+        }
         if !self.eat(b')') {
             return Err(Error::new(format!(
                 "unsupported: expected ')' after {name}"
@@ -3688,7 +3756,9 @@ impl<'a> Parser<'a> {
                 name.to_ascii_lowercase()
             )));
         }
-        let label = if let (Some(column), Some(second), Some(third)) =
+        let label = if let Some(suffix) = spark_label {
+            format!("{name}({suffix})")
+        } else if let (Some(column), Some(second), Some(third)) =
             (&column, &precision_label, &third_label)
         {
             format!("{name}({column}, {second}, {third})")
@@ -3718,6 +3788,86 @@ impl<'a> Parser<'a> {
             third_value,
             fourth_type,
         })
+    }
+
+    fn parse_spark_args(&mut self) -> Result<ParsedSpark, Error> {
+        let mut values = Vec::new();
+        let mut types = Vec::new();
+        let mut labels = Vec::new();
+        while self.peek() == Some(b',') {
+            self.pos += 1;
+            self.skip();
+            let start = self.pos;
+            let (value, kind) = self.parse_spark_arg()?;
+            let spelling = std::str::from_utf8(&self.src[start..self.pos])
+                .unwrap_or("")
+                .to_string();
+            labels.push(spelling);
+            types.push(kind);
+            values.push(value);
+            self.skip();
+        }
+        let suffix = labels.join(", ");
+        let mismatch = Some(types.join(", "));
+        let reject = ParsedSpark {
+            matched: false,
+            min_bits: None,
+            max_bits: None,
+            width: None,
+            suffix: suffix.clone(),
+            mismatch: mismatch.clone(),
+        };
+        if values.len() != 3 || types[2].starts_with("col:") {
+            return Ok(reject);
+        }
+        let width = match &values[2] {
+            Scalar::Null => None,
+            Scalar::Long(value) => match i32::try_from(*value) {
+                Ok(value) => Some(value),
+                Err(_) => return Ok(reject),
+            },
+            _ => return Ok(reject),
+        };
+        let min_bits = match spark_bound(&values[0], &types[0])? {
+            Some(SparkBound::Number(number)) => Some(number.to_bits()),
+            Some(SparkBound::Auto) => None,
+            None => return Ok(reject),
+        };
+        let max_bits = match spark_bound(&values[1], &types[1])? {
+            Some(SparkBound::Number(number)) => Some(number.to_bits()),
+            Some(SparkBound::Auto) => None,
+            None => return Ok(reject),
+        };
+        Ok(ParsedSpark {
+            matched: true,
+            min_bits,
+            max_bits,
+            width,
+            suffix,
+            mismatch: None,
+        })
+    }
+
+    fn parse_spark_arg(&mut self) -> Result<(Scalar, String), Error> {
+        if self.peek() == Some(b'\'') {
+            let text = self.parse_string()?;
+            let kind = if text.chars().count() <= 1 {
+                "CHAR"
+            } else {
+                "STRING"
+            };
+            return Ok((Scalar::Text(text), kind.to_string()));
+        }
+        if matches!(self.peek(), Some(byte) if byte.is_ascii_digit() || byte == b'-') {
+            let number = self.parse_number()?;
+            let kind = median_literal_type(&number).to_string();
+            return Ok((number, kind));
+        }
+        let word = self.ident_spelling()?;
+        if word.eq_ignore_ascii_case("null") {
+            return Ok((Scalar::Null, "NULL".to_string()));
+        }
+        Ok((Scalar::Null, format!("col:{word}")))
     }
 
     fn parse_order_call(&mut self, name: String) -> Result<String, Error> {

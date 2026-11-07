@@ -2061,7 +2061,26 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tw_flags "SELECT twap(flags, ts) FROM sensors" \
   tw_grp "SELECT twap(reading, ts) FROM sensors GROUP BY location ORDER BY location" \
   tw_lim0 "SELECT twap(reading, ts) FROM sensors LIMIT 0" \
-  tw_case "SELECT TWAP(reading, ts) FROM sensors"
+  tw_case "SELECT TWAP(reading, ts) FROM sensors" \
+  sl_flags "SELECT sparkline(flags) FROM sensors" \
+  sl_one "SELECT sparkline(flags) FROM sensors WHERE id = 1" \
+  sl_none "SELECT sparkline(flags) FROM sensors WHERE id > 100" \
+  sl_read "SELECT sparkline(reading) FROM sensors" \
+  sl_score "SELECT sparkline(score) FROM sensors" \
+  sl_byte "SELECT sparkline(b) FROM sensors" \
+  sl_id "SELECT sparkline(id) FROM sensors" \
+  sl_code "SELECT sparkline(code) FROM sensors" \
+  sl_day "SELECT sparkline(day) FROM sensors" \
+  sl_ts "SELECT sparkline(ts) FROM sensors" \
+  sl_grp "SELECT sparkline(flags) FROM sensors GROUP BY location ORDER BY location" \
+  sl_lim0 "SELECT sparkline(flags) FROM sensors LIMIT 0" \
+  sl_case "SELECT SPARKLINE(flags) FROM sensors" \
+  sl_width "SELECT sparkline(flags, 0, 42, 2) FROM sensors" \
+  sl_wide "SELECT sparkline(flags, 0, 100, 2) FROM sensors" \
+  sl_read_w "SELECT sparkline(reading, 0, 1.5, 2) FROM sensors" \
+  sl_full "SELECT sparkline(flags, 0, 42, 10) FROM sensors" \
+  sl_auto "SELECT sparkline(flags, null, null, 3) FROM sensors" \
+  sl_neg "SELECT sparkline(flags) FROM sensors WHERE id = -1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2293,7 +2312,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   vw_days "SELECT vwap(id, id) FROM days" \
   vw_days_grp "SELECT vwap(id, id) FROM days GROUP BY location ORDER BY location" \
   tw_days "SELECT twap(id, ts) FROM days" \
-  tw_days_grp "SELECT twap(id, ts) FROM days GROUP BY location ORDER BY location"
+  tw_days_grp "SELECT twap(id, ts) FROM days GROUP BY location ORDER BY location" \
+  sl_days "SELECT sparkline(id) FROM days" \
+  sl_days_grp "SELECT sparkline(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4302,6 +4323,25 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT twap(reading, ts) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT twap(reading, ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT TWAP(reading, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT SPARKLINE(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(flags, 0, 42, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(flags, 0, 100, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(reading, 0, 1.5, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(flags, 0, 42, 10) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(flags, null, null, 3) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sparkline(flags) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4532,6 +4572,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT vwap(id, id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT twap(id, ts) FROM days"),
     (os.environ["DIFF_H2"], "SELECT twap(id, ts) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT sparkline(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT sparkline(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
