@@ -7279,6 +7279,7 @@ enum Accumulator {
     Count(i64),
     Value(Option<Scalar>),
     Average { total: Option<Scalar>, count: i64 },
+    StdDev { mean: f64, m2: f64, count: i64 },
     Distinct(Vec<Scalar>),
 }
 
@@ -7293,6 +7294,11 @@ impl Accumulator {
                 total: None,
                 count: 0,
             },
+            AggFunc::StdDev => Self::StdDev {
+                mean: 0.0,
+                m2: 0.0,
+                count: 0,
+            },
             AggFunc::CountDistinct => Self::Distinct(Vec::new()),
         }
     }
@@ -7302,12 +7308,26 @@ impl Accumulator {
             Self::Count(total) => Scalar::Long(*total),
             Self::Distinct(seen) => Scalar::Long(seen.len() as i64),
             Self::Value(Some(value)) => value.clone(),
-            Self::Value(None) | Self::Average { count: 0, .. } => Scalar::Null,
+            Self::Value(None) | Self::Average { count: 0, .. } | Self::StdDev { count: 0, .. } => {
+                Scalar::Null
+            }
             Self::Average {
                 total: Some(total),
                 count,
             } => average_of(total, *count),
             Self::Average { total: None, .. } => Scalar::Null,
+            Self::StdDev { m2, count, .. } => {
+                if *count > 1 {
+                    let result = (*m2 / (*count - 1) as f64).sqrt();
+                    if result.is_finite() {
+                        Scalar::Double(result)
+                    } else {
+                        Scalar::Null
+                    }
+                } else {
+                    Scalar::Null
+                }
+            }
         }
     }
 }
@@ -7325,6 +7345,14 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         .column_index(name)
         .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
     let tag = table.meta.columns[index].tag;
+    if aggregate.func == AggFunc::StdDev
+        && matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL)
+    {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `stddev` at #1 expected: DOUBLE, actual: {}",
+            qdb_types::type_name(tag)
+        )));
+    }
     if matches!(aggregate.func, AggFunc::Count | AggFunc::Sum) && tag == qdb_types::TAG_BOOLEAN {
         let name = match aggregate.func {
             AggFunc::Sum => "sum",
@@ -7361,7 +7389,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::Sum if input.tag == qdb_types::TAG_FLOAT => qdb_types::TAG_FLOAT,
         AggFunc::Sum if input.tag == qdb_types::TAG_DOUBLE => qdb_types::TAG_DOUBLE,
         AggFunc::Sum => qdb_types::TAG_LONG,
-        AggFunc::Avg => qdb_types::TAG_DOUBLE,
+        AggFunc::Avg | AggFunc::StdDev => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
@@ -7392,6 +7420,7 @@ fn contribution(
         AggFunc::Min | AggFunc::Max => Ok(Some(value.clone())),
         AggFunc::Sum => sum_addend(value, input),
         AggFunc::Avg => avg_addend(value, input),
+        AggFunc::StdDev => stddev_addend(value, input),
     }
 }
 
@@ -7456,6 +7485,57 @@ fn scalar_text(value: &Scalar) -> String {
     }
 }
 
+fn stddev_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Error> {
+    let number = match input.tag {
+        qdb_types::TAG_BYTE
+        | qdb_types::TAG_SHORT
+        | qdb_types::TAG_INT
+        | qdb_types::TAG_LONG
+        | qdb_types::TAG_FLOAT
+        | qdb_types::TAG_DOUBLE => as_f64(value)?,
+        qdb_types::TAG_DATE => match value {
+            Scalar::Date(millis) => *millis as f64,
+            _ => return Err(Error::new("internal: date column value")),
+        },
+        qdb_types::TAG_TIMESTAMP => match value {
+            Scalar::Timestamp(micros) => *micros as f64,
+            _ => return Err(Error::new("internal: timestamp column value")),
+        },
+        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR => {
+            let text = scalar_text(value);
+            let parsed = parse_questdb_f64(&text).filter(|number| number.is_finite());
+            let Some(number) = parsed else {
+                let kind = qdb_types::type_name(input.tag);
+                return Err(Error::new(format!(
+                    "inconvertible value: `{text}` [{kind} -> DOUBLE]"
+                )));
+            };
+            number
+        }
+        qdb_types::TAG_CHAR => {
+            let text = scalar_text(value);
+            let parsed = parse_questdb_f64(&text).filter(|number| number.is_finite());
+            let Some(number) = parsed else {
+                return Err(Error::new(format!(
+                    "inconvertible value: {text} [CHAR -> DOUBLE]"
+                )));
+            };
+            number
+        }
+        _ => {
+            return Err(Error::new(format!(
+                "argument type mismatch for function `stddev` at #1 expected: DOUBLE, actual: {}",
+                qdb_types::type_name(input.tag)
+            )));
+        }
+    };
+    if number.is_finite() {
+        Ok(Some(Scalar::Double(number)))
+    } else {
+        Ok(None)
+    }
+}
+
 fn avg_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Error> {
     if input.tag == qdb_types::TAG_BOOLEAN {
         let Scalar::Boolean(bit) = value else {
@@ -7516,6 +7596,18 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
                 None => next,
                 Some(kept) => add_sum(&kept, &next),
             });
+        }
+        Accumulator::StdDev { mean, m2, count } => {
+            let Scalar::Double(value) = next else {
+                return;
+            };
+            if !value.is_finite() {
+                return;
+            }
+            *count += 1;
+            let old_mean = *mean;
+            *mean += (value - *mean) / (*count as f64);
+            *m2 += (value - *mean) * (value - old_mean);
         }
         Accumulator::Value(current) => match current {
             None => *current = Some(next),
@@ -17787,6 +17879,169 @@ mod tests {
         let err = execute(&sensors, "SELECT not(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn stddev_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT stddev(reading) FROM sensors",
+                "expected/sd_read.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(id) FROM sensors",
+                "expected/sd_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(score) FROM sensors",
+                "expected/sd_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(b) FROM sensors",
+                "expected/sd_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(code) FROM sensors",
+                "expected/sd_short.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(flags) FROM sensors",
+                "expected/sd_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(ts) FROM sensors",
+                "expected/sd_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(reading) FROM sensors WHERE id = 1",
+                "expected/sd_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(reading) FROM sensors WHERE id > 100",
+                "expected/sd_none.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(reading) FROM sensors WHERE id = -1",
+                "expected/sd_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT STDDEV(reading) FROM sensors",
+                "expected/sd_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(reading) FROM sensors LIMIT 0",
+                "expected/sd_lim0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/sd_grp.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/sd_grp_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev(reading) FROM sensors WHERE location = 'madrid'",
+                "expected/sd_where.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT stddev(id) FROM days",
+                "expected/sd_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT stddev(id) FROM days GROUP BY location ORDER BY location",
+                "expected/sd_days_grp.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT stddev() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `stddev` requires arguments: stddev(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev(reading, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `stddev`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `stddev` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `stddev` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
             "{}",
             err.message
         );

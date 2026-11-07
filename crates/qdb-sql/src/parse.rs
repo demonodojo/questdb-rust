@@ -47,6 +47,7 @@ pub enum AggFunc {
     First,
     Last,
     CountDistinct,
+    StdDev,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3006,7 +3007,15 @@ impl<'a> Parser<'a> {
         let name = std::str::from_utf8(&bytes[..index]).unwrap_or("");
         if !matches!(
             name.to_ascii_lowercase().as_str(),
-            "count" | "min" | "max" | "sum" | "avg" | "first" | "last" | "count_distinct"
+            "count"
+                | "min"
+                | "max"
+                | "sum"
+                | "avg"
+                | "first"
+                | "last"
+                | "count_distinct"
+                | "stddev"
         ) {
             return false;
         }
@@ -3034,12 +3043,6 @@ impl<'a> Parser<'a> {
         } else {
             Some(self.ident_spelling()?)
         };
-        self.skip();
-        if !self.eat(b')') {
-            return Err(Error::new(format!(
-                "unsupported: expected ')' after {name}"
-            )));
-        }
         let func = match name.to_ascii_lowercase().as_str() {
             "count" => AggFunc::Count,
             "min" => AggFunc::Min,
@@ -3049,10 +3052,40 @@ impl<'a> Parser<'a> {
             "first" => AggFunc::First,
             "last" => AggFunc::Last,
             "count_distinct" => AggFunc::CountDistinct,
+            "stddev" => AggFunc::StdDev,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
             return Err(Error::new("too few arguments for '*' [found=0,expected=2]"));
+        }
+        self.skip();
+        if func == AggFunc::StdDev && self.peek() != Some(b')') {
+            let mut provided = if column.is_some() { 1 } else { 0 };
+            while self.peek().is_some() && self.peek() != Some(b')') {
+                if self.eat(b',') {
+                    provided += 1;
+                } else {
+                    self.pos += 1;
+                }
+            }
+            if !self.eat(b')') {
+                return Err(Error::new(format!(
+                    "unsupported: expected ')' after {name}"
+                )));
+            }
+            return Err(Error::new(format!(
+                "wrong number of arguments for function `stddev`; expected: 1, provided: {provided}"
+            )));
+        }
+        if !self.eat(b')') {
+            return Err(Error::new(format!(
+                "unsupported: expected ')' after {name}"
+            )));
+        }
+        if func == AggFunc::StdDev && column.is_none() {
+            return Err(Error::new(
+                "function `stddev` requires arguments: stddev(DOUBLE)",
+            ));
         }
         if func != AggFunc::Count && column.is_none() {
             return Err(Error::new(format!(

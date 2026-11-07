@@ -1495,7 +1495,22 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   nt_lim0 "SELECT not(ok) FROM sensors LIMIT 0" \
   nt_last "SELECT not(1, ok) FROM sensors" \
   nt_ignore "SELECT not(missing, ok) FROM sensors" \
-  nt_const "SELECT not(ok, null) FROM sensors"
+  nt_const "SELECT not(ok, null) FROM sensors" \
+  sd_read "SELECT stddev(reading) FROM sensors" \
+  sd_id "SELECT stddev(id) FROM sensors" \
+  sd_score "SELECT stddev(score) FROM sensors" \
+  sd_byte "SELECT stddev(b) FROM sensors" \
+  sd_short "SELECT stddev(code) FROM sensors" \
+  sd_flags "SELECT stddev(flags) FROM sensors" \
+  sd_ts "SELECT stddev(ts) FROM sensors" \
+  sd_one "SELECT stddev(reading) FROM sensors WHERE id = 1" \
+  sd_none "SELECT stddev(reading) FROM sensors WHERE id > 100" \
+  sd_neg "SELECT stddev(reading) FROM sensors WHERE id = -1" \
+  sd_case "SELECT STDDEV(reading) FROM sensors" \
+  sd_lim0 "SELECT stddev(reading) FROM sensors LIMIT 0" \
+  sd_grp "SELECT stddev(reading) FROM sensors GROUP BY location ORDER BY location" \
+  sd_grp_id "SELECT stddev(id) FROM sensors GROUP BY location ORDER BY location" \
+  sd_where "SELECT stddev(reading) FROM sensors WHERE location = 'madrid'"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1655,7 +1670,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ty_days "SELECT typeof(id) FROM days ORDER BY ts" \
   ty_days_note "SELECT typeof(note) FROM days ORDER BY ts" \
   ty_days_loc "SELECT typeof(location) FROM days ORDER BY ts" \
-  nt_days "SELECT not(null) FROM days ORDER BY ts"
+  nt_days "SELECT not(null) FROM days ORDER BY ts" \
+  sd_days "SELECT stddev(id) FROM days" \
+  sd_days_grp "SELECT stddev(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3098,6 +3115,21 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT not(1, ok) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT not(missing, ok) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT not(ok, null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev(reading) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT stddev(reading) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT stddev(reading) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT STDDEV(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev(reading) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT stddev(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT stddev(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT stddev(reading) FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3256,6 +3288,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT typeof(note) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT typeof(location) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT not(null) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT stddev(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT stddev(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
