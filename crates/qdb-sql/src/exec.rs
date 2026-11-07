@@ -2,8 +2,9 @@ use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CeilExpr, CmpOp, ConcatArg, ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, LeastExpr,
     LengthExpr, LnExpr, LogExpr, LowerExpr, PadExpr, PiExpr, PowerExpr, Proj, Query,
-    QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr,
-    SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, SelectList, SideExpr, SignExpr,
+    SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd,
+    TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -196,6 +197,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::SizePretty { label, .. }
             | ResolvedProj::Abs { label, .. }
             | ResolvedProj::Round { label, .. }
+            | ResolvedProj::RoundDown { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -312,6 +314,11 @@ enum ResolvedProj {
         result_tag: i32,
     },
     Round {
+        label: String,
+        input: RoundInput,
+        scale: RoundScale,
+    },
+    RoundDown {
         label: String,
         input: RoundInput,
         scale: RoundScale,
@@ -450,6 +457,7 @@ impl ResolvedProj {
             | Self::SizePretty { label, .. }
             | Self::Abs { label, .. }
             | Self::Round { label, .. }
+            | Self::RoundDown { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -469,7 +477,7 @@ impl ResolvedProj {
         match self {
             Self::Length { .. } | Self::StrPos { .. } => qdb_types::TAG_INT,
             Self::Abs { result_tag, .. } => *result_tag,
-            Self::Round { .. } => qdb_types::TAG_DOUBLE,
+            Self::Round { .. } | Self::RoundDown { .. } => qdb_types::TAG_DOUBLE,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -535,6 +543,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::SizePretty(expr) => resolve_size_pretty(table, expr),
         Proj::Abs(expr) => resolve_abs(table, expr),
         Proj::Round(expr) => resolve_round(table, expr),
+        Proj::RoundDown(expr) => resolve_round_down(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1183,6 +1192,36 @@ fn floor_input(table: &Table, arg: &ConcatArg) -> Result<(FloorInput, bool), ()>
         }
         ConcatArg::Literal(_) => Err(()),
     }
+}
+
+fn resolve_round_down(table: &Table, expr: &RoundDownExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(named_type_error(table, "round_down", &expr.args));
+    }
+    let input = round_input(table, &expr.args[0])
+        .map_err(|_| named_type_error(table, "round_down", &expr.args))?;
+    let scale = match resolve_i32_count(table, &expr.args[1]) {
+        Ok(CountArg::Null) => RoundScale::Null,
+        Ok(CountArg::Fixed(scale)) => {
+            let scale = i32::try_from(scale).unwrap_or(i32::MAX);
+            if round_down_scale_in_range(scale) {
+                RoundScale::Fixed(scale)
+            } else {
+                RoundScale::Null
+            }
+        }
+        Ok(CountArg::ColumnInt { index })
+            if table.meta.columns[index].tag != qdb_types::TAG_LONG =>
+        {
+            RoundScale::Column(index)
+        }
+        Ok(_) | Err(()) => return Err(named_type_error(table, "round_down", &expr.args)),
+    };
+    Ok(ResolvedProj::RoundDown {
+        label: expr.label.clone(),
+        input,
+        scale,
+    })
 }
 
 fn resolve_round(table: &Table, expr: &RoundExpr) -> Result<ResolvedProj, Error> {
@@ -1991,6 +2030,12 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Some(value) => Scalar::Double(value),
             None => Scalar::Null,
         },
+        ResolvedProj::RoundDown { input, scale, .. } => {
+            match round_down_row(table, row, input, scale) {
+                Some(value) => Scalar::Double(value),
+                None => Scalar::Null,
+            }
+        }
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
         ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
             Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
@@ -2275,8 +2320,46 @@ fn round_number(table: &Table, row: usize, input: &RoundInput) -> Option<f64> {
     }
 }
 
+fn round_down_row(
+    table: &Table,
+    row: usize,
+    input: &RoundInput,
+    scale: &RoundScale,
+) -> Option<f64> {
+    let scale = match scale {
+        RoundScale::Null => return None,
+        RoundScale::Zero => 0,
+        RoundScale::Fixed(scale) => *scale,
+        RoundScale::Column(index) => match &table.columns[*index][row] {
+            Scalar::Null => return None,
+            Scalar::Byte(number) => i32::from(*number),
+            Scalar::Short(number) => i32::from(*number),
+            Scalar::Int(number) => *number,
+            _ => return None,
+        },
+    };
+    if !round_down_scale_in_range(scale) {
+        return None;
+    }
+    let value = round_number(table, row, input)?;
+    if !value.is_finite() {
+        return None;
+    }
+    let sign = value.to_bits() & (1_u64 << 63);
+    let magnitude = if scale < 0 {
+        round_down_negative(value.abs(), -scale)
+    } else {
+        round_down_positive(value.abs(), scale)
+    };
+    Some(f64::from_bits(magnitude.to_bits() | sign))
+}
+
 fn round_scale_in_range(scale: i32) -> bool {
     scale > -18 && scale + 2 < 18
+}
+
+fn round_down_scale_in_range(scale: i32) -> bool {
+    scale > -18 && scale < 18
 }
 
 fn round_half_up(value: f64, scale: i32) -> Option<f64> {
@@ -9354,6 +9437,175 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT least(ok, missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn round_down_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT round_down(reading, 0) FROM sensors",
+                "expected/rdn_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(reading, 1) FROM sensors",
+                "expected/rdn_reading_scale.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(score, 0) FROM sensors",
+                "expected/rdn_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(score, 1) FROM sensors",
+                "expected/rdn_score_scale.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(1.5, 0) FROM sensors LIMIT 1",
+                "expected/rdn_half.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(-1.5, 0) FROM sensors LIMIT 1",
+                "expected/rdn_neg_half.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(-1.29, 1) FROM sensors LIMIT 1",
+                "expected/rdn_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(1.29, 1) FROM sensors LIMIT 1",
+                "expected/rdn_pos.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(15, -1) FROM sensors LIMIT 1",
+                "expected/rdn_tens.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(-15, -1) FROM sensors LIMIT 1",
+                "expected/rdn_neg_tens.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(-0.0, 1) FROM sensors LIMIT 1",
+                "expected/rdn_negzero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(1.29, 16) FROM sensors LIMIT 1",
+                "expected/rdn_scale16.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(reading, null) FROM sensors",
+                "expected/rdn_null_scale.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(reading, 20) FROM sensors",
+                "expected/rdn_scale_out.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(null, 1) FROM sensors LIMIT 1",
+                "expected/rdn_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(id, 0) FROM sensors",
+                "expected/rdn_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(code, 0) FROM sensors",
+                "expected/rdn_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ROUND_DOWN(READING, 0) FROM sensors",
+                "expected/rdn_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(reading, flags) FROM sensors",
+                "expected/rdn_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(reading, 1) FROM sensors ORDER BY round_down(reading, 1)",
+                "expected/rdn_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(id, 0) FROM sensors WHERE id = -1",
+                "expected/rdn_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round_down(id, 0) FROM sensors LIMIT 0",
+                "expected/rdn_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT round_down(id, 0) FROM days ORDER BY ts",
+                "expected/rdn_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT round_down() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `round_down` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT round_down(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `round_down` with the argument types: (DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT round_down(reading, 0, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("there is no matching function `round_down` with the argument types: (DOUBLE, INT, INT)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT round_down(ok, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("there is no matching function `round_down` with the argument types: (BOOLEAN, INT)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT round_down(note, 0) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `round_down` with the argument types: (STRING, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT round_down(missing, 0) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

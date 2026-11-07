@@ -746,7 +746,29 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ls_score_order "SELECT least(score) FROM sensors ORDER BY least(score)" \
   ls_flags_order "SELECT least(flags) FROM sensors ORDER BY least(flags)" \
   ls_where "SELECT least(id, flags) FROM sensors WHERE id = -1" \
-  ls_limit_zero "SELECT least(id, flags) FROM sensors LIMIT 0"
+  ls_limit_zero "SELECT least(id, flags) FROM sensors LIMIT 0" \
+  rdn_reading "SELECT round_down(reading, 0) FROM sensors" \
+  rdn_reading_scale "SELECT round_down(reading, 1) FROM sensors" \
+  rdn_score "SELECT round_down(score, 0) FROM sensors" \
+  rdn_score_scale "SELECT round_down(score, 1) FROM sensors" \
+  rdn_half "SELECT round_down(1.5, 0) FROM sensors LIMIT 1" \
+  rdn_neg_half "SELECT round_down(-1.5, 0) FROM sensors LIMIT 1" \
+  rdn_neg "SELECT round_down(-1.29, 1) FROM sensors LIMIT 1" \
+  rdn_pos "SELECT round_down(1.29, 1) FROM sensors LIMIT 1" \
+  rdn_tens "SELECT round_down(15, -1) FROM sensors LIMIT 1" \
+  rdn_neg_tens "SELECT round_down(-15, -1) FROM sensors LIMIT 1" \
+  rdn_negzero "SELECT round_down(-0.0, 1) FROM sensors LIMIT 1" \
+  rdn_scale16 "SELECT round_down(1.29, 16) FROM sensors LIMIT 1" \
+  rdn_null_scale "SELECT round_down(reading, null) FROM sensors" \
+  rdn_scale_out "SELECT round_down(reading, 20) FROM sensors" \
+  rdn_null "SELECT round_down(null, 1) FROM sensors LIMIT 1" \
+  rdn_id "SELECT round_down(id, 0) FROM sensors" \
+  rdn_code "SELECT round_down(code, 0) FROM sensors" \
+  rdn_case "SELECT ROUND_DOWN(READING, 0) FROM sensors" \
+  rdn_flags "SELECT round_down(reading, flags) FROM sensors" \
+  rdn_order "SELECT round_down(reading, 1) FROM sensors ORDER BY round_down(reading, 1)" \
+  rdn_where "SELECT round_down(id, 0) FROM sensors WHERE id = -1" \
+  rdn_limit_zero "SELECT round_down(id, 0) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -853,7 +875,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ex_id "SELECT exp(id) FROM days ORDER BY ts" \
   pi_id "SELECT pi() FROM days ORDER BY ts" \
   gt_id "SELECT greatest(id, 2) FROM days ORDER BY ts" \
-  ls_id "SELECT least(id, 2) FROM days ORDER BY ts"
+  ls_id "SELECT least(id, 2) FROM days ORDER BY ts" \
+  rdn_id "SELECT round_down(id, 0) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1547,6 +1570,28 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT least(flags) FROM sensors ORDER BY least(flags)"),
     (os.environ["DIFF_H1"], "SELECT least(id, flags) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT least(id, flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT round_down(reading, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_down(reading, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_down(score, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_down(score, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_down(1.5, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_down(-1.5, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_down(-1.29, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_down(1.29, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_down(15, -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_down(-15, -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_down(-0.0, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_down(1.29, 16) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_down(reading, null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_down(reading, 20) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_down(null, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_down(id, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_down(code, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ROUND_DOWN(READING, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_down(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_down(reading, 1) FROM sensors ORDER BY round_down(reading, 1)"),
+    (os.environ["DIFF_H1"], "SELECT round_down(id, 0) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT round_down(id, 0) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1652,6 +1697,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT pi() FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT greatest(id, 2) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT least(id, 2) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT round_down(id, 0) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
