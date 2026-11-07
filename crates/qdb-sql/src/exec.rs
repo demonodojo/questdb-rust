@@ -1,6 +1,7 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
-    ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, SelectList, UpperExpr,
+    ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, SelectList, SideExpr,
+    UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -175,7 +176,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             ResolvedProj::Concat { label, .. }
             | ResolvedProj::Length { label, .. }
             | ResolvedProj::Lower { label, .. }
-            | ResolvedProj::Upper { label, .. } => label.clone(),
+            | ResolvedProj::Upper { label, .. }
+            | ResolvedProj::Side { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -223,6 +225,12 @@ enum ResolvedProj {
         label: String,
         arg: ResolvedArg,
     },
+    Side {
+        label: String,
+        from_right: bool,
+        text: ResolvedArg,
+        count: CountArg,
+    },
 }
 
 impl ResolvedProj {
@@ -231,7 +239,8 @@ impl ResolvedProj {
             Self::Concat { label, .. }
             | Self::Length { label, .. }
             | Self::Lower { label, .. }
-            | Self::Upper { label, .. } => Some(label),
+            | Self::Upper { label, .. }
+            | Self::Side { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -248,6 +257,13 @@ enum ResolvedArg {
     Text(String),
     Null,
     Column { index: usize, tag: i32 },
+}
+
+enum CountArg {
+    Null,
+    Fixed(i64),
+    ColumnInt { index: usize },
+    ColumnSymbol { index: usize, keys: Vec<Scalar> },
 }
 
 fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
@@ -269,6 +285,116 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Length(expr) => resolve_length(table, expr),
         Proj::Lower(expr) => resolve_lower(table, expr),
         Proj::Upper(expr) => resolve_upper(table, expr),
+        Proj::Side(expr) => resolve_side(table, expr),
+    }
+}
+
+fn resolve_side(table: &Table, expr: &SideExpr) -> Result<ResolvedProj, Error> {
+    let name = if expr.from_right { "right" } else { "left" };
+    if expr.args.len() != 2 {
+        return Err(side_type_error(table, name, &expr.args));
+    }
+    let text = resolve_concat_arg(table, &expr.args[0])?;
+    if !side_text_arg(&expr.args[0], &text) {
+        return Err(side_type_error(table, name, &expr.args));
+    }
+    let count = match resolve_count(table, &expr.args[1]) {
+        Ok(count) => count,
+        Err(()) => return Err(side_type_error(table, name, &expr.args)),
+    };
+    Ok(ResolvedProj::Side {
+        label: expr.label.clone(),
+        from_right: expr.from_right,
+        text,
+        count,
+    })
+}
+
+fn side_text_arg(arg: &ConcatArg, resolved: &ResolvedArg) -> bool {
+    match arg {
+        ConcatArg::Literal(Scalar::Text(_)) | ConcatArg::Literal(Scalar::Null) => true,
+        ConcatArg::Literal(_) => false,
+        ConcatArg::Column(_) => side_text_ok(resolved),
+    }
+}
+
+fn side_text_ok(arg: &ResolvedArg) -> bool {
+    match arg {
+        ResolvedArg::Text(_) | ResolvedArg::Null => true,
+        ResolvedArg::Column { tag, .. } => matches!(
+            *tag,
+            qdb_types::TAG_STRING
+                | qdb_types::TAG_SYMBOL
+                | qdb_types::TAG_VARCHAR
+                | qdb_types::TAG_CHAR
+        ),
+    }
+}
+
+fn resolve_count(table: &Table, arg: &ConcatArg) -> Result<CountArg, ()> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok(CountArg::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(CountArg::Fixed(*number)),
+        ConcatArg::Literal(_) => Err(()),
+        ConcatArg::Column(name) => {
+            let index = table.column_index(name).ok_or(())?;
+            let tag = table.meta.columns[index].tag;
+            if matches!(
+                tag,
+                qdb_types::TAG_BYTE
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_LONG
+            ) {
+                return Ok(CountArg::ColumnInt { index });
+            }
+            if tag == qdb_types::TAG_SYMBOL {
+                let mut keys = Vec::new();
+                for value in &table.columns[index] {
+                    if value.is_null() || keys.contains(value) {
+                        continue;
+                    }
+                    keys.push(value.clone());
+                }
+                return Ok(CountArg::ColumnSymbol { index, keys });
+            }
+            Err(())
+        }
+    }
+}
+
+fn side_type_error(table: &Table, name: &str, args: &[ConcatArg]) -> Error {
+    let mut types = Vec::new();
+    for arg in args {
+        match side_arg_type(table, arg) {
+            Ok(type_name) => types.push(type_name),
+            Err(err) => return err,
+        }
+    }
+    Error::new(format!(
+        "there is no matching function `{name}` with the argument types: ({})",
+        types.join(", ")
+    ))
+}
+
+fn side_arg_type(table: &Table, arg: &ConcatArg) -> Result<String, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok("NULL".to_string()),
+        ConcatArg::Literal(Scalar::Long(number)) => {
+            if i32::try_from(*number).is_ok() {
+                Ok("INT".to_string())
+            } else {
+                Ok("LONG".to_string())
+            }
+        }
+        ConcatArg::Literal(Scalar::Double(_)) => Ok("DOUBLE".to_string()),
+        ConcatArg::Literal(_) => Ok("STRING".to_string()),
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            Ok(qdb_types::type_name(table.meta.columns[index].tag).to_string())
+        }
     }
 }
 
@@ -400,7 +526,58 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Some(text) => Scalar::Text(text.to_uppercase()),
             None => Scalar::Null,
         },
+        ResolvedProj::Side {
+            from_right,
+            text,
+            count,
+            ..
+        } => match (text_of(table, row, text), count_of(table, row, count)) {
+            (Some(text), Some(count)) => Scalar::Text(take_chars(&text, count, *from_right)),
+            _ => Scalar::Null,
+        },
     }
+}
+
+fn count_of(table: &Table, row: usize, count: &CountArg) -> Option<i64> {
+    match count {
+        CountArg::Null => None,
+        CountArg::Fixed(number) => Some(*number),
+        CountArg::ColumnInt { index } => match &table.columns[*index][row] {
+            Scalar::Null => None,
+            value => as_i64(value).ok(),
+        },
+        CountArg::ColumnSymbol { index, keys } => {
+            let value = &table.columns[*index][row];
+            if value.is_null() {
+                None
+            } else {
+                keys.iter()
+                    .position(|key| key == value)
+                    .map(|index| index as i64)
+            }
+        }
+    }
+}
+
+fn take_chars(text: &str, count: i64, from_right: bool) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len() as i64;
+    let mut count = count;
+    if count < 0 {
+        count += len;
+    }
+    if count < 0 {
+        count = 0;
+    }
+    let count = usize::try_from(count)
+        .unwrap_or(usize::MAX)
+        .min(chars.len());
+    let slice = if from_right {
+        &chars[chars.len() - count..]
+    } else {
+        &chars[..count]
+    };
+    slice.iter().collect()
 }
 
 fn text_of(table: &Table, row: usize, arg: &ResolvedArg) -> Option<String> {
@@ -3279,6 +3456,169 @@ mod tests {
         assert!(
             err.message
                 .contains("there is no matching function `upper` with the argument types: (LONG)"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn left_right_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT left(note, 2) FROM sensors",
+                "expected/left_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT right(note, 2) FROM sensors",
+                "expected/right_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left(location, 3) FROM sensors",
+                "expected/left_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT right(tag, 4) FROM sensors",
+                "expected/right_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left(ch, 1) FROM sensors",
+                "expected/left_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left(note, 0) FROM sensors",
+                "expected/left_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left(note, 10) FROM sensors",
+                "expected/left_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left(note, -1) FROM sensors",
+                "expected/left_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT right(note, -2) FROM sensors",
+                "expected/right_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left('βeta', 1) FROM sensors LIMIT 1",
+                "expected/left_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT right('東京', 1) FROM sensors LIMIT 1",
+                "expected/right_tokyo.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left(null, 2) FROM sensors LIMIT 1",
+                "expected/left_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left('', 2) FROM sensors LIMIT 1",
+                "expected/left_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT LEFT(NOTE, 1) FROM sensors",
+                "expected/left_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left(note, 2) FROM sensors ORDER BY left(note, 2)",
+                "expected/left_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, left(note, 1) FROM sensors ORDER BY left(note, 1)",
+                "expected/left_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT right(note, 2) FROM sensors WHERE note = ''",
+                "expected/right_where_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left(note, 2) FROM sensors LIMIT 0",
+                "expected/left_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left(note, location) FROM sensors",
+                "expected/left_symbol.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT left(note, b) FROM sensors",
+                "expected/left_byte.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT left(note, 2) FROM days",
+                "expected/left_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT right(note, 2) FROM days",
+                "expected/right_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT left(location, 3) FROM days ORDER BY ts",
+                "expected/left_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT left() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT left(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `left` with the argument types: (STRING)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT left(id, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `left` with the argument types: (LONG, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT left(note, 1.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `left` with the argument types: (STRING, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT left(missing, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );

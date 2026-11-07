@@ -29,7 +29,9 @@
 //! null float is `NaN`. `length` returns the character count as `INT`, or `-1`
 //! when the text is null. `lower` returns the text in lowercase, or NULL when
 //! the text is null. `upper` returns the text in uppercase, or NULL when the
-//! text is null. An aggregate without `GROUP BY` returns one
+//! text is null. `left` and `right` keep that many characters. A negative
+//! count drops characters from the other end, and a null text or count stays
+//! NULL. An aggregate without `GROUP BY` returns one
 //! row, or none when `LIMIT` removes it.
 //! `GROUP BY` of one column returns one row per distinct value, in first-seen
 //! order until `ORDER BY` sorts it. `-0.0` and `0.0` stay in different groups.

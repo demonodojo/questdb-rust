@@ -86,6 +86,7 @@ pub enum Proj {
     Length(LengthExpr),
     Lower(LowerExpr),
     Upper(UpperExpr),
+    Side(SideExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +105,14 @@ pub struct LowerExpr {
 pub struct UpperExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
+}
+
+/// `left` or `right`: a text and a character count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SideExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+    pub from_right: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,6 +174,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_lower()?.label
             } else if parser.starts_upper_call() {
                 parser.parse_upper()?.label
+            } else if parser.starts_side_call() {
+                parser.parse_side()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -221,6 +232,7 @@ enum SelectPiece {
     Length(LengthExpr),
     Lower(LowerExpr),
     Upper(UpperExpr),
+    Side(SideExpr),
 }
 
 struct Parser<'a> {
@@ -321,6 +333,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Lower(self.parse_lower()?));
             } else if self.starts_upper_call() {
                 pieces.push(SelectPiece::Upper(self.parse_upper()?));
+            } else if self.starts_side_call() {
+                pieces.push(SelectPiece::Side(self.parse_side()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -340,6 +354,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Length(_)
                     | SelectPiece::Lower(_)
                     | SelectPiece::Upper(_)
+                    | SelectPiece::Side(_)
             )
         });
         if counts > 0 && projected {
@@ -358,6 +373,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Length(expr) => items.push(Proj::Length(expr)),
                     SelectPiece::Lower(expr) => items.push(Proj::Lower(expr)),
                     SelectPiece::Upper(expr) => items.push(Proj::Upper(expr)),
+                    SelectPiece::Side(expr) => items.push(Proj::Side(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -399,7 +415,8 @@ impl<'a> Parser<'a> {
                 SelectPiece::Concat(_)
                 | SelectPiece::Length(_)
                 | SelectPiece::Lower(_)
-                | SelectPiece::Upper(_) => {
+                | SelectPiece::Upper(_)
+                | SelectPiece::Side(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -436,9 +453,30 @@ impl<'a> Parser<'a> {
         self.starts_named_call("upper")
     }
 
+    fn starts_side_call(&self) -> bool {
+        self.starts_named_call("left") || self.starts_named_call("right")
+    }
+
+    fn parse_side(&mut self) -> Result<SideExpr, Error> {
+        let name = self.ident_spelling()?;
+        let from_right = name.eq_ignore_ascii_case("right");
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(SideExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+            from_right,
+        })
+    }
+
     fn parse_upper(&mut self) -> Result<UpperExpr, Error> {
         let name = self.ident_spelling()?;
-        let (labels, args) = self.parse_call_args(&name)?;
+        let (labels, args) = self.parse_call_args(&name, false)?;
         if args.is_empty() {
             return Err(Error::new(format!(
                 "function `{}` requires arguments",
@@ -453,7 +491,7 @@ impl<'a> Parser<'a> {
 
     fn parse_lower(&mut self) -> Result<LowerExpr, Error> {
         let name = self.ident_spelling()?;
-        let (labels, args) = self.parse_call_args(&name)?;
+        let (labels, args) = self.parse_call_args(&name, false)?;
         if args.is_empty() {
             return Err(Error::new(format!(
                 "function `{}` requires arguments",
@@ -468,7 +506,7 @@ impl<'a> Parser<'a> {
 
     fn parse_length(&mut self) -> Result<LengthExpr, Error> {
         let name = self.ident_spelling()?;
-        let (labels, args) = self.parse_call_args(&name)?;
+        let (labels, args) = self.parse_call_args(&name, false)?;
         if args.is_empty() {
             return Err(Error::new(format!(
                 "function `{}` requires arguments",
@@ -481,7 +519,11 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_call_args(&mut self, name: &str) -> Result<(Vec<String>, Vec<ConcatArg>), Error> {
+    fn parse_call_args(
+        &mut self,
+        name: &str,
+        numbers: bool,
+    ) -> Result<(Vec<String>, Vec<ConcatArg>), Error> {
         self.skip();
         if !self.eat(b'(') {
             return Err(Error::new(format!(
@@ -496,7 +538,7 @@ impl<'a> Parser<'a> {
         let mut args = Vec::new();
         let mut labels = Vec::new();
         loop {
-            let (label, arg) = self.parse_call_arg()?;
+            let (label, arg) = self.parse_call_arg(numbers)?;
             labels.push(label);
             args.push(arg);
             self.skip();
@@ -513,7 +555,7 @@ impl<'a> Parser<'a> {
         Ok((labels, args))
     }
 
-    fn parse_call_arg(&mut self) -> Result<(String, ConcatArg), Error> {
+    fn parse_call_arg(&mut self, numbers: bool) -> Result<(String, ConcatArg), Error> {
         self.skip();
         if self.peek() == Some(b'\'') {
             let start = self.pos;
@@ -534,6 +576,21 @@ impl<'a> Parser<'a> {
                 ConcatArg::Column(spelling.clone())
             };
             return Ok((spelling, arg));
+        }
+        if numbers
+            && self
+                .peek()
+                .is_some_and(|byte| byte.is_ascii_digit() || byte == b'-')
+        {
+            let start = self.pos;
+            let value = self.parse_number()?;
+            let label = match &value {
+                Scalar::Long(number) if *number < 0 => format!("-({})", number.unsigned_abs()),
+                _ => std::str::from_utf8(&self.src[start..self.pos])
+                    .unwrap()
+                    .to_string(),
+            };
+            return Ok((label, ConcatArg::Literal(value)));
         }
         Err(Error::new(format!(
             "unsupported: function argument near `{}`",
@@ -571,7 +628,7 @@ impl<'a> Parser<'a> {
 
     fn parse_concat(&mut self) -> Result<ConcatExpr, Error> {
         let name = self.ident_spelling()?;
-        let (labels, args) = self.parse_call_args(&name)?;
+        let (labels, args) = self.parse_call_args(&name, false)?;
         if args.is_empty() {
             return Err(Error::new("no arguments provided"));
         }

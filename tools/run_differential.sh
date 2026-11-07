@@ -296,7 +296,27 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   upper_order "SELECT upper(note) FROM sensors ORDER BY upper(note)" \
   upper_with_id "SELECT id, upper(note) FROM sensors ORDER BY upper(note)" \
   upper_where_empty "SELECT upper(note) FROM sensors WHERE note = ''" \
-  upper_limit_zero "SELECT upper(note) FROM sensors LIMIT 0"
+  upper_limit_zero "SELECT upper(note) FROM sensors LIMIT 0" \
+  left_note "SELECT left(note, 2) FROM sensors" \
+  right_note "SELECT right(note, 2) FROM sensors" \
+  left_location "SELECT left(location, 3) FROM sensors" \
+  right_tag "SELECT right(tag, 4) FROM sensors" \
+  left_ch "SELECT left(ch, 1) FROM sensors" \
+  left_zero "SELECT left(note, 0) FROM sensors" \
+  left_long "SELECT left(note, 10) FROM sensors" \
+  left_neg "SELECT left(note, -1) FROM sensors" \
+  right_neg "SELECT right(note, -2) FROM sensors" \
+  left_beta "SELECT left('βeta', 1) FROM sensors LIMIT 1" \
+  right_tokyo "SELECT right('東京', 1) FROM sensors LIMIT 1" \
+  left_null "SELECT left(null, 2) FROM sensors LIMIT 1" \
+  left_empty "SELECT left('', 2) FROM sensors LIMIT 1" \
+  left_case "SELECT LEFT(NOTE, 1) FROM sensors" \
+  left_order "SELECT left(note, 2) FROM sensors ORDER BY left(note, 2)" \
+  left_with_id "SELECT id, left(note, 1) FROM sensors ORDER BY left(note, 1)" \
+  right_where_empty "SELECT right(note, 2) FROM sensors WHERE note = ''" \
+  left_limit_zero "SELECT left(note, 2) FROM sensors LIMIT 0" \
+  left_symbol "SELECT left(note, location) FROM sensors" \
+  left_byte "SELECT left(note, b) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -364,7 +384,10 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   lower_note "SELECT lower(note) FROM days" \
   lower_location "SELECT lower(location) FROM days ORDER BY ts" \
   upper_note "SELECT upper(note) FROM days" \
-  upper_location "SELECT upper(location) FROM days ORDER BY ts"
+  upper_location "SELECT upper(location) FROM days ORDER BY ts" \
+  left_note "SELECT left(note, 2) FROM days" \
+  right_note "SELECT right(note, 2) FROM days" \
+  left_location "SELECT left(location, 3) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -608,6 +631,26 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, upper(note) FROM sensors ORDER BY upper(note)"),
     (os.environ["DIFF_H1"], "SELECT upper(note) FROM sensors WHERE note = ''"),
     (os.environ["DIFF_H1"], "SELECT upper(note) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT left(note, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT right(note, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT left(location, 3) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT right(tag, 4) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT left(ch, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT left(note, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT left(note, 10) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT left(note, -1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT right(note, -2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT left('βeta', 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT right('東京', 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT left(null, 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT left('', 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT LEFT(NOTE, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT left(note, 2) FROM sensors ORDER BY left(note, 2)"),
+    (os.environ["DIFF_H1"], "SELECT id, left(note, 1) FROM sensors ORDER BY left(note, 1)"),
+    (os.environ["DIFF_H1"], "SELECT right(note, 2) FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT left(note, 2) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT left(note, location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT left(note, b) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -674,6 +717,9 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT lower(location) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT upper(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT upper(location) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT left(note, 2) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT right(note, 2) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT left(location, 3) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
