@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — var_samp()
+
+`var_samp(col)` es la varianza muestral, la misma cuenta que `variance`: la suma de cuadrados dividida por el número de valores menos uno. Con menos de dos valores finitos el resultado es NULL. `var_samp(reading)` es `0.75`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `var_samp(code)` imprime `2.68479158E8` en 10.1.0 y `268479158.0` en Rust. `var_samp(ts)` imprime `1.6666666666666667E12` y `1666666666666.6667`. `var_samp(day)` imprime `8.3753734112748E23` y `8.3753734112748e+23`. Esas tres consultas no se capturan. Se contrastó el resto con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — stddev_samp()
 
 `stddev_samp(col)` es la desviación típica muestral, la misma cuenta que `stddev`: la raíz de la suma de cuadrados dividida por el número de valores menos uno. Con menos de dos valores finitos el resultado es NULL. `stddev_samp(reading)` es `0.8660254037844386`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `stddev_samp(day)` imprime `9.151706622960988E11` en 10.1.0 y `915170662296.0988` en Rust y no se captura. Se contrastó el resto con `/exec` en `sensors` y `days`.

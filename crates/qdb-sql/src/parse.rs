@@ -49,6 +49,7 @@ pub enum AggFunc {
     CountDistinct,
     StdDev,
     Variance,
+    VarSamp,
     VarPop,
     StdDevPop,
     StdDevSamp,
@@ -3043,6 +3044,7 @@ impl<'a> Parser<'a> {
                 | "count_distinct"
                 | "stddev"
                 | "variance"
+                | "var_samp"
                 | "var_pop"
                 | "stddev_pop"
                 | "stddev_samp"
@@ -3094,6 +3096,7 @@ impl<'a> Parser<'a> {
             "count_distinct" => AggFunc::CountDistinct,
             "stddev" => AggFunc::StdDev,
             "variance" => AggFunc::Variance,
+            "var_samp" => AggFunc::VarSamp,
             "var_pop" => AggFunc::VarPop,
             "stddev_pop" => AggFunc::StdDevPop,
             "stddev_samp" => AggFunc::StdDevSamp,
@@ -3117,6 +3120,7 @@ impl<'a> Parser<'a> {
             func,
             AggFunc::StdDev
                 | AggFunc::Variance
+                | AggFunc::VarSamp
                 | AggFunc::VarPop
                 | AggFunc::StdDevPop
                 | AggFunc::StdDevSamp
@@ -3276,6 +3280,7 @@ impl<'a> Parser<'a> {
             func,
             AggFunc::StdDev
                 | AggFunc::Variance
+                | AggFunc::VarSamp
                 | AggFunc::VarPop
                 | AggFunc::StdDevPop
                 | AggFunc::StdDevSamp

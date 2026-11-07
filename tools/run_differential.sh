@@ -1720,7 +1720,18 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ss_neg "SELECT stddev_samp(reading) FROM sensors WHERE id = -1" \
   ss_case "SELECT STDDEV_SAMP(reading) FROM sensors" \
   ss_lim0 "SELECT stddev_samp(reading) FROM sensors LIMIT 0" \
-  ss_grp "SELECT stddev_samp(reading) FROM sensors GROUP BY location ORDER BY location"
+  ss_grp "SELECT stddev_samp(reading) FROM sensors GROUP BY location ORDER BY location" \
+  vs_read "SELECT var_samp(reading) FROM sensors" \
+  vs_score "SELECT var_samp(score) FROM sensors" \
+  vs_id "SELECT var_samp(id) FROM sensors" \
+  vs_flags "SELECT var_samp(flags) FROM sensors" \
+  vs_byte "SELECT var_samp(b) FROM sensors" \
+  vs_one "SELECT var_samp(reading) FROM sensors WHERE id = 1" \
+  vs_none "SELECT var_samp(reading) FROM sensors WHERE id > 100" \
+  vs_neg "SELECT var_samp(reading) FROM sensors WHERE id = -1" \
+  vs_case "SELECT VAR_SAMP(reading) FROM sensors" \
+  vs_lim0 "SELECT var_samp(reading) FROM sensors LIMIT 0" \
+  vs_grp "SELECT var_samp(reading) FROM sensors GROUP BY location ORDER BY location"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1905,7 +1916,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ri_days_grp "SELECT regr_intercept(id, ts) FROM days GROUP BY location ORDER BY location" \
   r2_days "SELECT regr_r2(id, ts) FROM days" \
   r2_days_grp "SELECT regr_r2(id, ts) FROM days GROUP BY location ORDER BY location" \
-  ss_days "SELECT stddev_samp(id) FROM days"
+  ss_days "SELECT stddev_samp(id) FROM days" \
+  vs_days "SELECT var_samp(id) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3573,6 +3585,17 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT STDDEV_SAMP(reading) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT stddev_samp(reading) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT stddev_samp(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT var_samp(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT var_samp(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT var_samp(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT var_samp(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT var_samp(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT var_samp(reading) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT var_samp(reading) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT var_samp(reading) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT VAR_SAMP(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT var_samp(reading) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT var_samp(reading) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3756,6 +3779,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT regr_r2(id, ts) FROM days"),
     (os.environ["DIFF_H2"], "SELECT regr_r2(id, ts) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT stddev_samp(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT var_samp(id) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

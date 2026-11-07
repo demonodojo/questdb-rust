@@ -7342,6 +7342,7 @@ impl Accumulator {
             },
             AggFunc::StdDev
             | AggFunc::Variance
+            | AggFunc::VarSamp
             | AggFunc::VarPop
             | AggFunc::StdDevPop
             | AggFunc::StdDevSamp => Self::StdDev {
@@ -7518,6 +7519,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         aggregate.func,
         AggFunc::StdDev
             | AggFunc::Variance
+            | AggFunc::VarSamp
             | AggFunc::VarPop
             | AggFunc::StdDevPop
             | AggFunc::StdDevSamp
@@ -7598,6 +7600,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::Avg
         | AggFunc::StdDev
         | AggFunc::Variance
+        | AggFunc::VarSamp
         | AggFunc::VarPop
         | AggFunc::StdDevPop
         | AggFunc::StdDevSamp
@@ -7643,6 +7646,7 @@ fn contribution(
         AggFunc::Avg => avg_addend(value, input),
         AggFunc::StdDev
         | AggFunc::Variance
+        | AggFunc::VarSamp
         | AggFunc::VarPop
         | AggFunc::StdDevPop
         | AggFunc::StdDevSamp
@@ -8121,6 +8125,7 @@ fn parse_integer_text(text: &str) -> Option<i64> {
 fn moment_name(func: AggFunc) -> &'static str {
     match func {
         AggFunc::Variance => "variance",
+        AggFunc::VarSamp => "var_samp",
         AggFunc::VarPop => "var_pop",
         AggFunc::StdDevPop => "stddev_pop",
         AggFunc::StdDevSamp => "stddev_samp",
@@ -21197,6 +21202,144 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT stddev_samp(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn var_samp_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT var_samp(reading) FROM sensors",
+                "expected/vs_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT var_samp(score) FROM sensors",
+                "expected/vs_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT var_samp(id) FROM sensors",
+                "expected/vs_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT var_samp(flags) FROM sensors",
+                "expected/vs_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT var_samp(b) FROM sensors",
+                "expected/vs_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT var_samp(reading) FROM sensors WHERE id = 1",
+                "expected/vs_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT var_samp(reading) FROM sensors WHERE id > 100",
+                "expected/vs_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT var_samp(reading) FROM sensors WHERE id = -1",
+                "expected/vs_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT VAR_SAMP(reading) FROM sensors",
+                "expected/vs_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT var_samp(reading) FROM sensors LIMIT 0",
+                "expected/vs_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT var_samp(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/vs_grp.tsv",
+            ),
+            (
+                &days,
+                "SELECT var_samp(id) FROM days",
+                "expected/vs_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT var_samp() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `var_samp` requires arguments: var_samp(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT var_samp(reading, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `var_samp`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT var_samp(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT var_samp(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT var_samp(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `var_samp` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT var_samp(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `var_samp` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT var_samp(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT var_samp(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT var_samp(ch) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),
