@@ -2,10 +2,11 @@ use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, DateDiffExpr, DayExpr,
     ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr, LeastExpr, LengthExpr,
-    LnExpr, LogExpr, LowerExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr,
-    Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
-    RoundUpExpr, SecondExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr,
-    SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr, YearExpr,
+    LnExpr, LogExpr, LowerExpr, MillisExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr,
+    PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
+    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr,
+    SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -212,6 +213,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Hour { label, .. }
             | ResolvedProj::Minute { label, .. }
             | ResolvedProj::Second { label, .. }
+            | ResolvedProj::Millis { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -398,6 +400,10 @@ enum ResolvedProj {
         label: String,
         value: DateDiffSide,
     },
+    Millis {
+        label: String,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -546,6 +552,7 @@ impl ResolvedProj {
             | Self::Hour { label, .. }
             | Self::Minute { label, .. }
             | Self::Second { label, .. }
+            | Self::Millis { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -578,7 +585,8 @@ impl ResolvedProj {
             | Self::Day { .. }
             | Self::Hour { .. }
             | Self::Minute { .. }
-            | Self::Second { .. } => qdb_types::TAG_INT,
+            | Self::Second { .. }
+            | Self::Millis { .. } => qdb_types::TAG_INT,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -658,6 +666,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Hour(expr) => resolve_hour(table, expr),
         Proj::Minute(expr) => resolve_minute(table, expr),
         Proj::Second(expr) => resolve_second(table, expr),
+        Proj::Millis(expr) => resolve_millis(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1312,6 +1321,19 @@ enum DateDiffSide {
     Micros(i64),
     Column { index: usize },
     Null,
+}
+
+fn resolve_millis(table: &Table, expr: &MillisExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `millis`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::Millis {
+        label: expr.label.clone(),
+        value: datediff_side(table, &expr.args[0], "millis", 1)?,
+    })
 }
 
 fn resolve_second(table: &Table, expr: &SecondExpr) -> Result<ResolvedProj, Error> {
@@ -3427,6 +3449,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::Second { value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Int(((dateadd_parts(micros).3 / 1_000_000) % 60) as i32),
+            None => Scalar::Null,
+        },
+        ResolvedProj::Millis { value, .. } => match datediff_micros(table, row, value) {
+            Some(micros) => Scalar::Int(((dateadd_parts(micros).3 / 1_000) % 1_000) as i32),
             None => Scalar::Null,
         },
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
@@ -12291,6 +12317,91 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn millis_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT millis(ts) FROM sensors",
+                "expected/ms_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT millis(id) FROM sensors",
+                "expected/ms_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT millis('2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1",
+                "expected/ms_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT millis('2020-01-02T03:04:05.123999Z') FROM sensors LIMIT 1",
+                "expected/ms_trunc.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT MILLIS(TS) FROM sensors",
+                "expected/ms_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT millis(id) FROM sensors ORDER BY millis(id)",
+                "expected/ms_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT millis(ts) FROM sensors WHERE id = 1",
+                "expected/ms_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT millis(ts) FROM sensors LIMIT 0",
+                "expected/ms_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT millis(ts) FROM days ORDER BY ts",
+                "expected/ms_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT millis() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `millis` requires arguments: millis(TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT millis(ts, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `millis`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT millis(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT millis('nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
             "{}",

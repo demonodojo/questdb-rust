@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — millis()
+
+`millis(instante)` devuelve `INT` con el milisegundo UTC, de 0 a 999, truncando los microsegundos. `123456` µs da 123 y `123999` µs también da 123. En `sensors` y `days` los timestamps caen en el milisegundo 0. Un `LONG` se lee como microsegundos: 1 y 2 son 0, el nulo es NULL y -1 es 999. Una cadena con fecha UTC se acepta. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — second()
 
 `second(instante)` devuelve `INT` con el segundo UTC, de 0 a 59. En `sensors` los cuatro timestamps caen en los segundos 5, 6, 7 y 8. En `days`, ordenado por `ts`, los segundos son 5, 0, 0 y 0. Un `LONG` se lee como microsegundos: 1 y 2 son el segundo 0, el nulo es NULL y -1 es el segundo 59 del 31 de diciembre de 1969. Una cadena con fecha UTC se acepta. Se contrastó con `/exec` en `sensors` y `days`.
