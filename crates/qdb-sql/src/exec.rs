@@ -7308,6 +7308,7 @@ enum Accumulator {
         mean_x: f64,
         sum_xy: f64,
         count: i64,
+        population: bool,
     },
 }
 
@@ -7347,11 +7348,12 @@ impl Accumulator {
                 delimiter: '\0',
                 has_value: false,
             },
-            AggFunc::CovarPop => Self::Covar {
+            AggFunc::CovarPop | AggFunc::CovarSamp => Self::Covar {
                 mean_y: 0.0,
                 mean_x: 0.0,
                 sum_xy: 0.0,
                 count: 0,
+                population: func == AggFunc::CovarPop,
             },
         }
     }
@@ -7422,9 +7424,15 @@ impl Accumulator {
                     Scalar::Null
                 }
             }
-            Self::Covar { sum_xy, count, .. } => {
-                if *count > 0 {
-                    let result = *sum_xy / (*count as f64);
+            Self::Covar {
+                sum_xy,
+                count,
+                population,
+                ..
+            } => {
+                let divisor = if *population { *count } else { *count - 1 };
+                if divisor > 0 {
+                    let result = *sum_xy / (divisor as f64);
                     if result.is_finite() {
                         Scalar::Double(result)
                     } else {
@@ -7478,7 +7486,8 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     } else {
         '\0'
     };
-    let (pair_index, pair_tag) = if aggregate.func == AggFunc::CovarPop {
+    let (pair_index, pair_tag) = if matches!(aggregate.func, AggFunc::CovarPop | AggFunc::CovarSamp)
+    {
         covar_pair(table, tag, aggregate)?
     } else {
         (None, qdb_types::TAG_DOUBLE)
@@ -7533,7 +7542,8 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::StdDevPop
         | AggFunc::KSum
         | AggFunc::NSum
-        | AggFunc::CovarPop => qdb_types::TAG_DOUBLE,
+        | AggFunc::CovarPop
+        | AggFunc::CovarSamp => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
@@ -7572,7 +7582,7 @@ fn contribution(
         | AggFunc::StdDevPop
         | AggFunc::KSum
         | AggFunc::NSum => stddev_addend(value, input),
-        AggFunc::CovarPop => Ok(None),
+        AggFunc::CovarPop | AggFunc::CovarSamp => Ok(None),
     }
 }
 
@@ -7643,7 +7653,7 @@ fn feed(
     row: usize,
     input: &AggColumn,
 ) -> Result<(), Error> {
-    if input.func == AggFunc::CovarPop {
+    if matches!(input.func, AggFunc::CovarPop | AggFunc::CovarSamp) {
         let y_index = input
             .index
             .ok_or_else(|| Error::new("internal: covar column"))?;
@@ -7749,6 +7759,7 @@ fn update_covar(accumulator: &mut Accumulator, y: f64, x: f64) {
         mean_x,
         sum_xy,
         count,
+        ..
     } = accumulator
     else {
         return;
@@ -19946,6 +19957,175 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT covar_pop(ch, reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn covar_samp_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT covar_samp(reading, score) FROM sensors",
+                "expected/cm_read.tsv",
+            ),
+            (
+                "SELECT covar_samp(reading, id) FROM sensors",
+                "expected/cm_id.tsv",
+            ),
+            (
+                "SELECT covar_samp(id, flags) FROM sensors",
+                "expected/cm_flags.tsv",
+            ),
+            (
+                "SELECT covar_samp(b, code) FROM sensors",
+                "expected/cm_byte.tsv",
+            ),
+            (
+                "SELECT covar_samp(score, flags) FROM sensors",
+                "expected/cm_score.tsv",
+            ),
+            (
+                "SELECT covar_samp(ts, id) FROM sensors",
+                "expected/cm_ts.tsv",
+            ),
+            (
+                "SELECT covar_samp(flags, code) FROM sensors",
+                "expected/cm_code.tsv",
+            ),
+            (
+                "SELECT covar_samp(reading, score) FROM sensors WHERE id = 1",
+                "expected/cm_one.tsv",
+            ),
+            (
+                "SELECT covar_samp(reading, score) FROM sensors WHERE id > 100",
+                "expected/cm_none.tsv",
+            ),
+            (
+                "SELECT covar_samp(reading, score) FROM sensors WHERE id = -1",
+                "expected/cm_neg.tsv",
+            ),
+            (
+                "SELECT covar_samp(reading, score) FROM sensors WHERE id = NULL",
+                "expected/cm_null.tsv",
+            ),
+            (
+                "SELECT COVAR_SAMP(reading, score) FROM sensors",
+                "expected/cm_case.tsv",
+            ),
+            (
+                "SELECT covar_samp(reading, score) FROM sensors LIMIT 0",
+                "expected/cm_lim0.tsv",
+            ),
+            (
+                "SELECT covar_samp(reading, score) FROM sensors GROUP BY location ORDER BY location",
+                "expected/cm_grp.tsv",
+            ),
+            (
+                "SELECT covar_samp(reading, id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/cm_grp_id.tsv",
+            ),
+            (
+                "SELECT covar_samp(reading, score) FROM sensors WHERE location = 'madrid'",
+                "expected/cm_where.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT covar_samp() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `covar_samp` requires arguments: covar_samp(DOUBLE, DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT covar_samp(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `covar_samp`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT covar_samp(reading, score, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `covar_samp`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT covar_samp(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT covar_samp(missing, score) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT covar_samp(reading, missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT covar_samp(ok, reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT covar_samp(reading, ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT covar_samp(location, reading) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: SYMBOL"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT covar_samp(note, reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT covar_samp(tag, score) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT covar_samp(ch, reading) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),

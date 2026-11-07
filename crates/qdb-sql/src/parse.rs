@@ -56,6 +56,7 @@ pub enum AggFunc {
     ApproxCountDistinct,
     StringAgg,
     CovarPop,
+    CovarSamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3044,6 +3045,7 @@ impl<'a> Parser<'a> {
                 | "approx_count_distinct"
                 | "string_agg"
                 | "covar_pop"
+                | "covar_samp"
         ) {
             return false;
         }
@@ -3089,6 +3091,7 @@ impl<'a> Parser<'a> {
             "approx_count_distinct" => AggFunc::ApproxCountDistinct,
             "string_agg" => AggFunc::StringAgg,
             "covar_pop" => AggFunc::CovarPop,
+            "covar_samp" => AggFunc::CovarSamp,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3208,14 +3211,14 @@ impl<'a> Parser<'a> {
                 self.skip();
             }
         }
-        if func == AggFunc::CovarPop && self.peek() == Some(b',') {
+        if matches!(func, AggFunc::CovarPop | AggFunc::CovarSamp) && self.peek() == Some(b',') {
             self.pos += 1;
             self.skip();
             if !self
                 .peek()
                 .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
             {
-                return Err(Error::new("unsupported: covar_pop expects a column"));
+                return Err(Error::new("unsupported: covariance expects a column"));
             }
             pair = Some(self.ident_spelling()?);
             self.skip();
@@ -3234,7 +3237,8 @@ impl<'a> Parser<'a> {
                     )));
                 }
                 return Err(Error::new(format!(
-                    "wrong number of arguments for function `covar_pop`; expected: 2, provided: {provided}"
+                    "wrong number of arguments for function `{}`; expected: 2, provided: {provided}",
+                    name.to_ascii_lowercase()
                 )));
             }
         }
@@ -3258,15 +3262,17 @@ impl<'a> Parser<'a> {
                 "function `{fname}` requires arguments: {fname}(DOUBLE)"
             )));
         }
-        if func == AggFunc::CovarPop && column.is_none() {
-            return Err(Error::new(
-                "function `covar_pop` requires arguments: covar_pop(DOUBLE, DOUBLE)",
-            ));
+        if matches!(func, AggFunc::CovarPop | AggFunc::CovarSamp) && column.is_none() {
+            let fname = name.to_ascii_lowercase();
+            return Err(Error::new(format!(
+                "function `{fname}` requires arguments: {fname}(DOUBLE, DOUBLE)"
+            )));
         }
-        if func == AggFunc::CovarPop && pair.is_none() {
-            return Err(Error::new(
-                "wrong number of arguments for function `covar_pop`; expected: 2, provided: 1",
-            ));
+        if matches!(func, AggFunc::CovarPop | AggFunc::CovarSamp) && pair.is_none() {
+            return Err(Error::new(format!(
+                "wrong number of arguments for function `{}`; expected: 2, provided: 1",
+                name.to_ascii_lowercase()
+            )));
         }
         if func != AggFunc::Count && column.is_none() {
             return Err(Error::new(format!(
