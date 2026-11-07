@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — percentile_cont()
+
+`percentile_cont(value, percentile)` interpola entre dos valores ordenados y devuelve `DOUBLE`. `percentile_cont(flags, 0.5)` es `10.0` y `percentile_cont(flags, 0.25)` es `5.0`. Sin valores el resultado es NULL. Con valores, un percentil fuera de `[0, 1]` se rechaza. El percentil tiene que ser constante. `percentile_cont(day, 0.5)` imprime `1.5779232E12` en 10.1.0 y `percentile_cont(ts, 0.5)` imprime `1.5779342465E15`. Esas dos consultas no se capturan. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — percentile_disc()
 
 `percentile_disc(value, percentile)` devuelve un valor almacenado. Enteros, fechas y timestamps salen como `LONG`. `FLOAT` y `DOUBLE` salen como `DOUBLE`. `percentile_disc(flags, 0.5)` es el `LONG` `10`. Sin valores el resultado es NULL, también si el percentil queda fuera de `[0, 1]`. Con valores, un percentil fuera de ese intervalo se rechaza. El percentil tiene que ser constante. Un texto se convierte a `DOUBLE` y un `CHAR` a `LONG`. Se contrastó con `/exec` en `sensors` y `days`.

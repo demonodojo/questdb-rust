@@ -74,6 +74,7 @@ pub enum AggFunc {
     BoolOr,
     IsOrdered,
     PercentileDisc,
+    PercentileCont,
     FirstNotNull,
     LastNotNull,
     BitAnd,
@@ -3177,6 +3178,7 @@ impl<'a> Parser<'a> {
                 | "bool_or"
                 | "isordered"
                 | "percentile_disc"
+                | "percentile_cont"
                 | "first_not_null"
                 | "last_not_null"
                 | "bit_and"
@@ -3255,6 +3257,7 @@ impl<'a> Parser<'a> {
             "bool_or" => AggFunc::BoolOr,
             "isordered" => AggFunc::IsOrdered,
             "percentile_disc" => AggFunc::PercentileDisc,
+            "percentile_cont" => AggFunc::PercentileCont,
             "first_not_null" => AggFunc::FirstNotNull,
             "last_not_null" => AggFunc::LastNotNull,
             "bit_and" => AggFunc::BitAnd,
@@ -3711,7 +3714,10 @@ impl<'a> Parser<'a> {
             spark_label = Some(format!("{column_name}, {}", parsed.suffix));
             fourth_type = parsed.mismatch;
         }
-        if func == AggFunc::PercentileDisc && self.peek() == Some(b',') {
+        if matches!(func, AggFunc::PercentileDisc | AggFunc::PercentileCont)
+            && self.peek() == Some(b',')
+        {
+            let fname = name.to_ascii_lowercase();
             self.pos += 1;
             self.skip();
             let start = self.pos;
@@ -3731,9 +3737,9 @@ impl<'a> Parser<'a> {
             {
                 precision = Some(self.parse_number()?);
             } else {
-                return Err(Error::new(
-                    "unsupported: percentile_disc expects a percentile",
-                ));
+                return Err(Error::new(format!(
+                    "unsupported: {fname} expects a percentile"
+                )));
             }
             precision_label = Some(
                 std::str::from_utf8(&self.src[start..self.pos])
@@ -3764,9 +3770,9 @@ impl<'a> Parser<'a> {
                         let number = self.parse_number()?;
                         extras.push(median_literal_type(&number).to_string());
                     } else {
-                        return Err(Error::new(
-                            "unsupported: percentile_disc expects a percentile",
-                        ));
+                        return Err(Error::new(format!(
+                            "unsupported: {fname} expects a percentile"
+                        )));
                     }
                     let _ = token_start;
                     self.skip();
