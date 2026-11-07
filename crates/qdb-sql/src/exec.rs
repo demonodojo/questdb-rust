@@ -7,7 +7,8 @@ use crate::parse::{
     PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
     RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr,
     SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TimestampCeilExpr,
-    TimestampFloorExpr, ToStrExpr, TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    TimestampFloorExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr,
+    YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -226,6 +227,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::ToStr { label, .. }
             | ResolvedProj::IsEndOfMonth { label, .. }
             | ResolvedProj::DayOfWeekSundayFirst { label, .. }
+            | ResolvedProj::ToTimestamp { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -465,6 +467,10 @@ enum ResolvedProj {
         label: String,
         value: DateDiffSide,
     },
+    ToTimestamp {
+        label: String,
+        arg: ResolvedArg,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -625,6 +631,7 @@ impl ResolvedProj {
             | Self::ToStr { label, .. }
             | Self::IsEndOfMonth { label, .. }
             | Self::DayOfWeekSundayFirst { label, .. }
+            | Self::ToTimestamp { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -670,6 +677,7 @@ impl ResolvedProj {
             Self::ToStr { .. } => qdb_types::TAG_STRING,
             Self::IsEndOfMonth { .. } => qdb_types::TAG_BOOLEAN,
             Self::DayOfWeekSundayFirst { .. } => qdb_types::TAG_INT,
+            Self::ToTimestamp { .. } => qdb_types::TAG_TIMESTAMP,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -761,6 +769,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::ToStr(expr) => resolve_to_str(table, expr),
         Proj::IsEndOfMonth(expr) => resolve_is_end_of_month(table, expr),
         Proj::DayOfWeekSundayFirst(expr) => resolve_day_of_week_sunday_first(table, expr),
+        Proj::ToTimestamp(expr) => resolve_to_timestamp(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1673,6 +1682,100 @@ const LONG_MONTHS: [&str; 12] = [
     "November",
     "December",
 ];
+
+fn resolve_to_timestamp(table: &Table, expr: &ToTimestampExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(
+            "unsupported: to_timestamp with a format".to_string(),
+        ));
+    }
+    let arg = match &expr.args[0] {
+        ConcatArg::Literal(Scalar::Null) => ResolvedArg::Null,
+        ConcatArg::Literal(Scalar::Text(text)) => ResolvedArg::Text(text.clone()),
+        ConcatArg::Literal(Scalar::Char(0)) => ResolvedArg::Null,
+        ConcatArg::Literal(Scalar::Char(unit)) => ResolvedArg::Text(
+            char::from_u32(u32::from(*unit))
+                .unwrap_or('\u{0}')
+                .to_string(),
+        ),
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            let tag = table.meta.columns[index].tag;
+            if !matches!(
+                tag,
+                qdb_types::TAG_STRING
+                    | qdb_types::TAG_SYMBOL
+                    | qdb_types::TAG_VARCHAR
+                    | qdb_types::TAG_CHAR
+            ) {
+                return Err(Error::new(format!(
+                    "there is no matching function `to_timestamp` with the argument types: ({})",
+                    qdb_types::type_name(tag)
+                )));
+            }
+            ResolvedArg::Column { index, tag }
+        }
+        _ => {
+            return Err(Error::new(format!(
+                "there is no matching function `to_timestamp` with the argument types: ({})",
+                timestamp_floor_types(table, &expr.args)?
+            )));
+        }
+    };
+    Ok(ResolvedProj::ToTimestamp {
+        label: expr.label.clone(),
+        arg,
+    })
+}
+
+fn parse_questdb_long(text: &str) -> Option<i64> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return None;
+    }
+    let negative = chars[0] == '-';
+    let mut index = if negative { 1 } else { 0 };
+    if index >= chars.len() {
+        return None;
+    }
+    let mut digits = 0i32;
+    let mut value: i64 = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        let folded = u32::from(ch) | 32;
+        if folded == u32::from('l') {
+            if index == 0 || index + 1 < chars.len() {
+                return None;
+            }
+        } else if folded == 127 {
+            if digits == 0 {
+                return None;
+            }
+            digits = 0;
+        } else if ch.is_ascii_digit() {
+            let digit = i64::from(u32::from(ch) - u32::from('0'));
+            let next = value.wrapping_mul(10).wrapping_sub(digit);
+            if next > value {
+                return None;
+            }
+            value = next;
+            digits += 1;
+        } else {
+            return None;
+        }
+        index += 1;
+    }
+    if (value == i64::MIN && !negative) || digits == 0 {
+        return None;
+    }
+    Some(if negative {
+        value
+    } else {
+        value.wrapping_neg()
+    })
+}
 
 fn resolve_day_of_week_sunday_first(
     table: &Table,
@@ -4326,6 +4429,13 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::ToStr { ops, value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Text(format_to_str(ops, micros)),
+            None => Scalar::Null,
+        },
+        ResolvedProj::ToTimestamp { arg, .. } => match text_of(table, row, arg) {
+            Some(text) => match parse_questdb_long(&text) {
+                Some(micros) if micros != i64::MIN => Scalar::Timestamp(micros),
+                _ => Scalar::Null,
+            },
             None => Scalar::Null,
         },
         ResolvedProj::DayOfWeekSundayFirst { value, .. } => {
@@ -13358,6 +13468,133 @@ mod tests {
             err.message.contains(
                 "there is no matching function `to_str` with the argument types: (TIMESTAMP, STRING, CHAR)"
             ),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn to_timestamp_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('1') FROM sensors LIMIT 1",
+                "expected/tt_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('-1') FROM sensors LIMIT 1",
+                "expected/tt_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('0') FROM sensors LIMIT 1",
+                "expected/tt_zero_us.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('1_000') FROM sensors LIMIT 1",
+                "expected/tt_sep.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('1L') FROM sensors LIMIT 1",
+                "expected/tt_suffix.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('') FROM sensors LIMIT 1",
+                "expected/tt_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('9223372036854775807') FROM sensors LIMIT 1",
+                "expected/tt_max.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('-9223372036854775808') FROM sensors LIMIT 1",
+                "expected/tt_min.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp(note) FROM sensors",
+                "expected/tt_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp(ch) FROM sensors",
+                "expected/tt_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp(location) FROM sensors",
+                "expected/tt_loc.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp(null) FROM sensors LIMIT 1",
+                "expected/tt_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT TO_TIMESTAMP('1') FROM sensors LIMIT 1",
+                "expected/tt_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp(note) FROM sensors ORDER BY to_timestamp(note)",
+                "expected/tt_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('1') FROM sensors WHERE id = 1",
+                "expected/tt_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('1') FROM sensors LIMIT 0",
+                "expected/tt_limit.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT to_timestamp(note) FROM days ORDER BY ts",
+                "expected/tt_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT to_timestamp() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `to_timestamp` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timestamp(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_timestamp` with the argument types: (LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timestamp(1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_timestamp` with the argument types: (INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timestamp(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );

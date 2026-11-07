@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — to_timestamp()
+
+`to_timestamp(texto)` devuelve `TIMESTAMP`. El texto es un número de microsegundos: admite un signo menos, `_` entre dígitos y una `L` final. Un texto que no es ese número sale NULL. El mínimo de un `LONG` también sale NULL, porque es el centinela. Acepta `STRING`, `SYMBOL` y `CHAR`. Un número se rechaza. La forma con patrón queda pendiente. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — day_of_week_sunday_first()
 
 `day_of_week_sunday_first(instante)` devuelve `INT`. El domingo es 1 y el sábado es 7. El 2 de enero de 2020 es jueves y vale 5. Un nulo sigue siendo nulo. Un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.
