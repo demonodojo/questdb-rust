@@ -944,7 +944,15 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   yr_case "SELECT YEAR(TS) FROM sensors" \
   yr_order "SELECT year(id) FROM sensors ORDER BY year(id)" \
   yr_where "SELECT year(ts) FROM sensors WHERE id = 1" \
-  yr_limit_zero "SELECT year(ts) FROM sensors LIMIT 0"
+  yr_limit_zero "SELECT year(ts) FROM sensors LIMIT 0" \
+  mo_ts "SELECT month(ts) FROM sensors" \
+  mo_id "SELECT month(id) FROM sensors" \
+  mo_lit "SELECT month('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
+  mo_prev "SELECT month('2019-12-31T23:00:00.000000Z') FROM sensors LIMIT 1" \
+  mo_case "SELECT MONTH(TS) FROM sensors" \
+  mo_order "SELECT month(id) FROM sensors ORDER BY month(id)" \
+  mo_where "SELECT month(ts) FROM sensors WHERE id = 1" \
+  mo_limit_zero "SELECT month(ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1063,7 +1071,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   cs_note "SELECT cast(note AS STRING) FROM days ORDER BY ts" \
   da_day "SELECT dateadd('d', 1, ts) FROM days ORDER BY ts" \
   df_day "SELECT datediff('d', ts, '2020-01-05T00:00:00.000000Z') FROM days ORDER BY ts" \
-  yr_ts "SELECT year(ts) FROM days ORDER BY ts"
+  yr_ts "SELECT year(ts) FROM days ORDER BY ts" \
+  mo_ts "SELECT month(ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1955,6 +1964,14 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT year(id) FROM sensors ORDER BY year(id)"),
     (os.environ["DIFF_H1"], "SELECT year(ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT year(ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT month(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT month(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT month('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT month('2019-12-31T23:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT MONTH(TS) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT month(id) FROM sensors ORDER BY month(id)"),
+    (os.environ["DIFF_H1"], "SELECT month(ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT month(ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2072,6 +2089,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT dateadd('d', 1, ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT datediff('d', ts, '2020-01-05T00:00:00.000000Z') FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT year(ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT month(ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

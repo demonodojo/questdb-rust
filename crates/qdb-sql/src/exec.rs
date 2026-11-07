@@ -2,7 +2,7 @@ use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, DateDiffExpr, ExpExpr, Filter,
     FloorExpr, GreatestExpr, GroupedSelect, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr,
-    NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
+    MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
     RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SelectList, SideExpr, SignExpr,
     SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd,
     TrimExpr, UpperExpr, YearExpr,
@@ -207,6 +207,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::DateAdd { label, .. }
             | ResolvedProj::DateDiff { label, .. }
             | ResolvedProj::Year { label, .. }
+            | ResolvedProj::Month { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -373,6 +374,10 @@ enum ResolvedProj {
         label: String,
         value: DateDiffSide,
     },
+    Month {
+        label: String,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -516,6 +521,7 @@ impl ResolvedProj {
             | Self::DateAdd { label, .. }
             | Self::DateDiff { label, .. }
             | Self::Year { label, .. }
+            | Self::Month { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -543,7 +549,7 @@ impl ResolvedProj {
             Self::Cast { type_tag, .. } => *type_tag,
             Self::DateAdd { .. } => qdb_types::TAG_TIMESTAMP,
             Self::DateDiff { .. } => qdb_types::TAG_LONG,
-            Self::Year { .. } => qdb_types::TAG_INT,
+            Self::Year { .. } | Self::Month { .. } => qdb_types::TAG_INT,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -618,6 +624,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::DateAdd(expr) => resolve_dateadd(table, expr),
         Proj::DateDiff(expr) => resolve_datediff(table, expr),
         Proj::Year(expr) => resolve_year(table, expr),
+        Proj::Month(expr) => resolve_month(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1272,6 +1279,19 @@ enum DateDiffSide {
     Micros(i64),
     Column { index: usize },
     Null,
+}
+
+fn resolve_month(table: &Table, expr: &MonthExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `month`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::Month {
+        label: expr.label.clone(),
+        value: datediff_side(table, &expr.args[0], "month", 1)?,
+    })
 }
 
 fn resolve_year(table: &Table, expr: &YearExpr) -> Result<ResolvedProj, Error> {
@@ -3302,6 +3322,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         } => datediff_value(table, row, *period, start, end),
         ResolvedProj::Year { value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Int(dateadd_parts(micros).0),
+            None => Scalar::Null,
+        },
+        ResolvedProj::Month { value, .. } => match datediff_micros(table, row, value) {
+            Some(micros) => Scalar::Int(dateadd_parts(micros).1 as i32),
             None => Scalar::Null,
         },
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
@@ -12166,6 +12190,91 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn month_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT month(ts) FROM sensors",
+                "expected/mo_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT month(id) FROM sensors",
+                "expected/mo_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT month('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1",
+                "expected/mo_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT month('2019-12-31T23:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/mo_prev.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT MONTH(TS) FROM sensors",
+                "expected/mo_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT month(id) FROM sensors ORDER BY month(id)",
+                "expected/mo_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT month(ts) FROM sensors WHERE id = 1",
+                "expected/mo_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT month(ts) FROM sensors LIMIT 0",
+                "expected/mo_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT month(ts) FROM days ORDER BY ts",
+                "expected/mo_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT month() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `month` requires arguments: month(TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT month(ts, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `month`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT month(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT month('nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
             "{}",
