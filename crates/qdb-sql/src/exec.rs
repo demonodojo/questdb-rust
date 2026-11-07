@@ -1,5 +1,5 @@
 use crate::parse::{
-    date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AggFunc,
+    date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AddExpr, AggFunc,
     AggregateExpr, AggregateExtra, AsinExpr, Atan2Expr, AtanExpr, BarExpr, BetweenExpr, CastExpr,
     CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr,
     DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr,
@@ -289,6 +289,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Between { label, .. }
             | ResolvedProj::InList { label, .. }
             | ResolvedProj::Eq { label, .. }
+            | ResolvedProj::Add { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
             | ResolvedProj::Exp { label, .. }
@@ -697,6 +698,12 @@ enum ResolvedProj {
         op: CmpOp,
         literal: Scalar,
     },
+    Add {
+        label: String,
+        index: usize,
+        result_tag: i32,
+        literal: Scalar,
+    },
     Ln {
         label: String,
         input: SqrtInput,
@@ -875,6 +882,7 @@ impl ResolvedProj {
             | Self::Between { label, .. }
             | Self::InList { label, .. }
             | Self::Eq { label, .. }
+            | Self::Add { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
             | Self::Exp { label, .. }
@@ -947,7 +955,9 @@ impl ResolvedProj {
             | Self::Log { .. }
             | Self::Exp { .. }
             | Self::Pi { .. } => qdb_types::TAG_DOUBLE,
-            Self::Greatest { result_tag, .. } | Self::Least { result_tag, .. } => *result_tag,
+            Self::Greatest { result_tag, .. }
+            | Self::Least { result_tag, .. }
+            | Self::Add { result_tag, .. } => *result_tag,
             Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
                 if *wide {
                     qdb_types::TAG_DOUBLE
@@ -1073,6 +1083,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Between(expr) => resolve_between(table, expr),
         Proj::InList(expr) => resolve_in_list(table, expr),
         Proj::Eq(expr) => resolve_eq(table, expr),
+        Proj::Add(expr) => resolve_add(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
         Proj::Exp(expr) => resolve_exp(table, expr),
@@ -1673,6 +1684,64 @@ enum InItem {
     Long(i64),
     Double(f64),
     Text(String),
+}
+
+fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
+    let Some(index) = table.column_index(&expr.value) else {
+        return Err(Error::new(format!("Invalid column: {}", expr.value)));
+    };
+    let tag = table.meta.columns[index].tag;
+    let result_tag = match tag {
+        qdb_types::TAG_LONG | qdb_types::TAG_INT | qdb_types::TAG_DOUBLE => tag,
+        other => {
+            return Err(Error::new(format!(
+                "there is no matching operator `+` with the argument type: {}",
+                qdb_types::type_name(other)
+            )))
+        }
+    };
+    if matches!(expr.literal, Scalar::Double(_)) && tag != qdb_types::TAG_DOUBLE {
+        return Err(Error::new(format!(
+            "there is no matching operator `+` with the argument type: {}",
+            qdb_types::type_name(tag)
+        )));
+    }
+    if !matches!(
+        expr.literal,
+        Scalar::Null | Scalar::Long(_) | Scalar::Double(_)
+    ) {
+        return Err(Error::new(
+            "there is no matching operator `+` with the argument type: STRING".to_string(),
+        ));
+    }
+    Ok(ResolvedProj::Add {
+        label: expr.label.clone(),
+        index,
+        result_tag,
+        literal: expr.literal.clone(),
+    })
+}
+
+fn add_value(table: &Table, row: usize, index: usize, result_tag: i32, literal: &Scalar) -> Scalar {
+    let left = &table.columns[index][row];
+    if left.is_null() || literal.is_null() {
+        return Scalar::Null;
+    }
+    match (result_tag, left, literal) {
+        (qdb_types::TAG_LONG, Scalar::Long(left), Scalar::Long(right)) => {
+            Scalar::Long(left.wrapping_add(*right))
+        }
+        (qdb_types::TAG_INT, Scalar::Int(left), Scalar::Long(right)) => {
+            Scalar::Int(i64::from(*left).wrapping_add(*right) as i32)
+        }
+        (qdb_types::TAG_DOUBLE, Scalar::Double(left), Scalar::Long(right)) => {
+            Scalar::Double(left + *right as f64)
+        }
+        (qdb_types::TAG_DOUBLE, Scalar::Double(left), Scalar::Double(right)) => {
+            Scalar::Double(left + *right)
+        }
+        _ => Scalar::Null,
+    }
 }
 
 fn resolve_eq(table: &Table, expr: &EqExpr) -> Result<ResolvedProj, Error> {
@@ -7102,6 +7171,12 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Eq {
             index, op, literal, ..
         } => eq_value(table, row, *index, *op, literal).unwrap_or(Scalar::Null),
+        ResolvedProj::Add {
+            index,
+            result_tag,
+            literal,
+            ..
+        } => add_value(table, row, *index, *result_tag, literal),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15477,6 +15552,71 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn ad_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id + 1 FROM sensors",
+                "expected/ad_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id + 1 FROM sensors WHERE id = 1",
+                "expected/ad_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id + 1 FROM sensors WHERE id = 2",
+                "expected/ad_two.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id + 1 FROM sensors WHERE id > 100",
+                "expected/ad_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id + null FROM sensors",
+                "expected/ad_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT reading + 0 FROM sensors",
+                "expected/ad_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags + 1 FROM sensors",
+                "expected/ad_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id + 1 FROM sensors LIMIT 0",
+                "expected/ad_lim0.tsv",
+            ),
+            (&days, "SELECT id + 1 FROM days", "expected/ad_days.tsv"),
+            (
+                &days,
+                "SELECT id + null FROM days",
+                "expected/ad_days_null.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT missing + 1 FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

@@ -291,6 +291,7 @@ pub enum Proj {
     Between(BetweenExpr),
     InList(InListExpr),
     Eq(EqExpr),
+    Add(AddExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -843,6 +844,14 @@ pub struct InListExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `value + other` adds a constant to a column and keeps the column's numeric type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddExpr {
+    pub label: String,
+    pub value: String,
+    pub literal: Scalar,
+}
+
 /// `value = other` compares a column with one constant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EqExpr {
@@ -1142,6 +1151,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                     column = parser.parse_in_list(column)?.label;
                 } else if parser.starts_eq_or_ne() {
                     column = parser.parse_eq(column)?.label;
+                } else if parser.starts_add() {
+                    column = parser.parse_add(column)?.label;
                 } else if parser.peek() == Some(b'(') {
                     column = parser.parse_order_call(column)?;
                     parser.skip();
@@ -1269,6 +1280,7 @@ enum SelectPiece {
     Between(BetweenExpr),
     InList(InListExpr),
     Eq(EqExpr),
+    Add(AddExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -1542,6 +1554,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::InList(self.parse_in_list(name)?));
                 } else if self.starts_eq_or_ne() {
                     pieces.push(SelectPiece::Eq(self.parse_eq(name)?));
+                } else if self.starts_add() {
+                    pieces.push(SelectPiece::Add(self.parse_add(name)?));
                 } else {
                     pieces.push(SelectPiece::Column(name));
                 }
@@ -1636,6 +1650,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Between(_)
                     | SelectPiece::InList(_)
                     | SelectPiece::Eq(_)
+                    | SelectPiece::Add(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
                     | SelectPiece::Exp(_)
@@ -1738,6 +1753,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Between(expr) => items.push(Proj::Between(expr)),
                     SelectPiece::InList(expr) => items.push(Proj::InList(expr)),
                     SelectPiece::Eq(expr) => items.push(Proj::Eq(expr)),
+                    SelectPiece::Add(expr) => items.push(Proj::Add(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
                     SelectPiece::Exp(expr) => items.push(Proj::Exp(expr)),
@@ -1860,6 +1876,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Between(_)
                 | SelectPiece::InList(_)
                 | SelectPiece::Eq(_)
+                | SelectPiece::Add(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
                 | SelectPiece::Exp(_)
@@ -2070,6 +2087,29 @@ impl<'a> Parser<'a> {
             label: format!("{name} in ({})", labels.join(", ")),
             value: name,
             args,
+        })
+    }
+
+    fn starts_add(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        self.src.get(pos) == Some(&b'+')
+    }
+
+    fn parse_add(&mut self, name: String) -> Result<AddExpr, Error> {
+        self.skip();
+        if !self.eat(b'+') {
+            return Err(Error::new(
+                "unsupported: expected '+' after column".to_string(),
+            ));
+        }
+        let literal = self.parse_literal()?;
+        Ok(AddExpr {
+            label: format!("{name} + {}", eq_literal_label(&literal)),
+            value: name,
+            literal,
         })
     }
 
