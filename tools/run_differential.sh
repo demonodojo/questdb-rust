@@ -1108,7 +1108,17 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   em_case "SELECT IS_END_OF_MONTH(TS) FROM sensors LIMIT 1" \
   em_order "SELECT is_end_of_month(id) FROM sensors ORDER BY is_end_of_month(id)" \
   em_where "SELECT is_end_of_month(ts) FROM sensors WHERE id = 1" \
-  em_zero "SELECT is_end_of_month(ts) FROM sensors LIMIT 0"
+  em_zero "SELECT is_end_of_month(ts) FROM sensors LIMIT 0" \
+  ds_ts "SELECT day_of_week_sunday_first(ts) FROM sensors" \
+  ds_id "SELECT day_of_week_sunday_first(id) FROM sensors" \
+  ds_sun "SELECT day_of_week_sunday_first('2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  ds_mon "SELECT day_of_week_sunday_first('2020-01-06T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  ds_sat "SELECT day_of_week_sunday_first('2020-01-04T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  ds_null "SELECT day_of_week_sunday_first(null) FROM sensors LIMIT 1" \
+  ds_case "SELECT DAY_OF_WEEK_SUNDAY_FIRST(TS) FROM sensors LIMIT 1" \
+  ds_order "SELECT day_of_week_sunday_first(id) FROM sensors ORDER BY day_of_week_sunday_first(id)" \
+  ds_where "SELECT day_of_week_sunday_first(ts) FROM sensors WHERE id = 1" \
+  ds_zero "SELECT day_of_week_sunday_first(ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1243,7 +1253,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ly_days "SELECT is_leap_year(ts) FROM days ORDER BY ts" \
   dm_days "SELECT days_in_month(ts) FROM days ORDER BY ts" \
   ts_days "SELECT to_str(ts, 'yyyy-MM-dd') FROM days ORDER BY ts" \
-  em_days "SELECT is_end_of_month(ts) FROM days ORDER BY ts"
+  em_days "SELECT is_end_of_month(ts) FROM days ORDER BY ts" \
+  ds_days "SELECT day_of_week_sunday_first(ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2299,6 +2310,16 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT is_end_of_month(id) FROM sensors ORDER BY is_end_of_month(id)"),
     (os.environ["DIFF_H1"], "SELECT is_end_of_month(ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT is_end_of_month(ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week_sunday_first(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week_sunday_first(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week_sunday_first('2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week_sunday_first('2020-01-06T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week_sunday_first('2020-01-04T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week_sunday_first(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT DAY_OF_WEEK_SUNDAY_FIRST(TS) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week_sunday_first(id) FROM sensors ORDER BY day_of_week_sunday_first(id)"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week_sunday_first(ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week_sunday_first(ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2432,6 +2453,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT days_in_month(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT to_str(ts, 'yyyy-MM-dd') FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT is_end_of_month(ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT day_of_week_sunday_first(ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

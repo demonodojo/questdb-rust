@@ -42,7 +42,8 @@
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
 //! widest numeric argument and skips nulls. `to_str` formats a timestamp with a
-//! constant pattern. `is_end_of_month` reports whether a timestamp falls on the
+//! constant pattern. `day_of_week_sunday_first` numbers Sunday as 1 and Saturday
+//! as 7. `is_end_of_month` reports whether a timestamp falls on the
 //! last day of its month and returns false for null. `days_in_month` returns the length of
 //! the timestamp's month. `is_leap_year` reports the Gregorian
 //! leap year and returns false for null. `timestamp_ceil` advances a timestamp

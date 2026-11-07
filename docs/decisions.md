@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — day_of_week_sunday_first()
+
+`day_of_week_sunday_first(instante)` devuelve `INT`. El domingo es 1 y el sábado es 7. El 2 de enero de 2020 es jueves y vale 5. Un nulo sigue siendo nulo. Un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — is_end_of_month()
 
 `is_end_of_month(instante)` devuelve `BOOLEAN`. Es verdadero cuando el día del mes coincide con la longitud de ese mes: el 31 de enero, el 29 de febrero de 2020 y el 28 de febrero de 2019. El 28 de febrero de 2020 es falso. Un nulo devuelve `false`. Un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.
