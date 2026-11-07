@@ -42,7 +42,10 @@
 //! boolean. A null text is false, and the pattern must not be null or empty.
 //! `ilike` is a case-insensitive `LIKE`: `%` matches any text and `_` matches
 //! one character. A null text or a null or empty pattern is false. `like` is
-//! the case-sensitive form and names the column `text like pattern`. `strpos` and `position` return the 1-based index of the first
+//! the case-sensitive form and names the column `text like pattern`. `switch`
+//! picks a result whose constant case equals the key. An even argument count
+//! makes the last value the else branch. An unmatched key is NULL when there
+//! is no else branch. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
 //! widest numeric argument and skips nulls. `to_str` formats a timestamp with a

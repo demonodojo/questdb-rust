@@ -2302,7 +2302,16 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   lk_esc "SELECT like(note, 'a\\%') FROM sensors WHERE id = 1" \
   lk_case "SELECT LIKE(note, 'a%') FROM sensors WHERE id = 1" \
   lk_none "SELECT like(note, 'a%') FROM sensors WHERE id > 100" \
-  lk_lim0 "SELECT like(note, 'a%') FROM sensors LIMIT 0"
+  lk_lim0 "SELECT like(note, 'a%') FROM sensors LIMIT 0" \
+  sx_all "SELECT switch(id, 1, 'one', 'other') FROM sensors" \
+  sx_one "SELECT switch(id, 1, 'one', 'other') FROM sensors WHERE id = 1" \
+  sx_noelse "SELECT switch(id, 1, 'one') FROM sensors" \
+  sx_two "SELECT switch(id, 1, 'one', 2, 'two', 'other') FROM sensors" \
+  sx_note "SELECT switch(note, 'alpha', 7, 0) FROM sensors" \
+  sx_sym "SELECT switch(location, 'madrid', 'es', 'other') FROM sensors" \
+  sx_case "SELECT SWITCH(id, 1, 'one', 'other') FROM sensors WHERE id = 1" \
+  sx_none "SELECT switch(id, 1, 'one', 'other') FROM sensors WHERE id > 100" \
+  sx_lim0 "SELECT switch(id, 1, 'one', 'other') FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2563,7 +2572,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ik_days "SELECT ilike(note, 'A%') FROM days" \
   ik_days_one "SELECT ilike(note, 'A%') FROM days WHERE id = 1" \
   lk_days "SELECT like(note, 'a%') FROM days" \
-  lk_days_one "SELECT like(note, 'a%') FROM days WHERE id = 1"
+  lk_days_one "SELECT like(note, 'a%') FROM days WHERE id = 1" \
+  sx_days "SELECT switch(id, 1, 'one', 'other') FROM days" \
+  sx_days_one "SELECT switch(id, 1, 'one', 'other') FROM days WHERE id = 1"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4813,6 +4824,15 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT LIKE(note, 'a%') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT like(note, 'a%') FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT like(note, 'a%') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT switch(id, 1, 'one', 'other') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT switch(id, 1, 'one', 'other') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT switch(id, 1, 'one') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT switch(id, 1, 'one', 2, 'two', 'other') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT switch(note, 'alpha', 7, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT switch(location, 'madrid', 'es', 'other') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT SWITCH(id, 1, 'one', 'other') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT switch(id, 1, 'one', 'other') FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT switch(id, 1, 'one', 'other') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -5072,6 +5092,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT ilike(note, 'A%') FROM days WHERE id = 1"),
     (os.environ["DIFF_H2"], "SELECT like(note, 'a%') FROM days"),
     (os.environ["DIFF_H2"], "SELECT like(note, 'a%') FROM days WHERE id = 1"),
+    (os.environ["DIFF_H2"], "SELECT switch(id, 1, 'one', 'other') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT switch(id, 1, 'one', 'other') FROM days WHERE id = 1"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

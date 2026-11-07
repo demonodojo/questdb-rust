@@ -1,0 +1,5 @@
+switch(id, 1, 'one')
+one
+NULL
+NULL
+NULL

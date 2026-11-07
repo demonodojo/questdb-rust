@@ -1,0 +1,5 @@
+switch(location, 'madrid', 'es', 'other')
+es
+other
+es
+other

@@ -1,0 +1,2 @@
+SWITCH(id, 1, 'one', 'other')
+one

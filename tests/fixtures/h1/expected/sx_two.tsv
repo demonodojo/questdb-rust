@@ -1,0 +1,5 @@
+switch(id, 1, 'one', 2, 'two', 'other')
+one
+two
+other
+other

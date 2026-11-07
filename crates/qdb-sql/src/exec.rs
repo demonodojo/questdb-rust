@@ -9,8 +9,8 @@ use crate::parse::{
     PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
     RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr,
     SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SqrtExpr, StartsWithExpr,
-    StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, ToDateExpr, ToStrExpr,
-    ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, ToDateExpr,
+    ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -216,6 +216,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Glob { label, .. }
             | ResolvedProj::Ilike { label, .. }
             | ResolvedProj::Like { label, .. }
+            | ResolvedProj::Switch { label, .. }
             | ResolvedProj::StrPos { label, .. }
             | ResolvedProj::SplitPart { label, .. }
             | ResolvedProj::Pad { label, .. }
@@ -363,6 +364,13 @@ enum ResolvedProj {
         label: String,
         value: ResolvedArg,
         pattern: IlikePattern,
+    },
+    Switch {
+        label: String,
+        key: SwitchKey,
+        arms: Vec<(Scalar, Scalar)>,
+        else_value: Option<Scalar>,
+        result_tag: i32,
     },
     StrPos {
         label: String,
@@ -733,6 +741,7 @@ impl ResolvedProj {
             | Self::Glob { label, .. }
             | Self::Ilike { label, .. }
             | Self::Like { label, .. }
+            | Self::Switch { label, .. }
             | Self::StrPos { label, .. }
             | Self::SplitPart { label, .. }
             | Self::Pad { label, .. }
@@ -865,6 +874,7 @@ impl ResolvedProj {
             | Self::Glob { .. }
             | Self::Ilike { .. }
             | Self::Like { .. } => qdb_types::TAG_BOOLEAN,
+            Self::Switch { result_tag, .. } => *result_tag,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -910,6 +920,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Glob(expr) => resolve_glob(table, expr),
         Proj::Ilike(expr) => resolve_ilike(table, expr),
         Proj::Like(expr) => resolve_like(table, expr),
+        Proj::Switch(expr) => resolve_switch(table, expr),
         Proj::StrPos(expr) => resolve_strpos(table, expr),
         Proj::SplitPart(expr) => resolve_split_part(table, expr),
         Proj::Pad(expr) => resolve_pad(table, expr),
@@ -5294,6 +5305,223 @@ fn ilike_text_column(table: &Table, arg: &ConcatArg) -> bool {
     })
 }
 
+enum SwitchKey {
+    Column(usize),
+    Literal(Scalar),
+}
+
+fn resolve_switch(table: &Table, expr: &SwitchExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() < 2 {
+        return Err(Error::new("switch requires a key and a value"));
+    }
+    let (key, key_tag) = switch_key(table, &expr.args[0])?;
+    if !switch_key_supported(key_tag) {
+        return Err(Error::new(format!(
+            "type {} is not supported in 'switch' type of 'case' statement",
+            qdb_types::type_name(key_tag)
+        )));
+    }
+    let mut limit = expr.args.len();
+    let else_value = if limit % 2 == 0 {
+        limit -= 1;
+        Some(switch_literal(&expr.args[limit])?)
+    } else {
+        None
+    };
+    let mut arms = Vec::new();
+    let mut common = else_value.as_ref().and_then(switch_is_text);
+    let mut index = 1;
+    while index < limit {
+        if matches!(expr.args[index], ConcatArg::Column(_)) {
+            return Err(Error::new("constant expected"));
+        }
+        let case = switch_literal(&expr.args[index])?;
+        if !switch_case_ok(key_tag, &case) {
+            return Err(Error::new(format!(
+                "type mismatch [expected={}, actual={}]",
+                qdb_types::type_name(key_tag),
+                switch_scalar_name(&case)
+            )));
+        }
+        if arms.iter().any(|(previous, _)| switch_eq(previous, &case)) {
+            return Err(Error::new("duplicate branch"));
+        }
+        let result = switch_literal(&expr.args[index + 1])?;
+        common = switch_observe(common, &result)?;
+        arms.push((case, result));
+        index += 2;
+    }
+    Ok(ResolvedProj::Switch {
+        label: expr.label.clone(),
+        key,
+        arms,
+        else_value,
+        result_tag: switch_result_tag(common),
+    })
+}
+
+fn switch_key(table: &Table, arg: &ConcatArg) -> Result<(SwitchKey, i32), Error> {
+    match arg {
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            Ok((SwitchKey::Column(index), table.meta.columns[index].tag))
+        }
+        ConcatArg::Literal(Scalar::Text(text)) => Ok((
+            SwitchKey::Literal(Scalar::Text(text.clone())),
+            qdb_types::TAG_STRING,
+        )),
+        ConcatArg::Literal(Scalar::Long(number)) => {
+            let tag = if i32::try_from(*number).is_ok() {
+                qdb_types::TAG_INT
+            } else {
+                qdb_types::TAG_LONG
+            };
+            Ok((SwitchKey::Literal(Scalar::Long(*number)), tag))
+        }
+        ConcatArg::Literal(Scalar::Double(number)) => Ok((
+            SwitchKey::Literal(Scalar::Double(*number)),
+            qdb_types::TAG_DOUBLE,
+        )),
+        ConcatArg::Literal(_) => Err(Error::new(
+            "type NULL is not supported in 'switch' type of 'case' statement",
+        )),
+    }
+}
+
+fn switch_key_supported(tag: i32) -> bool {
+    matches!(
+        tag,
+        qdb_types::TAG_STRING
+            | qdb_types::TAG_SYMBOL
+            | qdb_types::TAG_VARCHAR
+            | qdb_types::TAG_CHAR
+            | qdb_types::TAG_LONG
+            | qdb_types::TAG_INT
+            | qdb_types::TAG_SHORT
+            | qdb_types::TAG_BYTE
+            | qdb_types::TAG_DATE
+            | qdb_types::TAG_TIMESTAMP
+            | qdb_types::TAG_FLOAT
+            | qdb_types::TAG_DOUBLE
+    )
+}
+
+fn switch_literal(arg: &ConcatArg) -> Result<Scalar, Error> {
+    match arg {
+        ConcatArg::Literal(value) => Ok(value.clone()),
+        ConcatArg::Column(_) => Err(Error::new("constant expected")),
+    }
+}
+
+fn switch_case_ok(tag: i32, case: &Scalar) -> bool {
+    match tag {
+        qdb_types::TAG_STRING
+        | qdb_types::TAG_SYMBOL
+        | qdb_types::TAG_VARCHAR
+        | qdb_types::TAG_CHAR => {
+            matches!(case, Scalar::Text(_) | Scalar::Null | Scalar::Char(_))
+        }
+        qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE => {
+            matches!(case, Scalar::Long(_) | Scalar::Double(_) | Scalar::Null)
+        }
+        qdb_types::TAG_LONG
+        | qdb_types::TAG_INT
+        | qdb_types::TAG_SHORT
+        | qdb_types::TAG_BYTE
+        | qdb_types::TAG_DATE
+        | qdb_types::TAG_TIMESTAMP => matches!(case, Scalar::Long(_) | Scalar::Null),
+        _ => false,
+    }
+}
+
+fn switch_is_text(value: &Scalar) -> Option<bool> {
+    match value {
+        Scalar::Null => None,
+        Scalar::Text(_) | Scalar::Char(_) => Some(true),
+        _ => Some(false),
+    }
+}
+
+fn switch_observe(common: Option<bool>, value: &Scalar) -> Result<Option<bool>, Error> {
+    let Some(is_text) = switch_is_text(value) else {
+        return Ok(common);
+    };
+    match common {
+        None => Ok(Some(is_text)),
+        Some(previous) if previous == is_text => Ok(common),
+        Some(previous) => {
+            let from = if is_text { "STRING" } else { "INT" };
+            let to = if previous { "STRING" } else { "INT" };
+            Err(Error::new(format!(
+                "inconvertible types: {from} -> {to} [from={from}, to={to}]"
+            )))
+        }
+    }
+}
+
+fn switch_result_tag(common: Option<bool>) -> i32 {
+    if common == Some(false) {
+        qdb_types::TAG_INT
+    } else {
+        qdb_types::TAG_STRING
+    }
+}
+
+fn switch_scalar_name(value: &Scalar) -> &'static str {
+    match value {
+        Scalar::Null => "NULL",
+        Scalar::Text(text) if text.chars().count() == 1 => "CHAR",
+        Scalar::Text(_) => "STRING",
+        Scalar::Char(_) => "CHAR",
+        Scalar::Long(number) if i32::try_from(*number).is_ok() => "INT",
+        Scalar::Long(_) => "LONG",
+        Scalar::Double(_) => "DOUBLE",
+        _ => "UNDEFINED",
+    }
+}
+
+fn switch_pick(
+    table: &Table,
+    row: usize,
+    key: &SwitchKey,
+    arms: &[(Scalar, Scalar)],
+    else_value: &Option<Scalar>,
+) -> Scalar {
+    let key_value = match key {
+        SwitchKey::Column(index) => &table.columns[*index][row],
+        SwitchKey::Literal(value) => value,
+    };
+    for (case, result) in arms {
+        if switch_eq(key_value, case) {
+            return result.clone();
+        }
+    }
+    else_value.clone().unwrap_or(Scalar::Null)
+}
+
+fn switch_eq(key: &Scalar, case: &Scalar) -> bool {
+    match (key, case) {
+        (Scalar::Null, Scalar::Null) => true,
+        (Scalar::Null, _) | (_, Scalar::Null) => false,
+        (Scalar::Text(left), Scalar::Text(right)) => left == right,
+        (Scalar::Long(left), Scalar::Long(right)) => left == right,
+        (Scalar::Int(left), Scalar::Long(right)) => i64::from(*left) == *right,
+        (Scalar::Byte(left), Scalar::Long(right)) => i64::from(*left) == *right,
+        (Scalar::Short(left), Scalar::Long(right)) => i64::from(*left) == *right,
+        (Scalar::Date(left), Scalar::Long(right)) => *left == *right,
+        (Scalar::Timestamp(left), Scalar::Long(right)) => *left == *right,
+        (Scalar::Float(left), Scalar::Long(right)) => *left == *right as f32,
+        (Scalar::Float(left), Scalar::Double(right)) => f64::from(*left) == *right,
+        (Scalar::Double(left), Scalar::Long(right)) => *left == *right as f64,
+        (Scalar::Double(left), Scalar::Double(right)) => *left == *right,
+        (Scalar::Char(unit), Scalar::Text(text)) => char::from_u32(u32::from(*unit))
+            .is_some_and(|unit| text.chars().eq(std::iter::once(unit))),
+        _ => false,
+    }
+}
+
 fn resolve_like(table: &Table, expr: &LikeExpr) -> Result<ResolvedProj, Error> {
     if expr.args.len() < 2 {
         return Err(Error::new(format!(
@@ -6406,6 +6634,12 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Like { value, pattern, .. } => {
             Scalar::Boolean(like_row(table, row, value, pattern, false))
         }
+        ResolvedProj::Switch {
+            key,
+            arms,
+            else_value,
+            ..
+        } => switch_pick(table, row, key, arms, else_value),
         ResolvedProj::Glob { value, pattern, .. } => {
             let matched = match text_of(table, row, value) {
                 Some(value) => glob_match(value.as_bytes(), pattern),
@@ -14266,6 +14500,100 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn switch_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT switch(id, 1, 'one', 'other') FROM sensors",
+                "expected/sx_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT switch(id, 1, 'one', 'other') FROM sensors WHERE id = 1",
+                "expected/sx_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT switch(id, 1, 'one') FROM sensors",
+                "expected/sx_noelse.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT switch(id, 1, 'one', 2, 'two', 'other') FROM sensors",
+                "expected/sx_two.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT switch(note, 'alpha', 7, 0) FROM sensors",
+                "expected/sx_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT switch(location, 'madrid', 'es', 'other') FROM sensors",
+                "expected/sx_sym.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT SWITCH(id, 1, 'one', 'other') FROM sensors WHERE id = 1",
+                "expected/sx_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT switch(id, 1, 'one', 'other') FROM sensors WHERE id > 100",
+                "expected/sx_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT switch(id, 1, 'one', 'other') FROM sensors LIMIT 0",
+                "expected/sx_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT switch(id, 1, 'one', 'other') FROM days",
+                "expected/sx_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT switch(id, 1, 'one', 'other') FROM days WHERE id = 1",
+                "expected/sx_days_one.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT switch(id, note, 'x', 'y') FROM sensors").unwrap_err();
+        assert!(err.message.contains("constant expected"), "{}", err.message);
+        let err = execute(
+            &sensors,
+            "SELECT switch(id, 'aa', 'one', 'other') FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("type mismatch [expected=LONG, actual=STRING]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT switch(id, 1, 'one', 1, 'two', 'other') FROM sensors",
+        )
+        .unwrap_err();
+        assert!(err.message.contains("duplicate branch"), "{}", err.message);
+        let err =
+            execute(&sensors, "SELECT switch(missing, 1, 'a', 'b') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
