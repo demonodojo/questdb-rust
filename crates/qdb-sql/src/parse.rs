@@ -286,6 +286,7 @@ pub enum Proj {
     Power(PowerExpr),
     Mid(MidExpr),
     Spread(SpreadExpr),
+    SpreadBps(SpreadBpsExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -809,6 +810,13 @@ pub struct SpreadExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `spread_bps(bid, ask)` returns the spread over the midpoint, in basis points.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpreadBpsExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `ln(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LnExpr {
@@ -1046,6 +1054,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_power()?.label
             } else if parser.starts_mid_call() {
                 parser.parse_mid()?.label
+            } else if parser.starts_spread_bps_call() {
+                parser.parse_spread_bps()?.label
             } else if parser.starts_spread_call() {
                 parser.parse_spread()?.label
             } else if parser.starts_ln_call() {
@@ -1185,6 +1195,7 @@ enum SelectPiece {
     Power(PowerExpr),
     Mid(MidExpr),
     Spread(SpreadExpr),
+    SpreadBps(SpreadBpsExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -1431,6 +1442,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Power(self.parse_power()?));
             } else if self.starts_mid_call() {
                 pieces.push(SelectPiece::Mid(self.parse_mid()?));
+            } else if self.starts_spread_bps_call() {
+                pieces.push(SelectPiece::SpreadBps(self.parse_spread_bps()?));
             } else if self.starts_spread_call() {
                 pieces.push(SelectPiece::Spread(self.parse_spread()?));
             } else if self.starts_ln_call() {
@@ -1533,6 +1546,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Power(_)
                     | SelectPiece::Mid(_)
                     | SelectPiece::Spread(_)
+                    | SelectPiece::SpreadBps(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
                     | SelectPiece::Exp(_)
@@ -1630,6 +1644,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Mid(expr) => items.push(Proj::Mid(expr)),
                     SelectPiece::Spread(expr) => items.push(Proj::Spread(expr)),
+                    SelectPiece::SpreadBps(expr) => items.push(Proj::SpreadBps(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
                     SelectPiece::Exp(expr) => items.push(Proj::Exp(expr)),
@@ -1747,6 +1762,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Power(_)
                 | SelectPiece::Mid(_)
                 | SelectPiece::Spread(_)
+                | SelectPiece::SpreadBps(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
                 | SelectPiece::Exp(_)
@@ -1910,6 +1926,24 @@ impl<'a> Parser<'a> {
 
     fn starts_spread_call(&self) -> bool {
         self.starts_named_call("spread")
+    }
+
+    fn starts_spread_bps_call(&self) -> bool {
+        self.starts_named_call("spread_bps")
+    }
+
+    fn parse_spread_bps(&mut self) -> Result<SpreadBpsExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `spread_bps` requires arguments: spread_bps(DOUBLE, DOUBLE)",
+            ));
+        }
+        Ok(SpreadBpsExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn parse_spread(&mut self) -> Result<SpreadExpr, Error> {

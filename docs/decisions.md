@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — spread_bps()
+
+`spread_bps(bid, ask)` divide `ask - bid` por el punto medio y lo expresa en puntos básicos, como `DOUBLE`. `spread_bps(reading, score)` es `-1818.1818181818182`, NULL, NULL y `20000.0`. El tercer NULL aparece porque el punto medio es cero. Un argumento nulo también deja el resultado en NULL. En `days`, `spread_bps(id, id)` es `0.0` en las tres filas con `id` y NULL en la última. La llamada vacía exige `spread_bps(DOUBLE, DOUBLE)`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — spread()
 
 `spread(bid, ask)` devuelve `ask - bid` como `DOUBLE`. `spread(reading, score)` es `-0.25`, NULL, `0.0` y `-1.5`. Un argumento nulo deja el resultado en NULL. `spread(flags, id)` con `id = 1` es `-9.0`. En `days`, `spread(id, id)` es `0.0` en las tres filas con `id` y NULL en la última. La llamada vacía exige `spread(DOUBLE, DOUBLE)`. Se contrastó con `/exec` en `sensors` y `days`.

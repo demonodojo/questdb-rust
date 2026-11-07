@@ -8,10 +8,10 @@ use crate::parse::{
     Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr,
     PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr,
     RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr,
-    SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
-    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd,
-    TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr,
+    SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
+    TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr,
+    ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -283,6 +283,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Power { label, .. }
             | ResolvedProj::Mid { label, .. }
             | ResolvedProj::Spread { label, .. }
+            | ResolvedProj::SpreadBps { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
             | ResolvedProj::Exp { label, .. }
@@ -662,6 +663,11 @@ enum ResolvedProj {
         bid: SqrtInput,
         ask: SqrtInput,
     },
+    SpreadBps {
+        label: String,
+        bid: SqrtInput,
+        ask: SqrtInput,
+    },
     Ln {
         label: String,
         input: SqrtInput,
@@ -835,6 +841,7 @@ impl ResolvedProj {
             | Self::Power { label, .. }
             | Self::Mid { label, .. }
             | Self::Spread { label, .. }
+            | Self::SpreadBps { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
             | Self::Exp { label, .. }
@@ -897,6 +904,7 @@ impl ResolvedProj {
             | Self::Power { .. }
             | Self::Mid { .. }
             | Self::Spread { .. }
+            | Self::SpreadBps { .. }
             | Self::Ln { .. }
             | Self::Log { .. }
             | Self::Exp { .. }
@@ -1022,6 +1030,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Power(expr) => resolve_power(table, expr),
         Proj::Mid(expr) => resolve_mid(table, expr),
         Proj::Spread(expr) => resolve_spread(table, expr),
+        Proj::SpreadBps(expr) => resolve_spread_bps(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
         Proj::Exp(expr) => resolve_exp(table, expr),
@@ -1498,6 +1507,36 @@ fn spread_value(table: &Table, row: usize, bid: &SqrtInput, ask: &SqrtInput) -> 
         return Scalar::Null;
     }
     Scalar::Double(ask - bid)
+}
+
+fn resolve_spread_bps(table: &Table, expr: &SpreadBpsExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `spread_bps`; expected: 2, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::SpreadBps {
+        label: expr.label.clone(),
+        bid: power_input(table, &expr.args[0])?,
+        ask: power_input(table, &expr.args[1])?,
+    })
+}
+
+fn spread_bps_value(table: &Table, row: usize, bid: &SqrtInput, ask: &SqrtInput) -> Scalar {
+    let (Some(bid), Some(ask)) = (sqrt_number(table, row, bid), sqrt_number(table, row, ask))
+    else {
+        return Scalar::Null;
+    };
+    if bid.is_nan() || ask.is_nan() {
+        return Scalar::Null;
+    }
+    let value = (ask - bid) / ((ask + bid) / 2.0) * 10_000.0;
+    if value.is_finite() {
+        Scalar::Double(value)
+    } else {
+        Scalar::Null
+    }
 }
 
 fn power_input(table: &Table, arg: &ConcatArg) -> Result<SqrtInput, Error> {
@@ -6700,6 +6739,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Power { base, exponent, .. } => power_value(table, row, base, exponent),
         ResolvedProj::Mid { bid, ask, .. } => mid_value(table, row, bid, ask),
         ResolvedProj::Spread { bid, ask, .. } => spread_value(table, row, bid, ask),
+        ResolvedProj::SpreadBps { bid, ask, .. } => spread_bps_value(table, row, bid, ask),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15074,6 +15114,104 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn spread_bps_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT spread_bps(reading, score) FROM sensors",
+                "expected/bp_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT spread_bps(reading, score) FROM sensors WHERE id = 1",
+                "expected/bp_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT spread_bps(reading, score) FROM sensors WHERE id = 2",
+                "expected/bp_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT spread_bps(reading, score) FROM sensors WHERE id > 100",
+                "expected/bp_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT spread_bps(flags, id) FROM sensors WHERE id = 1",
+                "expected/bp_int.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT SPREAD_BPS(reading, score) FROM sensors WHERE id = 1",
+                "expected/bp_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT spread_bps(reading, score) FROM sensors LIMIT 0",
+                "expected/bp_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT spread_bps(id, id) FROM days",
+                "expected/bp_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT spread_bps(id, id) FROM days WHERE id = 1",
+                "expected/bp_days_one.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT spread_bps() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `spread_bps` requires arguments: spread_bps(DOUBLE, DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT spread_bps(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `spread_bps`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT spread_bps(reading, score, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `spread_bps`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT spread_bps(note, score) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: STRING"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT spread_bps(missing, score) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
