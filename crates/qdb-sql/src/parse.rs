@@ -2301,12 +2301,13 @@ impl<'a> Parser<'a> {
                 "unsupported: expected '+', '-', '*', '/' or '%' after column".to_string(),
             ));
         };
-        let (literal, other) =
-            if matches!(op, ArithOp::Add | ArithOp::Sub) && self.starts_add_column() {
-                (Scalar::Null, Some(self.ident_spelling()?))
-            } else {
-                (self.parse_literal()?, None)
-            };
+        let (literal, other) = if matches!(op, ArithOp::Add | ArithOp::Sub | ArithOp::Mul)
+            && self.starts_add_column()
+        {
+            (Scalar::Null, Some(self.ident_spelling()?))
+        } else {
+            (self.parse_literal()?, None)
+        };
         let label = match &other {
             Some(column) => format!("{name} {} {column}", op.spelling()),
             None => format!("{name} {} {}", op.spelling(), eq_literal_label(&literal)),
