@@ -1,0 +1,2 @@
+string_agg(tag, ',')
+v1,héllo,0123456789ABCDEF

@@ -7122,7 +7122,7 @@ fn execute_aggregate(
         }
     }
     let input = aggregate_input(table, aggregate)?;
-    let mut accumulator = Accumulator::start(aggregate.func);
+    let mut accumulator = start_accumulator(aggregate, &input);
     for row in 0..table.row_count() {
         if let Some(filter) = &query.filter {
             if !row_matches(table, row, filter)? {
@@ -7216,7 +7216,7 @@ fn execute_group(
         if let Some(group) = groups.iter_mut().find(|(found, _)| found == &key) {
             absorb(&mut group.1, next, aggregate.func);
         } else {
-            let mut accumulator = Accumulator::start(aggregate.func);
+            let mut accumulator = start_accumulator(aggregate, &input);
             absorb(&mut accumulator, next, aggregate.func);
             groups.push((key, accumulator));
         }
@@ -7273,6 +7273,7 @@ struct AggColumn {
     func: AggFunc,
     /// Symbol texts in key order. `sum` of a symbol adds that key.
     symbol_keys: Vec<Scalar>,
+    delimiter: char,
 }
 
 enum Accumulator {
@@ -7299,6 +7300,11 @@ enum Accumulator {
         sum: f64,
         compensation: f64,
         count: i64,
+    },
+    StringAgg {
+        text: String,
+        delimiter: char,
+        has_value: bool,
     },
 }
 
@@ -7332,6 +7338,11 @@ impl Accumulator {
                 sum: 0.0,
                 compensation: 0.0,
                 count: 0,
+            },
+            AggFunc::StringAgg => Self::StringAgg {
+                text: String::new(),
+                delimiter: '\0',
+                has_value: false,
             },
         }
     }
@@ -7393,6 +7404,15 @@ impl Accumulator {
                     Scalar::Null
                 }
             }
+            Self::StringAgg {
+                text, has_value, ..
+            } => {
+                if *has_value {
+                    Scalar::Text(text.clone())
+                } else {
+                    Scalar::Null
+                }
+            }
         }
     }
 }
@@ -7404,6 +7424,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             tag: qdb_types::TAG_LONG,
             func: aggregate.func,
             symbol_keys: Vec::new(),
+            delimiter: '\0',
         });
     };
     let index = table
@@ -7429,6 +7450,11 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     if aggregate.func == AggFunc::ApproxCountDistinct {
         reject_approx_count_distinct(tag, aggregate)?;
     }
+    let delimiter = if aggregate.func == AggFunc::StringAgg {
+        string_agg_delimiter(table, tag, aggregate)?
+    } else {
+        '\0'
+    };
     if matches!(aggregate.func, AggFunc::Count | AggFunc::Sum) && tag == qdb_types::TAG_BOOLEAN {
         let name = match aggregate.func {
             AggFunc::Sum => "sum",
@@ -7456,6 +7482,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         tag,
         func: aggregate.func,
         symbol_keys,
+        delimiter,
     })
 }
 
@@ -7464,6 +7491,8 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::Count | AggFunc::CountDistinct | AggFunc::ApproxCountDistinct => {
             qdb_types::TAG_LONG
         }
+        AggFunc::StringAgg if input.tag == qdb_types::TAG_VARCHAR => qdb_types::TAG_VARCHAR,
+        AggFunc::StringAgg => qdb_types::TAG_STRING,
         AggFunc::Sum if input.tag == qdb_types::TAG_FLOAT => qdb_types::TAG_FLOAT,
         AggFunc::Sum if input.tag == qdb_types::TAG_DOUBLE => qdb_types::TAG_DOUBLE,
         AggFunc::Sum => qdb_types::TAG_LONG,
@@ -7496,6 +7525,7 @@ fn contribution(
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::CountDistinct => Ok(Some(value.clone())),
         AggFunc::ApproxCountDistinct => approx_distinct_value(value, input),
+        AggFunc::StringAgg => Ok(Some(Scalar::Text(scalar_text(value)))),
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => {
             let Scalar::Boolean(bit) = value else {
                 return Ok(None);
@@ -7572,6 +7602,72 @@ fn scalar_text(value: &Scalar) -> String {
             .map(|unit| unit.to_string())
             .unwrap_or_default(),
         _ => value.to_string(),
+    }
+}
+
+fn start_accumulator(aggregate: &AggregateExpr, input: &AggColumn) -> Accumulator {
+    let mut accumulator = Accumulator::start(aggregate.func);
+    if let Accumulator::StringAgg { delimiter, .. } = &mut accumulator {
+        *delimiter = input.delimiter;
+    }
+    accumulator
+}
+
+fn string_agg_delimiter(table: &Table, tag: i32, aggregate: &AggregateExpr) -> Result<char, Error> {
+    if let Some(column) = &aggregate.separator_column {
+        let other = table
+            .column_index(column)
+            .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
+        let other_tag = table.meta.columns[other].tag;
+        return Err(Error::new(format!(
+            "there is no matching function `string_agg` with the argument types: ({}, {})",
+            qdb_types::type_name(tag),
+            qdb_types::type_name(other_tag)
+        )));
+    }
+    if let Some(more) = &aggregate.separator_more {
+        let second = aggregate
+            .separator
+            .as_ref()
+            .map(separator_type_name)
+            .unwrap_or("CHAR");
+        return Err(Error::new(format!(
+            "there is no matching function `string_agg` with the argument types: ({}, {second}, {})",
+            qdb_types::type_name(tag),
+            separator_type_name(more)
+        )));
+    }
+    let Some(separator) = &aggregate.separator else {
+        return Err(Error::new(format!(
+            "there is no matching function `string_agg` with the argument types: ({})",
+            qdb_types::type_name(tag)
+        )));
+    };
+    let second = separator_type_name(separator);
+    let supported = matches!(
+        tag,
+        qdb_types::TAG_STRING
+            | qdb_types::TAG_VARCHAR
+            | qdb_types::TAG_SYMBOL
+            | qdb_types::TAG_CHAR
+    );
+    if !supported || second != "CHAR" {
+        return Err(Error::new(format!(
+            "there is no matching function `string_agg` with the argument types: ({}, {second})",
+            qdb_types::type_name(tag)
+        )));
+    }
+    Ok(match separator {
+        Scalar::Text(text) => text.chars().next().unwrap_or('\0'),
+        _ => '\0',
+    })
+}
+
+fn separator_type_name(value: &Scalar) -> &'static str {
+    match value {
+        Scalar::Null => "CHAR",
+        Scalar::Text(text) if text.chars().count() <= 1 => "CHAR",
+        _ => "STRING",
     }
 }
 
@@ -7866,6 +7962,20 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             }
             *sum = total;
             *count += 1;
+        }
+        Accumulator::StringAgg {
+            text,
+            delimiter,
+            has_value,
+        } => {
+            let Scalar::Text(piece) = next else {
+                return;
+            };
+            if *has_value {
+                text.push(*delimiter);
+            }
+            text.push_str(&piece);
+            *has_value = true;
         }
         Accumulator::Value(current) => match current {
             None => *current = Some(next),
@@ -19339,6 +19449,188 @@ mod tests {
             err.message.contains(
                 "there is no matching function `approx_count_distinct` with the argument types: (LONG, INT, INT)"
             ),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn string_agg_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT string_agg(note, ',') FROM sensors",
+                "expected/sa_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(tag, ',') FROM sensors",
+                "expected/sa_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(location, ',') FROM sensors",
+                "expected/sa_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(ch, ',') FROM sensors",
+                "expected/sa_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(note, ',') FROM sensors WHERE id = 1",
+                "expected/sa_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(note, ',') FROM sensors WHERE id > 100",
+                "expected/sa_none.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(note, ',') FROM sensors WHERE id = -1",
+                "expected/sa_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(note, ',') FROM sensors WHERE note = ''",
+                "expected/sa_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT STRING_AGG(note, ',') FROM sensors",
+                "expected/sa_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(note, ',') FROM sensors LIMIT 0",
+                "expected/sa_lim0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(note, ',') FROM sensors GROUP BY location ORDER BY location",
+                "expected/sa_grp.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(note, '|') FROM sensors",
+                "expected/sa_pipe.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(note, 'β') FROM sensors",
+                "expected/sa_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(note, '') FROM sensors",
+                "expected/sa_nul.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_agg(note, null) FROM sensors",
+                "expected/sa_nullsep.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT string_agg(note, ',') FROM days",
+                "expected/sa_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT string_agg(note, ',') FROM days GROUP BY location ORDER BY location",
+                "expected/sa_days_grp.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT string_agg() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `string_agg` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_agg(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_agg` with the argument types: (STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_agg(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_agg` with the argument types: (LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_agg(id, ',') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_agg` with the argument types: (LONG, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_agg(ok, ',') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_agg` with the argument types: (BOOLEAN, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_agg(reading, ',') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_agg` with the argument types: (DOUBLE, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_agg(note, 'ab') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_agg` with the argument types: (STRING, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_agg(note, ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_agg` with the argument types: (STRING, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_agg(note, ',', ',') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_agg` with the argument types: (STRING, CHAR, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_agg(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_agg(missing, ',') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );

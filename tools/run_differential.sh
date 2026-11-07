@@ -1596,7 +1596,22 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ap_grp "SELECT approx_count_distinct(id) FROM sensors GROUP BY location ORDER BY location" \
   ap_where "SELECT approx_count_distinct(id) FROM sensors WHERE location = 'madrid'" \
   ap_p14 "SELECT approx_count_distinct(id, 14) FROM sensors" \
-  ap_p4 "SELECT approx_count_distinct(id, 4) FROM sensors"
+  ap_p4 "SELECT approx_count_distinct(id, 4) FROM sensors" \
+  sa_note "SELECT string_agg(note, ',') FROM sensors" \
+  sa_tag "SELECT string_agg(tag, ',') FROM sensors" \
+  sa_location "SELECT string_agg(location, ',') FROM sensors" \
+  sa_ch "SELECT string_agg(ch, ',') FROM sensors" \
+  sa_one "SELECT string_agg(note, ',') FROM sensors WHERE id = 1" \
+  sa_none "SELECT string_agg(note, ',') FROM sensors WHERE id > 100" \
+  sa_neg "SELECT string_agg(note, ',') FROM sensors WHERE id = -1" \
+  sa_empty "SELECT string_agg(note, ',') FROM sensors WHERE note = ''" \
+  sa_case "SELECT STRING_AGG(note, ',') FROM sensors" \
+  sa_lim0 "SELECT string_agg(note, ',') FROM sensors LIMIT 0" \
+  sa_grp "SELECT string_agg(note, ',') FROM sensors GROUP BY location ORDER BY location" \
+  sa_pipe "SELECT string_agg(note, '|') FROM sensors" \
+  sa_beta "SELECT string_agg(note, 'β') FROM sensors" \
+  sa_nul "SELECT string_agg(note, '') FROM sensors" \
+  sa_nullsep "SELECT string_agg(note, null) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1772,7 +1787,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ap_days "SELECT approx_count_distinct(id) FROM days" \
   ap_days_grp "SELECT approx_count_distinct(id) FROM days GROUP BY location ORDER BY location" \
   ap_days_loc "SELECT approx_count_distinct(location) FROM days" \
-  ap_days_ts "SELECT approx_count_distinct(ts) FROM days"
+  ap_days_ts "SELECT approx_count_distinct(ts) FROM days" \
+  sa_days "SELECT string_agg(note, ',') FROM days" \
+  sa_days_grp "SELECT string_agg(note, ',') FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3316,6 +3333,21 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id) FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id, 14) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id, 4) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(note, ',') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(tag, ',') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(location, ',') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(ch, ',') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(note, ',') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(note, ',') FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(note, ',') FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(note, ',') FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT STRING_AGG(note, ',') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(note, ',') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(note, ',') FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(note, '|') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(note, 'β') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(note, '') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_agg(note, null) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3490,6 +3522,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT approx_count_distinct(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT approx_count_distinct(location) FROM days"),
     (os.environ["DIFF_H2"], "SELECT approx_count_distinct(ts) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT string_agg(note, ',') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT string_agg(note, ',') FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

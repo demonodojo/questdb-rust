@@ -54,6 +54,7 @@ pub enum AggFunc {
     KSum,
     NSum,
     ApproxCountDistinct,
+    StringAgg,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +68,12 @@ pub struct AggregateExpr {
     pub precision: Option<Scalar>,
     /// A third argument was present.
     pub precision_more: bool,
+    /// Separator literal of `string_agg(col, sep)`.
+    pub separator: Option<Scalar>,
+    /// Second argument of `string_agg` when it names a column.
+    pub separator_column: Option<String>,
+    /// Third argument of `string_agg`, when present.
+    pub separator_more: Option<Scalar>,
 }
 
 /// One grouping column plus one aggregate, in select-list order.
@@ -3032,6 +3039,7 @@ impl<'a> Parser<'a> {
                 | "ksum"
                 | "nsum"
                 | "approx_count_distinct"
+                | "string_agg"
         ) {
             return false;
         }
@@ -3075,6 +3083,7 @@ impl<'a> Parser<'a> {
             "ksum" => AggFunc::KSum,
             "nsum" => AggFunc::NSum,
             "approx_count_distinct" => AggFunc::ApproxCountDistinct,
+            "string_agg" => AggFunc::StringAgg,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3112,6 +3121,55 @@ impl<'a> Parser<'a> {
         let mut precision = None;
         let mut precision_more = false;
         let mut precision_label = None;
+        let mut separator = None;
+        let mut separator_column = None;
+        let mut separator_more = None;
+        let mut separator_label = None;
+        if func == AggFunc::StringAgg && self.peek() == Some(b',') {
+            self.pos += 1;
+            self.skip();
+            let start = self.pos;
+            if self.peek() == Some(b'\'') {
+                separator = Some(Scalar::Text(self.parse_string()?));
+            } else if self.peek().is_some_and(|byte| byte.is_ascii_alphabetic()) {
+                let word = self.ident_spelling()?;
+                if word.eq_ignore_ascii_case("null") {
+                    separator = Some(Scalar::Null);
+                } else {
+                    separator_column = Some(word);
+                }
+            } else {
+                return Err(Error::new(
+                    "unsupported: string_agg separator must be a literal",
+                ));
+            }
+            separator_label = Some(
+                std::str::from_utf8(&self.src[start..self.pos])
+                    .unwrap_or("")
+                    .to_string(),
+            );
+            self.skip();
+            if self.eat(b',') {
+                self.skip();
+                let more_start = self.pos;
+                if self.peek() == Some(b'\'') {
+                    separator_more = Some(Scalar::Text(self.parse_string()?));
+                } else if self.peek().is_some_and(|byte| byte.is_ascii_alphabetic()) {
+                    let word = self.ident_spelling()?;
+                    separator_more = if word.eq_ignore_ascii_case("null") {
+                        Some(Scalar::Null)
+                    } else {
+                        Some(Scalar::Text(word))
+                    };
+                }
+                if self.pos == more_start {
+                    return Err(Error::new(
+                        "unsupported: string_agg separator must be a literal",
+                    ));
+                }
+                self.skip();
+            }
+        }
         if func == AggFunc::ApproxCountDistinct && self.peek() == Some(b',') {
             self.pos += 1;
             self.skip();
@@ -3170,10 +3228,11 @@ impl<'a> Parser<'a> {
                 name.to_ascii_lowercase()
             )));
         }
-        let label = match (&column, &precision_label) {
-            (Some(column), Some(precision)) => format!("{name}({column}, {precision})"),
-            (Some(column), None) => format!("{name}({column})"),
-            (None, _) => format!("{name}()"),
+        let label = match (&column, &precision_label, &separator_label) {
+            (Some(column), Some(precision), _) => format!("{name}({column}, {precision})"),
+            (Some(column), None, Some(separator)) => format!("{name}({column}, {separator})"),
+            (Some(column), None, None) => format!("{name}({column})"),
+            (None, _, _) => format!("{name}()"),
         };
         Ok(AggregateExpr {
             func,
@@ -3181,6 +3240,9 @@ impl<'a> Parser<'a> {
             column,
             precision,
             precision_more,
+            separator,
+            separator_column,
+            separator_more,
         })
     }
 

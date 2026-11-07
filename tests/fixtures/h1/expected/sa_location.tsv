@@ -1,0 +1,2 @@
+string_agg(location, ',')
+madrid,madrid,東京

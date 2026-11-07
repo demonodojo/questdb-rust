@@ -1,0 +1,2 @@
+string_agg(note, ',')
+alpha,,βeta
