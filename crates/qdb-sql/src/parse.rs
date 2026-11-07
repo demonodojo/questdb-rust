@@ -57,6 +57,7 @@ pub enum AggFunc {
     StringAgg,
     CovarPop,
     CovarSamp,
+    Corr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3046,6 +3047,7 @@ impl<'a> Parser<'a> {
                 | "string_agg"
                 | "covar_pop"
                 | "covar_samp"
+                | "corr"
         ) {
             return false;
         }
@@ -3092,6 +3094,7 @@ impl<'a> Parser<'a> {
             "string_agg" => AggFunc::StringAgg,
             "covar_pop" => AggFunc::CovarPop,
             "covar_samp" => AggFunc::CovarSamp,
+            "corr" => AggFunc::Corr,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3211,7 +3214,9 @@ impl<'a> Parser<'a> {
                 self.skip();
             }
         }
-        if matches!(func, AggFunc::CovarPop | AggFunc::CovarSamp) && self.peek() == Some(b',') {
+        if matches!(func, AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr)
+            && self.peek() == Some(b',')
+        {
             self.pos += 1;
             self.skip();
             if !self
@@ -3262,13 +3267,16 @@ impl<'a> Parser<'a> {
                 "function `{fname}` requires arguments: {fname}(DOUBLE)"
             )));
         }
-        if matches!(func, AggFunc::CovarPop | AggFunc::CovarSamp) && column.is_none() {
+        if matches!(func, AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr)
+            && column.is_none()
+        {
             let fname = name.to_ascii_lowercase();
             return Err(Error::new(format!(
                 "function `{fname}` requires arguments: {fname}(DOUBLE, DOUBLE)"
             )));
         }
-        if matches!(func, AggFunc::CovarPop | AggFunc::CovarSamp) && pair.is_none() {
+        if matches!(func, AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr) && pair.is_none()
+        {
             return Err(Error::new(format!(
                 "wrong number of arguments for function `{}`; expected: 2, provided: 1",
                 name.to_ascii_lowercase()

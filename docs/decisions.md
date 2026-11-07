@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — corr()
+
+`corr(y, x)` devuelve la correlación de Pearson como `DOUBLE`: la suma de productos cruzados dividida por la raíz del producto de las dos sumas de cuadrados. Con menos de dos parejas, o con denominador cero, el resultado es NULL. El cociente se recorta a `[-1, 1]`. `corr(reading, score)` es `0.8386278693775346`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — covar_samp()
 
 `covar_samp(y, x)` usa la misma suma de productos cruzados que `covar_pop` y la divide por el número de parejas menos una. Con menos de dos parejas el resultado es NULL. `covar_samp(reading, score)` es `1.0`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `covar_samp(day, id)` imprime `-1.4301E10` en 10.1.0 y `-14301000000.0` en Rust. `covar_samp(id, ts)` en `days` imprime `3.76774999999375E10` y `37677499999.9375`. El grupo `madrid` imprime `7.5355E10` y `75355000000.0`. Esas consultas no se capturan. Se contrastó el resto con `/exec` en `sensors`.

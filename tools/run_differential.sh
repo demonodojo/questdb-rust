@@ -1643,7 +1643,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   cm_lim0 "SELECT covar_samp(reading, score) FROM sensors LIMIT 0" \
   cm_grp "SELECT covar_samp(reading, score) FROM sensors GROUP BY location ORDER BY location" \
   cm_grp_id "SELECT covar_samp(reading, id) FROM sensors GROUP BY location ORDER BY location" \
-  cm_where "SELECT covar_samp(reading, score) FROM sensors WHERE location = 'madrid'"
+  cm_where "SELECT covar_samp(reading, score) FROM sensors WHERE location = 'madrid'" \
+  cr_read "SELECT corr(reading, score) FROM sensors" \
+  cr_id "SELECT corr(reading, id) FROM sensors" \
+  cr_flags "SELECT corr(id, flags) FROM sensors" \
+  cr_byte "SELECT corr(b, code) FROM sensors" \
+  cr_score "SELECT corr(score, flags) FROM sensors" \
+  cr_ts "SELECT corr(ts, id) FROM sensors" \
+  cr_day "SELECT corr(day, id) FROM sensors" \
+  cr_code "SELECT corr(flags, code) FROM sensors" \
+  cr_one "SELECT corr(reading, score) FROM sensors WHERE id = 1" \
+  cr_none "SELECT corr(reading, score) FROM sensors WHERE id > 100" \
+  cr_neg "SELECT corr(reading, score) FROM sensors WHERE id = -1" \
+  cr_null "SELECT corr(reading, score) FROM sensors WHERE id = NULL" \
+  cr_case "SELECT CORR(reading, score) FROM sensors" \
+  cr_lim0 "SELECT corr(reading, score) FROM sensors LIMIT 0" \
+  cr_grp "SELECT corr(reading, score) FROM sensors GROUP BY location ORDER BY location" \
+  cr_grp_id "SELECT corr(reading, id) FROM sensors GROUP BY location ORDER BY location" \
+  cr_where "SELECT corr(reading, score) FROM sensors WHERE location = 'madrid'"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1821,7 +1838,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ap_days_loc "SELECT approx_count_distinct(location) FROM days" \
   ap_days_ts "SELECT approx_count_distinct(ts) FROM days" \
   sa_days "SELECT string_agg(note, ',') FROM days" \
-  sa_days_grp "SELECT string_agg(note, ',') FROM days GROUP BY location ORDER BY location"
+  sa_days_grp "SELECT string_agg(note, ',') FROM days GROUP BY location ORDER BY location" \
+  cr_days "SELECT corr(id, ts) FROM days" \
+  cr_days_grp "SELECT corr(id, ts) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3412,6 +3431,23 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT covar_samp(reading, score) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT covar_samp(reading, id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT covar_samp(reading, score) FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT corr(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT corr(reading, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT corr(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT corr(b, code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT corr(score, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT corr(ts, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT corr(day, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT corr(flags, code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT corr(reading, score) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT corr(reading, score) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT corr(reading, score) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT corr(reading, score) FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT CORR(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT corr(reading, score) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT corr(reading, score) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT corr(reading, id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT corr(reading, score) FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3588,6 +3624,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT approx_count_distinct(ts) FROM days"),
     (os.environ["DIFF_H2"], "SELECT string_agg(note, ',') FROM days"),
     (os.environ["DIFF_H2"], "SELECT string_agg(note, ',') FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT corr(id, ts) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT corr(id, ts) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

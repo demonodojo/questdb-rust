@@ -7310,6 +7310,14 @@ enum Accumulator {
         count: i64,
         population: bool,
     },
+    Corr {
+        mean_y: f64,
+        sum_y: f64,
+        mean_x: f64,
+        sum_x: f64,
+        sum_xy: f64,
+        count: i64,
+    },
 }
 
 impl Accumulator {
@@ -7354,6 +7362,14 @@ impl Accumulator {
                 sum_xy: 0.0,
                 count: 0,
                 population: func == AggFunc::CovarPop,
+            },
+            AggFunc::Corr => Self::Corr {
+                mean_y: 0.0,
+                sum_y: 0.0,
+                mean_x: 0.0,
+                sum_x: 0.0,
+                sum_xy: 0.0,
+                count: 0,
             },
         }
     }
@@ -7442,6 +7458,13 @@ impl Accumulator {
                     Scalar::Null
                 }
             }
+            Self::Corr {
+                sum_y,
+                sum_x,
+                sum_xy,
+                count,
+                ..
+            } => corr_result(*sum_xy, *sum_y, *sum_x, *count),
         }
     }
 }
@@ -7486,8 +7509,10 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     } else {
         '\0'
     };
-    let (pair_index, pair_tag) = if matches!(aggregate.func, AggFunc::CovarPop | AggFunc::CovarSamp)
-    {
+    let (pair_index, pair_tag) = if matches!(
+        aggregate.func,
+        AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr
+    ) {
         covar_pair(table, tag, aggregate)?
     } else {
         (None, qdb_types::TAG_DOUBLE)
@@ -7543,7 +7568,8 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::KSum
         | AggFunc::NSum
         | AggFunc::CovarPop
-        | AggFunc::CovarSamp => qdb_types::TAG_DOUBLE,
+        | AggFunc::CovarSamp
+        | AggFunc::Corr => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
@@ -7582,7 +7608,7 @@ fn contribution(
         | AggFunc::StdDevPop
         | AggFunc::KSum
         | AggFunc::NSum => stddev_addend(value, input),
-        AggFunc::CovarPop | AggFunc::CovarSamp => Ok(None),
+        AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr => Ok(None),
     }
 }
 
@@ -7653,7 +7679,10 @@ fn feed(
     row: usize,
     input: &AggColumn,
 ) -> Result<(), Error> {
-    if matches!(input.func, AggFunc::CovarPop | AggFunc::CovarSamp) {
+    if matches!(
+        input.func,
+        AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr
+    ) {
         let y_index = input
             .index
             .ok_or_else(|| Error::new("internal: covar column"))?;
@@ -7663,7 +7692,11 @@ fn feed(
         let y = covar_value(&columns[y_index][row], input.tag)?;
         let x = covar_value(&columns[x_index][row], input.pair_tag)?;
         if let (Some(y), Some(x)) = (y, x) {
-            update_covar(accumulator, y, x);
+            if input.func == AggFunc::Corr {
+                update_corr(accumulator, y, x);
+            } else {
+                update_covar(accumulator, y, x);
+            }
         }
         return Ok(());
     }
@@ -7769,6 +7802,50 @@ fn update_covar(accumulator: &mut Accumulator, y: f64, x: f64) {
     *mean_y += (y - *mean_y) / (*count as f64);
     *mean_x += (x - *mean_x) / (*count as f64);
     *sum_xy += (y - old_mean_y) * (x - *mean_x);
+}
+
+fn update_corr(accumulator: &mut Accumulator, y: f64, x: f64) {
+    let Accumulator::Corr {
+        mean_y,
+        sum_y,
+        mean_x,
+        sum_x,
+        sum_xy,
+        count,
+    } = accumulator
+    else {
+        return;
+    };
+    *count += 1;
+    let old_mean_y = *mean_y;
+    *mean_y += (y - *mean_y) / (*count as f64);
+    *sum_y += (y - *mean_y) * (y - old_mean_y);
+    let old_mean_x = *mean_x;
+    *mean_x += (x - *mean_x) / (*count as f64);
+    *sum_x += (x - *mean_x) * (x - old_mean_x);
+    *sum_xy += (y - old_mean_y) * (x - *mean_x);
+}
+
+fn corr_result(sum_xy: f64, sum_y: f64, sum_x: f64, count: i64) -> Scalar {
+    if count <= 1 {
+        return Scalar::Null;
+    }
+    let prod = sum_y * sum_x;
+    let split = !prod.is_finite() || (prod == 0.0 && sum_y != 0.0 && sum_x != 0.0);
+    let denom = if split {
+        sum_y.sqrt() * sum_x.sqrt()
+    } else {
+        prod.sqrt()
+    };
+    if denom == 0.0 {
+        return Scalar::Null;
+    }
+    let result = (sum_xy / denom).clamp(-1.0, 1.0);
+    if result.is_finite() {
+        Scalar::Double(result)
+    } else {
+        Scalar::Null
+    }
 }
 
 fn start_accumulator(aggregate: &AggregateExpr, input: &AggColumn) -> Accumulator {
@@ -8143,7 +8220,7 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             text.push_str(&piece);
             *has_value = true;
         }
-        Accumulator::Covar { .. } => {}
+        Accumulator::Covar { .. } | Accumulator::Corr { .. } => {}
         Accumulator::Value(current) => match current {
             None => *current = Some(next),
             Some(kept) => {
@@ -20126,6 +20203,198 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT covar_samp(ch, reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn corr_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT corr(reading, score) FROM sensors",
+                "expected/cr_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(reading, id) FROM sensors",
+                "expected/cr_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(id, flags) FROM sensors",
+                "expected/cr_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(b, code) FROM sensors",
+                "expected/cr_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(score, flags) FROM sensors",
+                "expected/cr_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(ts, id) FROM sensors",
+                "expected/cr_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(day, id) FROM sensors",
+                "expected/cr_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(flags, code) FROM sensors",
+                "expected/cr_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(reading, score) FROM sensors WHERE id = 1",
+                "expected/cr_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(reading, score) FROM sensors WHERE id > 100",
+                "expected/cr_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(reading, score) FROM sensors WHERE id = -1",
+                "expected/cr_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(reading, score) FROM sensors WHERE id = NULL",
+                "expected/cr_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT CORR(reading, score) FROM sensors",
+                "expected/cr_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(reading, score) FROM sensors LIMIT 0",
+                "expected/cr_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(reading, score) FROM sensors GROUP BY location ORDER BY location",
+                "expected/cr_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(reading, id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/cr_grp_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT corr(reading, score) FROM sensors WHERE location = 'madrid'",
+                "expected/cr_where.tsv",
+            ),
+            (
+                &days,
+                "SELECT corr(id, ts) FROM days",
+                "expected/cr_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT corr(id, ts) FROM days GROUP BY location ORDER BY location",
+                "expected/cr_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT corr() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `corr` requires arguments: corr(DOUBLE, DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT corr(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `corr`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT corr(reading, score, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `corr`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT corr(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT corr(missing, score) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT corr(reading, missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT corr(ok, reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT corr(reading, ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT corr(location, reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: SYMBOL"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT corr(note, reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT corr(tag, score) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT corr(ch, reading) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),
