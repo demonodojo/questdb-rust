@@ -1,8 +1,8 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr, CmpOp,
-    ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, PadExpr, Proj, Query, QuoteIdentExpr,
-    ReplaceExpr, RoundExpr, SelectList, SideExpr, SizePrettyExpr, SplitPartExpr, StartsWithExpr,
-    StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    ConcatArg, Filter, FloorExpr, GroupedSelect, LengthExpr, LowerExpr, PadExpr, Proj, Query,
+    QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SizePrettyExpr, SplitPartExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -194,7 +194,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::QuoteIdent { label, .. }
             | ResolvedProj::SizePretty { label, .. }
             | ResolvedProj::Abs { label, .. }
-            | ResolvedProj::Round { label, .. } => label.clone(),
+            | ResolvedProj::Round { label, .. }
+            | ResolvedProj::Floor { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -304,6 +305,18 @@ enum ResolvedProj {
         input: RoundInput,
         scale: RoundScale,
     },
+    Floor {
+        label: String,
+        input: FloorInput,
+        wide: bool,
+    },
+}
+
+enum FloorInput {
+    Null,
+    Long(i64),
+    Double(f64),
+    Column { index: usize },
 }
 
 enum RoundInput {
@@ -366,7 +379,8 @@ impl ResolvedProj {
             | Self::QuoteIdent { label, .. }
             | Self::SizePretty { label, .. }
             | Self::Abs { label, .. }
-            | Self::Round { label, .. } => Some(label),
+            | Self::Round { label, .. }
+            | Self::Floor { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -376,6 +390,13 @@ impl ResolvedProj {
             Self::Length { .. } | Self::StrPos { .. } => qdb_types::TAG_INT,
             Self::Abs { result_tag, .. } => *result_tag,
             Self::Round { .. } => qdb_types::TAG_DOUBLE,
+            Self::Floor { wide, .. } => {
+                if *wide {
+                    qdb_types::TAG_DOUBLE
+                } else {
+                    qdb_types::TAG_FLOAT
+                }
+            }
             Self::StartsWith { .. } => qdb_types::TAG_BOOLEAN,
             _ => qdb_types::TAG_STRING,
         }
@@ -426,6 +447,72 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::SizePretty(expr) => resolve_size_pretty(table, expr),
         Proj::Abs(expr) => resolve_abs(table, expr),
         Proj::Round(expr) => resolve_round(table, expr),
+        Proj::Floor(expr) => resolve_floor(table, expr),
+    }
+}
+
+fn resolve_floor(table: &Table, expr: &FloorExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        if decimal_floor(table, &expr.args) {
+            return Err(Error::new("unsupported: decimal floor"));
+        }
+        return Err(named_type_error(table, "floor", &expr.args));
+    }
+    let (input, wide) = floor_input(table, &expr.args[0])
+        .map_err(|_| named_type_error(table, "floor", &expr.args))?;
+    Ok(ResolvedProj::Floor {
+        label: expr.label.clone(),
+        input,
+        wide,
+    })
+}
+
+fn decimal_floor(table: &Table, args: &[ConcatArg]) -> bool {
+    args.len() == 2 && args.iter().all(|arg| integer_floor_arg(table, arg))
+}
+
+fn integer_floor_arg(table: &Table, arg: &ConcatArg) -> bool {
+    match arg {
+        ConcatArg::Literal(Scalar::Long(_)) => true,
+        ConcatArg::Column(name) => table.column_index(name).is_some_and(|index| {
+            matches!(
+                table.meta.columns[index].tag,
+                qdb_types::TAG_BYTE
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_LONG
+            )
+        }),
+        _ => false,
+    }
+}
+
+fn floor_input(table: &Table, arg: &ConcatArg) -> Result<(FloorInput, bool), ()> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok((FloorInput::Null, true)),
+        ConcatArg::Literal(Scalar::Long(number)) => {
+            Ok((FloorInput::Long(*number), i32::try_from(*number).is_err()))
+        }
+        ConcatArg::Literal(Scalar::Double(number)) => Ok((FloorInput::Double(*number), true)),
+        ConcatArg::Column(name) => {
+            let index = table.column_index(name).ok_or(())?;
+            let tag = table.meta.columns[index].tag;
+            let wide = matches!(tag, qdb_types::TAG_LONG | qdb_types::TAG_DOUBLE);
+            if wide
+                || matches!(
+                    tag,
+                    qdb_types::TAG_BYTE
+                        | qdb_types::TAG_SHORT
+                        | qdb_types::TAG_INT
+                        | qdb_types::TAG_FLOAT
+                )
+            {
+                Ok((FloorInput::Column { index }, wide))
+            } else {
+                Err(())
+            }
+        }
+        ConcatArg::Literal(_) => Err(()),
     }
 }
 
@@ -1206,6 +1293,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 }
             }
         },
+        ResolvedProj::Floor { input, wide, .. } => floor_value(table, row, input, *wide),
         ResolvedProj::Round { input, scale, .. } => match round_row(table, row, input, scale) {
             Some(value) => Scalar::Double(value),
             None => Scalar::Null,
@@ -1307,6 +1395,49 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Trim { arg, end, .. } => match text_of(table, row, arg) {
             Some(text) => Scalar::Text(trim_ascii_space(&text, *end)),
             None => Scalar::Null,
+        },
+    }
+}
+
+fn floor_value(table: &Table, row: usize, input: &FloorInput, wide: bool) -> Scalar {
+    if wide {
+        return match floor_f64(table, row, input) {
+            Some(value) => Scalar::Double(value.floor()),
+            None => Scalar::Null,
+        };
+    }
+    match floor_f32(table, row, input) {
+        Some(value) => Scalar::Float(value.floor()),
+        None => Scalar::Null,
+    }
+}
+
+fn floor_f64(table: &Table, row: usize, input: &FloorInput) -> Option<f64> {
+    match input {
+        FloorInput::Null => None,
+        FloorInput::Long(number) => Some(*number as f64),
+        FloorInput::Double(number) => Some(*number),
+        FloorInput::Column { index } => match &table.columns[*index][row] {
+            Scalar::Null => None,
+            Scalar::Long(number) => Some(*number as f64),
+            Scalar::Double(number) => Some(*number),
+            _ => None,
+        },
+    }
+}
+
+fn floor_f32(table: &Table, row: usize, input: &FloorInput) -> Option<f32> {
+    match input {
+        FloorInput::Null => None,
+        FloorInput::Long(number) => Some(*number as f32),
+        FloorInput::Double(_) => None,
+        FloorInput::Column { index } => match &table.columns[*index][row] {
+            Scalar::Null => None,
+            Scalar::Byte(number) => Some(f32::from(*number)),
+            Scalar::Short(number) => Some(f32::from(*number)),
+            Scalar::Int(number) => Some(*number as f32),
+            Scalar::Float(number) => Some(*number),
+            _ => None,
         },
     }
 }
@@ -6850,6 +6981,156 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT round(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn floor_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT floor(reading) FROM sensors",
+                "expected/fl_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(score) FROM sensors",
+                "expected/fl_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(id) FROM sensors",
+                "expected/fl_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(flags) FROM sensors",
+                "expected/fl_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(b) FROM sensors",
+                "expected/fl_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(code) FROM sensors",
+                "expected/fl_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(1.5) FROM sensors LIMIT 1",
+                "expected/fl_half.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(-1.5) FROM sensors LIMIT 1",
+                "expected/fl_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(1) FROM sensors LIMIT 1",
+                "expected/fl_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(3000000000) FROM sensors LIMIT 1",
+                "expected/fl_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(null) FROM sensors LIMIT 1",
+                "expected/fl_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT FLOOR(READING) FROM sensors",
+                "expected/fl_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(id) FROM sensors ORDER BY floor(id)",
+                "expected/fl_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(score) FROM sensors ORDER BY floor(score)",
+                "expected/fl_score_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(reading) FROM sensors ORDER BY floor(reading)",
+                "expected/fl_reading_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, floor(id) FROM sensors ORDER BY floor(id)",
+                "expected/fl_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(id) FROM sensors WHERE id = -1",
+                "expected/fl_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT floor(id) FROM sensors LIMIT 0",
+                "expected/fl_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT floor(id) FROM days ORDER BY ts",
+                "expected/fl_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT floor() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("function `floor` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT floor(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `floor` with the argument types: (STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT floor(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `floor` with the argument types: (BOOLEAN)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT floor(reading, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `floor` with the argument types: (DOUBLE, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT floor(id, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("unsupported: decimal floor"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT floor(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

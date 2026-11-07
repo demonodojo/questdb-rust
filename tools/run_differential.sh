@@ -552,7 +552,25 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rd_order "SELECT round(id) FROM sensors ORDER BY round(id)" \
   rd_with_id "SELECT id, round(id) FROM sensors ORDER BY round(id)" \
   rd_where "SELECT round(id) FROM sensors WHERE id = -1" \
-  rd_limit_zero "SELECT round(id) FROM sensors LIMIT 0"
+  rd_limit_zero "SELECT round(id) FROM sensors LIMIT 0" \
+  fl_reading "SELECT floor(reading) FROM sensors" \
+  fl_score "SELECT floor(score) FROM sensors" \
+  fl_id "SELECT floor(id) FROM sensors" \
+  fl_flags "SELECT floor(flags) FROM sensors" \
+  fl_byte "SELECT floor(b) FROM sensors" \
+  fl_code "SELECT floor(code) FROM sensors" \
+  fl_half "SELECT floor(1.5) FROM sensors LIMIT 1" \
+  fl_neg "SELECT floor(-1.5) FROM sensors LIMIT 1" \
+  fl_one "SELECT floor(1) FROM sensors LIMIT 1" \
+  fl_long "SELECT floor(3000000000) FROM sensors LIMIT 1" \
+  fl_null "SELECT floor(null) FROM sensors LIMIT 1" \
+  fl_case "SELECT FLOOR(READING) FROM sensors" \
+  fl_order "SELECT floor(id) FROM sensors ORDER BY floor(id)" \
+  fl_score_order "SELECT floor(score) FROM sensors ORDER BY floor(score)" \
+  fl_reading_order "SELECT floor(reading) FROM sensors ORDER BY floor(reading)" \
+  fl_with_id "SELECT id, floor(id) FROM sensors ORDER BY floor(id)" \
+  fl_where "SELECT floor(id) FROM sensors WHERE id = -1" \
+  fl_limit_zero "SELECT floor(id) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -648,7 +666,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   lb_note "SELECT length_bytes(note) FROM days" \
   sz_id "SELECT size_pretty(id) FROM days ORDER BY ts" \
   abs_id "SELECT abs(id) FROM days ORDER BY ts" \
-  rd_id "SELECT round(id) FROM days ORDER BY ts"
+  rd_id "SELECT round(id) FROM days ORDER BY ts" \
+  fl_id "SELECT floor(id) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1148,6 +1167,24 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, round(id) FROM sensors ORDER BY round(id)"),
     (os.environ["DIFF_H1"], "SELECT round(id) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT round(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT floor(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT floor(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT floor(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT floor(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT floor(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT floor(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT floor(1.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT floor(-1.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT floor(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT floor(3000000000) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT floor(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT FLOOR(READING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT floor(id) FROM sensors ORDER BY floor(id)"),
+    (os.environ["DIFF_H1"], "SELECT floor(score) FROM sensors ORDER BY floor(score)"),
+    (os.environ["DIFF_H1"], "SELECT floor(reading) FROM sensors ORDER BY floor(reading)"),
+    (os.environ["DIFF_H1"], "SELECT id, floor(id) FROM sensors ORDER BY floor(id)"),
+    (os.environ["DIFF_H1"], "SELECT floor(id) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT floor(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1242,6 +1279,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT size_pretty(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT abs(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT round(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT floor(id) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

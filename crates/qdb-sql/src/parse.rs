@@ -98,6 +98,7 @@ pub enum Proj {
     SizePretty(SizePrettyExpr),
     Abs(AbsExpr),
     Round(RoundExpr),
+    Floor(FloorExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,6 +215,13 @@ pub struct RoundExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `floor(number)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FloorExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -297,6 +305,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_abs()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
+            } else if parser.starts_floor_call() {
+                parser.parse_floor()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -365,6 +375,7 @@ enum SelectPiece {
     SizePretty(SizePrettyExpr),
     Abs(AbsExpr),
     Round(RoundExpr),
+    Floor(FloorExpr),
 }
 
 struct Parser<'a> {
@@ -489,6 +500,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Abs(self.parse_abs()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
+            } else if self.starts_floor_call() {
+                pieces.push(SelectPiece::Floor(self.parse_floor()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -520,6 +533,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::SizePretty(_)
                     | SelectPiece::Abs(_)
                     | SelectPiece::Round(_)
+                    | SelectPiece::Floor(_)
             )
         });
         if counts > 0 && projected {
@@ -550,6 +564,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::SizePretty(expr) => items.push(Proj::SizePretty(expr)),
                     SelectPiece::Abs(expr) => items.push(Proj::Abs(expr)),
                     SelectPiece::Round(expr) => items.push(Proj::Round(expr)),
+                    SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -603,7 +618,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::QuoteIdent(_)
                 | SelectPiece::SizePretty(_)
                 | SelectPiece::Abs(_)
-                | SelectPiece::Round(_) => {
+                | SelectPiece::Round(_)
+                | SelectPiece::Floor(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -646,6 +662,25 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_floor_call(&self) -> bool {
+        self.starts_named_call("floor")
+    }
+
+    fn parse_floor(&mut self) -> Result<FloorExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_round_call(&self) -> bool {
