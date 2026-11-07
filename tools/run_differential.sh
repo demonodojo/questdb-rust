@@ -2357,7 +2357,13 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   bp_none "SELECT spread_bps(reading, score) FROM sensors WHERE id > 100" \
   bp_int "SELECT spread_bps(flags, id) FROM sensors WHERE id = 1" \
   bp_case "SELECT SPREAD_BPS(reading, score) FROM sensors WHERE id = 1" \
-  bp_lim0 "SELECT spread_bps(reading, score) FROM sensors LIMIT 0"
+  bp_lim0 "SELECT spread_bps(reading, score) FROM sensors LIMIT 0" \
+  wm_all "SELECT wmid(flags, reading, score, id) FROM sensors" \
+  wm_one "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id = 1" \
+  wm_null "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id = 2" \
+  wm_none "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id > 100" \
+  wm_case "SELECT WMID(flags, reading, score, id) FROM sensors WHERE id = 1" \
+  wm_lim0 "SELECT wmid(flags, reading, score, id) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2632,7 +2638,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   sb_days "SELECT spread(id, id) FROM days" \
   sb_days_one "SELECT spread(id, id) FROM days WHERE id = 1" \
   bp_days "SELECT spread_bps(id, id) FROM days" \
-  bp_days_one "SELECT spread_bps(id, id) FROM days WHERE id = 1"
+  bp_days_one "SELECT spread_bps(id, id) FROM days WHERE id = 1" \
+  wm_days "SELECT wmid(id, id, id, id) FROM days" \
+  wm_days_one "SELECT wmid(id, id, id, id) FROM days WHERE id = 1"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4937,6 +4945,12 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT spread_bps(flags, id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT SPREAD_BPS(reading, score) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT spread_bps(reading, score) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT wmid(flags, reading, score, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT WMID(flags, reading, score, id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT wmid(flags, reading, score, id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -5210,6 +5224,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT spread(id, id) FROM days WHERE id = 1"),
     (os.environ["DIFF_H2"], "SELECT spread_bps(id, id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT spread_bps(id, id) FROM days WHERE id = 1"),
+    (os.environ["DIFF_H2"], "SELECT wmid(id, id, id, id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT wmid(id, id, id, id) FROM days WHERE id = 1"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -55,7 +55,8 @@
 //! the rows that `LIMIT` keeps. `mid` returns the mean of two numbers as
 //! `DOUBLE`. A null argument makes the result null. `spread` returns the
 //! second number minus the first, also as `DOUBLE`. `spread_bps` divides that
-//! spread by the midpoint and scales it to basis points. `strpos` and `position` return the 1-based index of the first
+//! spread by the midpoint and scales it to basis points. `wmid` returns the
+//! size-weighted midpoint of a bid and an ask as `DOUBLE`. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
 //! widest numeric argument and skips nulls. `to_str` formats a timestamp with a

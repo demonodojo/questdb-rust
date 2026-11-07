@@ -11,7 +11,7 @@ use crate::parse::{
     SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr,
     SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
     TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr,
-    ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -284,6 +284,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Mid { label, .. }
             | ResolvedProj::Spread { label, .. }
             | ResolvedProj::SpreadBps { label, .. }
+            | ResolvedProj::Wmid { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
             | ResolvedProj::Exp { label, .. }
@@ -668,6 +669,13 @@ enum ResolvedProj {
         bid: SqrtInput,
         ask: SqrtInput,
     },
+    Wmid {
+        label: String,
+        bid_size: SqrtInput,
+        bid_price: SqrtInput,
+        ask_price: SqrtInput,
+        ask_size: SqrtInput,
+    },
     Ln {
         label: String,
         input: SqrtInput,
@@ -842,6 +850,7 @@ impl ResolvedProj {
             | Self::Mid { label, .. }
             | Self::Spread { label, .. }
             | Self::SpreadBps { label, .. }
+            | Self::Wmid { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
             | Self::Exp { label, .. }
@@ -905,6 +914,7 @@ impl ResolvedProj {
             | Self::Mid { .. }
             | Self::Spread { .. }
             | Self::SpreadBps { .. }
+            | Self::Wmid { .. }
             | Self::Ln { .. }
             | Self::Log { .. }
             | Self::Exp { .. }
@@ -1031,6 +1041,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Mid(expr) => resolve_mid(table, expr),
         Proj::Spread(expr) => resolve_spread(table, expr),
         Proj::SpreadBps(expr) => resolve_spread_bps(table, expr),
+        Proj::Wmid(expr) => resolve_wmid(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
         Proj::Exp(expr) => resolve_exp(table, expr),
@@ -1507,6 +1518,56 @@ fn spread_value(table: &Table, row: usize, bid: &SqrtInput, ask: &SqrtInput) -> 
         return Scalar::Null;
     }
     Scalar::Double(ask - bid)
+}
+
+fn resolve_wmid(table: &Table, expr: &WmidExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 4 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `wmid`; expected: 4, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::Wmid {
+        label: expr.label.clone(),
+        bid_size: power_input(table, &expr.args[0])?,
+        bid_price: power_input(table, &expr.args[1])?,
+        ask_price: power_input(table, &expr.args[2])?,
+        ask_size: power_input(table, &expr.args[3])?,
+    })
+}
+
+fn wmid_number(table: &Table, row: usize, input: &SqrtInput) -> Option<f64> {
+    let number = sqrt_number(table, row, input)?;
+    if number.is_nan() {
+        None
+    } else {
+        Some(number)
+    }
+}
+
+fn wmid_value(
+    table: &Table,
+    row: usize,
+    bid_size: &SqrtInput,
+    bid_price: &SqrtInput,
+    ask_price: &SqrtInput,
+    ask_size: &SqrtInput,
+) -> Scalar {
+    let (Some(bid_size), Some(bid_price), Some(ask_price), Some(ask_size)) = (
+        wmid_number(table, row, bid_size),
+        wmid_number(table, row, bid_price),
+        wmid_number(table, row, ask_price),
+        wmid_number(table, row, ask_size),
+    ) else {
+        return Scalar::Null;
+    };
+    let imbalance = bid_size / (bid_size + ask_size);
+    let value = ask_price * imbalance + bid_price * (1.0 - imbalance);
+    if value.is_finite() {
+        Scalar::Double(value)
+    } else {
+        Scalar::Null
+    }
 }
 
 fn resolve_spread_bps(table: &Table, expr: &SpreadBpsExpr) -> Result<ResolvedProj, Error> {
@@ -6740,6 +6801,13 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Mid { bid, ask, .. } => mid_value(table, row, bid, ask),
         ResolvedProj::Spread { bid, ask, .. } => spread_value(table, row, bid, ask),
         ResolvedProj::SpreadBps { bid, ask, .. } => spread_bps_value(table, row, bid, ask),
+        ResolvedProj::Wmid {
+            bid_size,
+            bid_price,
+            ask_price,
+            ask_size,
+            ..
+        } => wmid_value(table, row, bid_size, bid_price, ask_price, ask_size),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15114,6 +15182,108 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn wmid_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT wmid(flags, reading, score, id) FROM sensors",
+                "expected/wm_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id = 1",
+                "expected/wm_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id = 2",
+                "expected/wm_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id > 100",
+                "expected/wm_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT WMID(flags, reading, score, id) FROM sensors WHERE id = 1",
+                "expected/wm_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT wmid(flags, reading, score, id) FROM sensors LIMIT 0",
+                "expected/wm_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT wmid(id, id, id, id) FROM days",
+                "expected/wm_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT wmid(id, id, id, id) FROM days WHERE id = 1",
+                "expected/wm_days_one.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT wmid() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `wmid` requires arguments: wmid(DOUBLE, DOUBLE, DOUBLE, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT wmid(flags, reading, score) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `wmid`; expected: 4, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT wmid(flags, reading, score, id, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `wmid`; expected: 4, provided: 5"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT wmid(note, reading, score, id) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: STRING"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT wmid(missing, reading, score, id) FROM sensors",
+        )
+        .unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
