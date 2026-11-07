@@ -1,7 +1,7 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CeilExpr, CmpOp, ConcatArg, Filter, FloorExpr, GroupedSelect, LengthExpr, LowerExpr, PadExpr,
-    Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SignExpr,
+    PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SignExpr,
     SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd,
     TrimExpr, UpperExpr,
 };
@@ -199,7 +199,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
-            | ResolvedProj::Sqrt { label, .. } => label.clone(),
+            | ResolvedProj::Sqrt { label, .. }
+            | ResolvedProj::Power { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -328,6 +329,11 @@ enum ResolvedProj {
         label: String,
         input: SqrtInput,
     },
+    Power {
+        label: String,
+        base: SqrtInput,
+        exponent: SqrtInput,
+    },
 }
 
 enum SqrtInput {
@@ -416,7 +422,8 @@ impl ResolvedProj {
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
-            | Self::Sqrt { label, .. } => Some(label),
+            | Self::Sqrt { label, .. }
+            | Self::Power { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -427,7 +434,7 @@ impl ResolvedProj {
             Self::Abs { result_tag, .. } => *result_tag,
             Self::Round { .. } => qdb_types::TAG_DOUBLE,
             Self::Sign { result_tag, .. } => *result_tag,
-            Self::Sqrt { .. } => qdb_types::TAG_DOUBLE,
+            Self::Sqrt { .. } | Self::Power { .. } => qdb_types::TAG_DOUBLE,
             Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
                 if *wide {
                     qdb_types::TAG_DOUBLE
@@ -489,6 +496,60 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
         Proj::Sqrt(expr) => resolve_sqrt(table, expr),
+        Proj::Power(expr) => resolve_power(table, expr),
+    }
+}
+
+fn resolve_power(table: &Table, expr: &PowerExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `power`; expected: 2, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let base = power_input(table, &expr.args[0])?;
+    let exponent = power_input(table, &expr.args[1])?;
+    Ok(ResolvedProj::Power {
+        label: expr.label.clone(),
+        base,
+        exponent,
+    })
+}
+
+fn power_input(table: &Table, arg: &ConcatArg) -> Result<SqrtInput, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok(SqrtInput::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(SqrtInput::Long(*number)),
+        ConcatArg::Literal(Scalar::Double(number)) => Ok(SqrtInput::Double(*number)),
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            let tag = table.meta.columns[index].tag;
+            if matches!(
+                tag,
+                qdb_types::TAG_BYTE
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_LONG
+                    | qdb_types::TAG_FLOAT
+                    | qdb_types::TAG_DOUBLE
+            ) {
+                Ok(SqrtInput::Column { index })
+            } else {
+                Err(power_type_error(table, arg))
+            }
+        }
+        ConcatArg::Literal(_) => Err(power_type_error(table, arg)),
+    }
+}
+
+fn power_type_error(table: &Table, arg: &ConcatArg) -> Error {
+    match concat_arg_type(table, arg) {
+        Ok(actual) => Error::new(format!(
+            "expression type mismatch, expected: DOUBLE, actual: {actual}"
+        )),
+        Err(err) => err,
     }
 }
 
@@ -1452,6 +1513,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Floor { input, wide, .. } => floor_value(table, row, input, *wide),
         ResolvedProj::Ceil { input, wide, .. } => ceil_value(table, row, input, *wide),
         ResolvedProj::Sign { input, .. } => sign_value(table, row, input),
+        ResolvedProj::Power { base, exponent, .. } => power_value(table, row, base, exponent),
         ResolvedProj::Sqrt { input, .. } => match sqrt_number(table, row, input) {
             Some(value) => {
                 let result = value.sqrt();
@@ -1565,6 +1627,27 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Some(text) => Scalar::Text(trim_ascii_space(&text, *end)),
             None => Scalar::Null,
         },
+    }
+}
+
+fn power_value(table: &Table, row: usize, base: &SqrtInput, exponent: &SqrtInput) -> Scalar {
+    let Some(exponent) = sqrt_number(table, row, exponent) else {
+        return Scalar::Null;
+    };
+    let base = match sqrt_number(table, row, base) {
+        Some(value) => value,
+        None => {
+            if exponent == 0.0 {
+                return Scalar::Double(1.0);
+            }
+            return Scalar::Null;
+        }
+    };
+    let result = base.powf(exponent);
+    if result.is_finite() {
+        Scalar::Double(result)
+    } else {
+        Scalar::Null
     }
 }
 
@@ -7809,6 +7892,172 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT sqrt(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn power_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT power(reading, 2) FROM sensors",
+                "expected/pw_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(score, 2) FROM sensors",
+                "expected/pw_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(id, 2) FROM sensors",
+                "expected/pw_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(flags, 2) FROM sensors",
+                "expected/pw_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(b, 2) FROM sensors",
+                "expected/pw_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(code, 2) FROM sensors",
+                "expected/pw_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(-2, 3) FROM sensors LIMIT 1",
+                "expected/pw_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(4, 0.5) FROM sensors LIMIT 1",
+                "expected/pw_root.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(-2, 0.5) FROM sensors LIMIT 1",
+                "expected/pw_imag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(0, 0) FROM sensors LIMIT 1",
+                "expected/pw_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(0, -1) FROM sensors LIMIT 1",
+                "expected/pw_inv.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(-0.0, 1) FROM sensors LIMIT 1",
+                "expected/pw_negzero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(null, 0) FROM sensors LIMIT 1",
+                "expected/pw_null_base.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(reading, null) FROM sensors",
+                "expected/pw_null_exp.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(reading, id) FROM sensors",
+                "expected/pw_cols.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(reading, flags) FROM sensors",
+                "expected/pw_flags_exp.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT POWER(READING, 2) FROM sensors",
+                "expected/pw_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(id, 2) FROM sensors ORDER BY power(id, 2)",
+                "expected/pw_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, power(id, 2) FROM sensors ORDER BY power(id, 2)",
+                "expected/pw_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(id, 2) FROM sensors WHERE id = -1",
+                "expected/pw_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT power(id, 2) FROM sensors LIMIT 0",
+                "expected/pw_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT power(id, 2) FROM days ORDER BY ts",
+                "expected/pw_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT power() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `power` requires arguments: power(DOUBLE, DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT power(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `power`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT power(id, 1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `power`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT power(ok, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT power(note, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: STRING"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT power(missing, 1) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

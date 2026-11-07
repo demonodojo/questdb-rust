@@ -623,7 +623,28 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sq_reading_order "SELECT sqrt(reading) FROM sensors ORDER BY sqrt(reading)" \
   sq_with_id "SELECT id, sqrt(id) FROM sensors ORDER BY sqrt(id)" \
   sq_where "SELECT sqrt(id) FROM sensors WHERE id = 1" \
-  sq_limit_zero "SELECT sqrt(id) FROM sensors LIMIT 0"
+  sq_limit_zero "SELECT sqrt(id) FROM sensors LIMIT 0" \
+  pw_reading "SELECT power(reading, 2) FROM sensors" \
+  pw_score "SELECT power(score, 2) FROM sensors" \
+  pw_id "SELECT power(id, 2) FROM sensors" \
+  pw_flags "SELECT power(flags, 2) FROM sensors" \
+  pw_byte "SELECT power(b, 2) FROM sensors" \
+  pw_code "SELECT power(code, 2) FROM sensors" \
+  pw_neg "SELECT power(-2, 3) FROM sensors LIMIT 1" \
+  pw_root "SELECT power(4, 0.5) FROM sensors LIMIT 1" \
+  pw_imag "SELECT power(-2, 0.5) FROM sensors LIMIT 1" \
+  pw_zero "SELECT power(0, 0) FROM sensors LIMIT 1" \
+  pw_inv "SELECT power(0, -1) FROM sensors LIMIT 1" \
+  pw_negzero "SELECT power(-0.0, 1) FROM sensors LIMIT 1" \
+  pw_null_base "SELECT power(null, 0) FROM sensors LIMIT 1" \
+  pw_null_exp "SELECT power(reading, null) FROM sensors" \
+  pw_cols "SELECT power(reading, id) FROM sensors" \
+  pw_flags_exp "SELECT power(reading, flags) FROM sensors" \
+  pw_case "SELECT POWER(READING, 2) FROM sensors" \
+  pw_order "SELECT power(id, 2) FROM sensors ORDER BY power(id, 2)" \
+  pw_with_id "SELECT id, power(id, 2) FROM sensors ORDER BY power(id, 2)" \
+  pw_where "SELECT power(id, 2) FROM sensors WHERE id = -1" \
+  pw_limit_zero "SELECT power(id, 2) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -723,7 +744,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   fl_id "SELECT floor(id) FROM days ORDER BY ts" \
   ce_id "SELECT ceil(id) FROM days ORDER BY ts" \
   sg_id "SELECT sign(id) FROM days ORDER BY ts" \
-  sq_id "SELECT sqrt(id) FROM days ORDER BY ts"
+  sq_id "SELECT sqrt(id) FROM days ORDER BY ts" \
+  pw_id "SELECT power(id, 2) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1294,6 +1316,27 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, sqrt(id) FROM sensors ORDER BY sqrt(id)"),
     (os.environ["DIFF_H1"], "SELECT sqrt(id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT sqrt(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT power(reading, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT power(score, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT power(id, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT power(flags, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT power(b, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT power(code, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT power(-2, 3) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT power(4, 0.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT power(-2, 0.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT power(0, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT power(0, -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT power(-0.0, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT power(null, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT power(reading, null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT power(reading, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT power(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT POWER(READING, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT power(id, 2) FROM sensors ORDER BY power(id, 2)"),
+    (os.environ["DIFF_H1"], "SELECT id, power(id, 2) FROM sensors ORDER BY power(id, 2)"),
+    (os.environ["DIFF_H1"], "SELECT power(id, 2) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT power(id, 2) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1392,6 +1435,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT ceil(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT sign(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT sqrt(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT power(id, 2) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

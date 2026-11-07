@@ -1,6 +1,6 @@
 # questdb-rust
 
-Reescritura en curso del motor QuestDB OSS 10.1.0 en Rust. El estado real está en `docs/progress.md`. Hoy lee tablas nativas `PARTITION BY NONE` y `PARTITION BY DAY` y responde un `SELECT` pequeño con `WHERE`, `GROUP BY` de una columna, `ORDER BY`, `LIMIT`, `count()`, `min()`, `max()`, `sum()`, `avg()`, `first()`, `last()`, `count_distinct()`, `concat()`, `length()`, `lower()`, `upper()`, `left()`, `right()`, `substring()`, `trim()`, `ltrim()`, `rtrim()`, `replace()`, `starts_with()`, `strpos()`, `position()`, `split_part()`, `to_lowercase()`, `to_uppercase()`, `lpad()`, `rpad()`, `quote_ident()`, `length_bytes()`, `size_pretty()`, `abs()`, `round()`, `floor()`, `ceil()`, `ceiling()`, `sign()` y `sqrt()`. No es un sustituto de QuestDB.
+Reescritura en curso del motor QuestDB OSS 10.1.0 en Rust. El estado real está en `docs/progress.md`. Hoy lee tablas nativas `PARTITION BY NONE` y `PARTITION BY DAY` y responde un `SELECT` pequeño con `WHERE`, `GROUP BY` de una columna, `ORDER BY`, `LIMIT`, `count()`, `min()`, `max()`, `sum()`, `avg()`, `first()`, `last()`, `count_distinct()`, `concat()`, `length()`, `lower()`, `upper()`, `left()`, `right()`, `substring()`, `trim()`, `ltrim()`, `rtrim()`, `replace()`, `starts_with()`, `strpos()`, `position()`, `split_part()`, `to_lowercase()`, `to_uppercase()`, `lpad()`, `rpad()`, `quote_ident()`, `length_bytes()`, `size_pretty()`, `abs()`, `round()`, `floor()`, `ceil()`, `ceiling()`, `sign()`, `sqrt()` y `power()`. No es un sustituto de QuestDB.
 
 ## Probar el slice
 

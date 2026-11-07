@@ -102,6 +102,7 @@ pub enum Proj {
     Ceil(CeilExpr),
     Sign(SignExpr),
     Sqrt(SqrtExpr),
+    Power(PowerExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,6 +247,13 @@ pub struct SqrtExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `power(base, exponent)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PowerExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -337,6 +345,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_sign()?.label
             } else if parser.starts_sqrt_call() {
                 parser.parse_sqrt()?.label
+            } else if parser.starts_power_call() {
+                parser.parse_power()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -409,6 +419,7 @@ enum SelectPiece {
     Ceil(CeilExpr),
     Sign(SignExpr),
     Sqrt(SqrtExpr),
+    Power(PowerExpr),
 }
 
 struct Parser<'a> {
@@ -541,6 +552,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Sign(self.parse_sign()?));
             } else if self.starts_sqrt_call() {
                 pieces.push(SelectPiece::Sqrt(self.parse_sqrt()?));
+            } else if self.starts_power_call() {
+                pieces.push(SelectPiece::Power(self.parse_power()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -576,6 +589,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
                     | SelectPiece::Sqrt(_)
+                    | SelectPiece::Power(_)
             )
         });
         if counts > 0 && projected {
@@ -610,6 +624,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
                     SelectPiece::Sqrt(expr) => items.push(Proj::Sqrt(expr)),
+                    SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -667,7 +682,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
-                | SelectPiece::Sqrt(_) => {
+                | SelectPiece::Sqrt(_)
+                | SelectPiece::Power(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -710,6 +726,24 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_power_call(&self) -> bool {
+        self.starts_named_call("power")
+    }
+
+    fn parse_power(&mut self) -> Result<PowerExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `power` requires arguments: power(DOUBLE, DOUBLE)".to_string(),
+            ));
+        }
+        Ok(PowerExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_sqrt_call(&self) -> bool {
