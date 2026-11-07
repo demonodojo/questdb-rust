@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — disyunción
+
+`value or other` devuelve si una columna booleana o la otra es verdadera. El encabezado es `ok or ok`. El resultado es `BOOLEAN` y no es nulo: un nulo cuenta como falso. `ok or ok` es `true`, `false`, `true` y `false`. `ok or false` y `ok or null` repiten la columna. `ok or true` es `true` en las cuatro filas. En `days` no hay columna `ok`. Se contrastó con `/exec` en `sensors`.
+
 ## 2026-11-07 — conjunción
 
 `value and other` devuelve si una columna booleana y otra booleana son las dos verdaderas. El encabezado es `ok and ok`. El resultado es `BOOLEAN` y no es nulo: un nulo cuenta como falso. `ok and ok` es `true`, `false`, `true` y `false`. `ok and false` y `ok and null` son `false` en las cuatro filas. `ok and true` repite la columna. En `days` no hay columna `ok`. Se contrastó con `/exec` en `sensors`.

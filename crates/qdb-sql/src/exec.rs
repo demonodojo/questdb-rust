@@ -1,8 +1,8 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AddExpr, AggFunc,
     AggregateExpr, AggregateExtra, AndExpr, AndRight, ArithOp, AsinExpr, Atan2Expr, AtanExpr,
-    BarExpr, BetweenExpr, BitNotExpr, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr,
-    CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr,
+    BarExpr, BetweenExpr, BitNotExpr, BoolOp, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg,
+    CosExpr, CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr,
     DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter,
     FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr,
     IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
@@ -722,6 +722,7 @@ enum ResolvedProj {
         label: String,
         left: usize,
         right: ResolvedAnd,
+        op: BoolOp,
     },
     Ln {
         label: String,
@@ -1761,9 +1762,10 @@ fn resolve_and(table: &Table, expr: &AndExpr) -> Result<ResolvedProj, Error> {
     let Some(left) = table.column_index(&expr.left) else {
         return Err(Error::new(format!("Invalid column: {}", expr.left)));
     };
+    let spelling = expr.op.spelling();
     if table.meta.columns[left].tag != qdb_types::TAG_BOOLEAN {
         return Err(Error::new(format!(
-            "there is no matching operator `and` with the argument type: {}",
+            "there is no matching operator `{spelling}` with the argument type: {}",
             qdb_types::type_name(table.meta.columns[left].tag)
         )));
     }
@@ -1772,9 +1774,9 @@ fn resolve_and(table: &Table, expr: &AndExpr) -> Result<ResolvedProj, Error> {
             ResolvedAnd::Literal(value.clone())
         }
         AndRight::Literal(_) => {
-            return Err(Error::new(
-                "there is no matching operator `and` with the argument type: STRING".to_string(),
-            ));
+            return Err(Error::new(format!(
+                "there is no matching operator `{spelling}` with the argument type: STRING"
+            )));
         }
         AndRight::Column(name) => {
             let Some(index) = table.column_index(name) else {
@@ -1782,7 +1784,7 @@ fn resolve_and(table: &Table, expr: &AndExpr) -> Result<ResolvedProj, Error> {
             };
             if table.meta.columns[index].tag != qdb_types::TAG_BOOLEAN {
                 return Err(Error::new(format!(
-                    "there is no matching operator `and` with the argument type: {}",
+                    "there is no matching operator `{spelling}` with the argument type: {}",
                     qdb_types::type_name(table.meta.columns[index].tag)
                 )));
             }
@@ -1793,16 +1795,21 @@ fn resolve_and(table: &Table, expr: &AndExpr) -> Result<ResolvedProj, Error> {
         label: expr.label.clone(),
         left,
         right,
+        op: expr.op,
     })
 }
 
-fn and_value(table: &Table, row: usize, left: usize, right: &ResolvedAnd) -> Scalar {
+fn and_value(table: &Table, row: usize, left: usize, right: &ResolvedAnd, op: BoolOp) -> Scalar {
     let left_true = matches!(table.columns[left][row], Scalar::Boolean(true));
     let right_true = match right {
         ResolvedAnd::Literal(value) => matches!(value, Scalar::Boolean(true)),
         ResolvedAnd::Column(index) => matches!(table.columns[*index][row], Scalar::Boolean(true)),
     };
-    Scalar::Boolean(left_true && right_true)
+    let result = match op {
+        BoolOp::And => left_true && right_true,
+        BoolOp::Or => left_true || right_true,
+    };
+    Scalar::Boolean(result)
 }
 
 fn resolve_bit_not(table: &Table, expr: &BitNotExpr) -> Result<ResolvedProj, Error> {
@@ -7436,7 +7443,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::BitNot { index, .. } => {
             bit_not_value(table, row, *index).unwrap_or(Scalar::Null)
         }
-        ResolvedProj::And { left, right, .. } => and_value(table, row, *left, right),
+        ResolvedProj::And {
+            left, right, op, ..
+        } => and_value(table, row, *left, right, *op),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15814,6 +15823,60 @@ mod tests {
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn dj_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT ok or ok FROM sensors",
+                "expected/dj_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok or ok FROM sensors WHERE id = 1",
+                "expected/dj_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok or ok FROM sensors WHERE id = 2",
+                "expected/dj_two.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok or ok FROM sensors WHERE id > 100",
+                "expected/dj_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok or false FROM sensors",
+                "expected/dj_false.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok or null FROM sensors",
+                "expected/dj_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok or true FROM sensors",
+                "expected/dj_true.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&days, "SELECT ok or ok FROM days").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: ok"),
             "{}",
             err.message
         );

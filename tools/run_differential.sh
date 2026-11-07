@@ -2500,7 +2500,14 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   nd_none "SELECT ok and ok FROM sensors WHERE id > 100" \
   nd_false "SELECT ok and false FROM sensors" \
   nd_null "SELECT ok and null FROM sensors" \
-  nd_true "SELECT ok and true FROM sensors"
+  nd_true "SELECT ok and true FROM sensors" \
+  dj_all "SELECT ok or ok FROM sensors" \
+  dj_one "SELECT ok or ok FROM sensors WHERE id = 1" \
+  dj_two "SELECT ok or ok FROM sensors WHERE id = 2" \
+  dj_none "SELECT ok or ok FROM sensors WHERE id > 100" \
+  dj_false "SELECT ok or false FROM sensors" \
+  dj_null "SELECT ok or null FROM sensors" \
+  dj_true "SELECT ok or true FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -5247,6 +5254,13 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT ok and false FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT ok and null FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT ok and true FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ok or ok FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ok or ok FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT ok or ok FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT ok or ok FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT ok or false FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ok or null FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ok or true FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),

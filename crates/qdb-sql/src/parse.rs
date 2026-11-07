@@ -869,6 +869,22 @@ impl ArithOp {
     }
 }
 
+/// `and` or `or` of a boolean column and a column or literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoolOp {
+    And,
+    Or,
+}
+
+impl BoolOp {
+    pub fn spelling(self) -> &'static str {
+        match self {
+            Self::And => "and",
+            Self::Or => "or",
+        }
+    }
+}
+
 /// The right side of `value and other`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AndRight {
@@ -876,12 +892,13 @@ pub enum AndRight {
     Column(String),
 }
 
-/// `value and other` is the boolean conjunction of a column and a column or literal.
+/// `value and other` or `value or other` joins a boolean column with a column or literal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AndExpr {
     pub label: String,
     pub left: String,
     pub right: AndRight,
+    pub op: BoolOp,
 }
 
 /// `~value` is the bitwise complement of one column. The header is `~(value)`.
@@ -1615,7 +1632,9 @@ impl<'a> Parser<'a> {
                 if self.eat_keyword("in") {
                     pieces.push(SelectPiece::InList(self.parse_in_list(name)?));
                 } else if self.eat_keyword("and") {
-                    pieces.push(SelectPiece::And(self.parse_and(name)?));
+                    pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::And)?));
+                } else if self.eat_keyword("or") {
+                    pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::Or)?));
                 } else if self.starts_eq_or_ne() {
                     pieces.push(SelectPiece::Eq(self.parse_eq(name)?));
                 } else if self.starts_add() {
@@ -2163,16 +2182,17 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_and(&mut self, left: String) -> Result<AndExpr, Error> {
+    fn parse_and(&mut self, left: String, op: BoolOp) -> Result<AndExpr, Error> {
         self.skip();
         let ident = matches!(
             self.peek(),
             Some(byte) if byte.is_ascii_alphabetic() || byte == b'_'
         );
         if !ident {
-            return Err(Error::new(
-                "unsupported: expected boolean after and".to_string(),
-            ));
+            return Err(Error::new(format!(
+                "unsupported: expected boolean after {}",
+                op.spelling()
+            )));
         }
         let spelling = self.ident_spelling()?;
         let right = match spelling.to_ascii_lowercase().as_str() {
@@ -2189,9 +2209,10 @@ impl<'a> Parser<'a> {
             AndRight::Literal(_) => "null".to_string(),
         };
         Ok(AndExpr {
-            label: format!("{left} and {right_label}"),
+            label: format!("{left} {} {right_label}", op.spelling()),
             left,
             right,
+            op,
         })
     }
 
