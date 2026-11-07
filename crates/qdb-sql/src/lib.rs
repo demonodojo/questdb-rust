@@ -41,7 +41,8 @@
 //! non-null text. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
-//! widest numeric argument and skips nulls. `round_half_even` rounds a tie to the
+//! widest numeric argument and skips nulls. `coalesce` returns the first non-null
+//! value. `round_half_even` rounds a tie to the
 //! even digit. `round_up` rounds away from zero
 //! at the given scale. `round_down` truncates toward zero
 //! at the given scale and stays `DOUBLE`. `least` returns the narrowest and

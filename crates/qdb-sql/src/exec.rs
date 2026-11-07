@@ -1,10 +1,10 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
-    CeilExpr, CmpOp, ConcatArg, ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, LeastExpr,
-    LengthExpr, LnExpr, LogExpr, LowerExpr, PadExpr, PiExpr, PowerExpr, Proj, Query,
-    QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
-    SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr,
-    StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    CeilExpr, CmpOp, CoalesceExpr, ConcatArg, ExpExpr, Filter, FloorExpr, GreatestExpr,
+    GroupedSelect, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, PadExpr, PiExpr, PowerExpr,
+    Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
+    RoundUpExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -200,6 +200,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::RoundDown { label, .. }
             | ResolvedProj::RoundUp { label, .. }
             | ResolvedProj::RoundHalfEven { label, .. }
+            | ResolvedProj::Coalesce { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -334,6 +335,11 @@ enum ResolvedProj {
         label: String,
         input: RoundInput,
         scale: RoundScale,
+    },
+    Coalesce {
+        label: String,
+        args: Vec<CoalesceArg>,
+        result_tag: i32,
     },
     Floor {
         label: String,
@@ -472,6 +478,7 @@ impl ResolvedProj {
             | Self::RoundDown { label, .. }
             | Self::RoundUp { label, .. }
             | Self::RoundHalfEven { label, .. }
+            | Self::Coalesce { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -495,6 +502,7 @@ impl ResolvedProj {
             | Self::RoundDown { .. }
             | Self::RoundUp { .. }
             | Self::RoundHalfEven { .. } => qdb_types::TAG_DOUBLE,
+            Self::Coalesce { result_tag, .. } => *result_tag,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -563,6 +571,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::RoundDown(expr) => resolve_round_down(table, expr),
         Proj::RoundUp(expr) => resolve_round_up(table, expr),
         Proj::RoundHalfEven(expr) => resolve_round_half_even(table, expr),
+        Proj::Coalesce(expr) => resolve_coalesce(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1210,6 +1219,231 @@ fn floor_input(table: &Table, arg: &ConcatArg) -> Result<(FloorInput, bool), ()>
             }
         }
         ConcatArg::Literal(_) => Err(()),
+    }
+}
+
+enum CoalesceArg {
+    Null,
+    Int(i32),
+    Long(i64),
+    Double(f64),
+    Text(String),
+    Char(char),
+    Column { index: usize },
+}
+
+fn resolve_coalesce(table: &Table, expr: &CoalesceExpr) -> Result<ResolvedProj, Error> {
+    let mut args = Vec::with_capacity(expr.args.len());
+    for arg in &expr.args {
+        args.push(coalesce_arg(table, arg)?);
+    }
+    let result_tag = coalesce_tag(&args, table)?;
+    Ok(ResolvedProj::Coalesce {
+        label: expr.label.clone(),
+        args,
+        result_tag,
+    })
+}
+
+fn coalesce_arg(table: &Table, arg: &ConcatArg) -> Result<CoalesceArg, Error> {
+    match arg {
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            Ok(CoalesceArg::Column { index })
+        }
+        ConcatArg::Literal(Scalar::Null) => Ok(CoalesceArg::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => match i32::try_from(*number) {
+            Ok(number) => Ok(CoalesceArg::Int(number)),
+            Err(_) => Ok(CoalesceArg::Long(*number)),
+        },
+        ConcatArg::Literal(Scalar::Double(number)) => Ok(CoalesceArg::Double(*number)),
+        ConcatArg::Literal(Scalar::Text(text)) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) if u32::from(ch) <= u32::from(u16::MAX) => {
+                    Ok(CoalesceArg::Char(ch))
+                }
+                _ => Ok(CoalesceArg::Text(text.clone())),
+            }
+        }
+        ConcatArg::Literal(_) => Err(Error::new(
+            "coalesce cannot be used with UNSUPPORTED data type".to_string(),
+        )),
+    }
+}
+
+fn coalesce_tag(args: &[CoalesceArg], table: &Table) -> Result<i32, Error> {
+    let mut common: Option<i32> = None;
+    for arg in args {
+        let Some(tag) = coalesce_arg_tag(arg, table) else {
+            continue;
+        };
+        common = Some(match common {
+            None => tag,
+            Some(previous) => coalesce_promote(previous, tag)?,
+        });
+    }
+    common.ok_or_else(|| Error::new("coalesce cannot be used with NULL data type".to_string()))
+}
+
+fn coalesce_arg_tag(arg: &CoalesceArg, table: &Table) -> Option<i32> {
+    match arg {
+        CoalesceArg::Null => None,
+        CoalesceArg::Int(_) => Some(qdb_types::TAG_INT),
+        CoalesceArg::Long(_) => Some(qdb_types::TAG_LONG),
+        CoalesceArg::Double(_) => Some(qdb_types::TAG_DOUBLE),
+        CoalesceArg::Text(_) => Some(qdb_types::TAG_STRING),
+        CoalesceArg::Char(_) => Some(qdb_types::TAG_CHAR),
+        CoalesceArg::Column { index } => Some(table.meta.columns[*index].tag),
+    }
+}
+
+fn coalesce_promote(previous: i32, next: i32) -> Result<i32, Error> {
+    if previous == next {
+        return Ok(previous);
+    }
+    if coalesce_text(previous) && coalesce_text(next) {
+        return Ok(qdb_types::TAG_STRING);
+    }
+    if coalesce_text(previous) && next == qdb_types::TAG_CHAR
+        || coalesce_text(next) && previous == qdb_types::TAG_CHAR
+    {
+        return Ok(qdb_types::TAG_STRING);
+    }
+    if coalesce_numeric(previous) && coalesce_numeric(next) {
+        if previous == qdb_types::TAG_DOUBLE || next == qdb_types::TAG_DOUBLE {
+            return Ok(qdb_types::TAG_DOUBLE);
+        }
+        if previous == qdb_types::TAG_FLOAT || next == qdb_types::TAG_FLOAT {
+            return Ok(qdb_types::TAG_FLOAT);
+        }
+        if previous == qdb_types::TAG_LONG || next == qdb_types::TAG_LONG {
+            return Ok(qdb_types::TAG_LONG);
+        }
+        if previous == qdb_types::TAG_INT || next == qdb_types::TAG_INT {
+            return Ok(qdb_types::TAG_INT);
+        }
+        return Ok(previous);
+    }
+    Err(Error::new(format!(
+        "inconvertible types: {} -> {} [from={}, to={}]",
+        qdb_types::type_name(next),
+        qdb_types::type_name(previous),
+        qdb_types::type_name(next),
+        qdb_types::type_name(previous)
+    )))
+}
+
+fn coalesce_text(tag: i32) -> bool {
+    matches!(
+        tag,
+        qdb_types::TAG_STRING | qdb_types::TAG_SYMBOL | qdb_types::TAG_VARCHAR
+    )
+}
+
+fn coalesce_numeric(tag: i32) -> bool {
+    matches!(
+        tag,
+        qdb_types::TAG_BYTE
+            | qdb_types::TAG_SHORT
+            | qdb_types::TAG_INT
+            | qdb_types::TAG_LONG
+            | qdb_types::TAG_FLOAT
+            | qdb_types::TAG_DOUBLE
+    )
+}
+
+fn coalesce_value(table: &Table, row: usize, args: &[CoalesceArg], result_tag: i32) -> Scalar {
+    if matches!(
+        result_tag,
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_CHAR | qdb_types::TAG_BOOLEAN
+    ) {
+        return coalesce_passthrough(table, row, &args[0], result_tag);
+    }
+    for arg in args {
+        if let Some(value) = coalesce_cast(table, row, arg, result_tag) {
+            return value;
+        }
+    }
+    Scalar::Null
+}
+
+fn coalesce_passthrough(table: &Table, row: usize, arg: &CoalesceArg, result_tag: i32) -> Scalar {
+    match arg {
+        CoalesceArg::Null => match result_tag {
+            qdb_types::TAG_BYTE => Scalar::Byte(0),
+            qdb_types::TAG_SHORT => Scalar::Short(0),
+            qdb_types::TAG_CHAR => Scalar::Char(0),
+            qdb_types::TAG_BOOLEAN => Scalar::Boolean(false),
+            _ => Scalar::Null,
+        },
+        CoalesceArg::Column { index } => table.columns[*index][row].clone(),
+        CoalesceArg::Char(ch) => Scalar::Char(*ch as u16),
+        CoalesceArg::Int(number) => Scalar::Int(*number),
+        CoalesceArg::Long(number) => Scalar::Long(*number),
+        _ => Scalar::Null,
+    }
+}
+
+fn coalesce_cast(table: &Table, row: usize, arg: &CoalesceArg, result_tag: i32) -> Option<Scalar> {
+    let value = match arg {
+        CoalesceArg::Null => return None,
+        CoalesceArg::Int(number) => Scalar::Int(*number),
+        CoalesceArg::Long(number) => Scalar::Long(*number),
+        CoalesceArg::Double(number) => Scalar::Double(*number),
+        CoalesceArg::Text(text) => Scalar::Text(text.clone()),
+        CoalesceArg::Char(ch) => Scalar::Char(*ch as u16),
+        CoalesceArg::Column { index } => table.columns[*index][row].clone(),
+    };
+    match result_tag {
+        qdb_types::TAG_STRING => match value {
+            Scalar::Null => None,
+            Scalar::Text(text) => Some(Scalar::Text(text)),
+            Scalar::Char(0) => None,
+            Scalar::Char(unit) => {
+                char::from_u32(u32::from(unit)).map(|ch| Scalar::Text(ch.to_string()))
+            }
+            _ => None,
+        },
+        qdb_types::TAG_DOUBLE => match value {
+            Scalar::Null => None,
+            Scalar::Byte(number) => Some(Scalar::Double(f64::from(number))),
+            Scalar::Short(number) => Some(Scalar::Double(f64::from(number))),
+            Scalar::Int(number) => Some(Scalar::Double(f64::from(number))),
+            Scalar::Long(number) => Some(Scalar::Double(number as f64)),
+            Scalar::Float(number) => Some(Scalar::Double(f64::from(number))),
+            Scalar::Double(number) => Some(Scalar::Double(number)),
+            _ => None,
+        },
+        qdb_types::TAG_FLOAT => match value {
+            Scalar::Null => None,
+            Scalar::Byte(number) => Some(Scalar::Float(f32::from(number))),
+            Scalar::Short(number) => Some(Scalar::Float(f32::from(number))),
+            Scalar::Int(number) => Some(Scalar::Float(number as f32)),
+            Scalar::Long(number) => Some(Scalar::Float(number as f32)),
+            Scalar::Float(number) => Some(Scalar::Float(number)),
+            Scalar::Double(number) => Some(Scalar::Float(number as f32)),
+            _ => None,
+        },
+        qdb_types::TAG_LONG => match value {
+            Scalar::Null => None,
+            Scalar::Byte(number) => Some(Scalar::Long(i64::from(number))),
+            Scalar::Short(number) => Some(Scalar::Long(i64::from(number))),
+            Scalar::Int(number) => Some(Scalar::Long(i64::from(number))),
+            Scalar::Long(number) => Some(Scalar::Long(number)),
+            _ => None,
+        },
+        qdb_types::TAG_INT => match value {
+            Scalar::Null => None,
+            Scalar::Byte(number) => Some(Scalar::Int(i32::from(number))),
+            Scalar::Short(number) => Some(Scalar::Int(i32::from(number))),
+            Scalar::Int(number) => Some(Scalar::Int(number)),
+            Scalar::Long(number) => i32::try_from(number).ok().map(Scalar::Int),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -2127,6 +2361,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 None => Scalar::Null,
             }
         }
+        ResolvedProj::Coalesce {
+            args, result_tag, ..
+        } => coalesce_value(table, row, args, *result_tag),
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
         ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
             Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
@@ -10045,6 +10282,202 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT round_half_even(missing, 0) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn coalesce_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT coalesce(id, flags) FROM sensors",
+                "expected/ca_id_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(flags, id) FROM sensors",
+                "expected/ca_flags_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(reading, score) FROM sensors",
+                "expected/ca_reading_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(score, reading) FROM sensors",
+                "expected/ca_score_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(note, 'x') FROM sensors",
+                "expected/ca_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(location, note) FROM sensors",
+                "expected/ca_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(reading, 0.0) FROM sensors",
+                "expected/ca_reading_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(-0.0, 1.0) FROM sensors LIMIT 1",
+                "expected/ca_negzero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(note, null, 'z') FROM sensors",
+                "expected/ca_note_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT COALESCE(NOTE, 'x') FROM sensors",
+                "expected/ca_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(null, id, 0) FROM sensors",
+                "expected/ca_null_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(code, 1) FROM sensors",
+                "expected/ca_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(b, 1) FROM sensors",
+                "expected/ca_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(score, 1) FROM sensors",
+                "expected/ca_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(reading, 0) FROM sensors",
+                "expected/ca_reading_int.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(code, b) FROM sensors",
+                "expected/ca_code_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(b, code) FROM sensors",
+                "expected/ca_byte_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(ch, 'Z') FROM sensors",
+                "expected/ca_char.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(null, code) FROM sensors LIMIT 1",
+                "expected/ca_null_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(null, ch) FROM sensors LIMIT 1",
+                "expected/ca_null_char.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(id, flags) FROM sensors ORDER BY coalesce(id, flags)",
+                "expected/ca_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(reading, 0.0) FROM sensors ORDER BY coalesce(reading, 0.0)",
+                "expected/ca_reading_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(note, tag) FROM sensors ORDER BY coalesce(note, tag)",
+                "expected/ca_text_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(note, 'x') FROM sensors WHERE id = 1",
+                "expected/ca_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT coalesce(id, flags) FROM sensors LIMIT 0",
+                "expected/ca_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT coalesce(note, 'x') FROM days ORDER BY ts",
+                "expected/ca_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT coalesce(id, 0) FROM days ORDER BY ts",
+                "expected/ca_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT coalesce() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("coalesce can be used with 2 or more arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT coalesce(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("coalesce can be used with 2 or more arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT coalesce(null, null) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("coalesce cannot be used with NULL data type"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT coalesce(id, note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible types: STRING -> LONG [from=STRING, to=LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT coalesce(note, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible types: LONG -> STRING [from=LONG, to=STRING]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT coalesce(ok, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible types: INT -> BOOLEAN [from=INT, to=BOOLEAN]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT coalesce(missing, id) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

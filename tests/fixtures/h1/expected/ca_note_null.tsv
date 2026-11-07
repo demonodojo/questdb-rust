@@ -1,0 +1,5 @@
+coalesce(note, null, 'z')
+alpha
+z
+
+βeta

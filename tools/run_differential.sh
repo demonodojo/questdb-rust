@@ -815,7 +815,32 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rhe_flags "SELECT round_half_even(reading, flags) FROM sensors" \
   rhe_order "SELECT round_half_even(reading, 0) FROM sensors ORDER BY round_half_even(reading, 0)" \
   rhe_where "SELECT round_half_even(id, 0) FROM sensors WHERE id = -1" \
-  rhe_limit_zero "SELECT round_half_even(id, 0) FROM sensors LIMIT 0"
+  rhe_limit_zero "SELECT round_half_even(id, 0) FROM sensors LIMIT 0" \
+  ca_id_flags "SELECT coalesce(id, flags) FROM sensors" \
+  ca_flags_id "SELECT coalesce(flags, id) FROM sensors" \
+  ca_reading_score "SELECT coalesce(reading, score) FROM sensors" \
+  ca_score_reading "SELECT coalesce(score, reading) FROM sensors" \
+  ca_note "SELECT coalesce(note, 'x') FROM sensors" \
+  ca_location "SELECT coalesce(location, note) FROM sensors" \
+  ca_reading_zero "SELECT coalesce(reading, 0.0) FROM sensors" \
+  ca_negzero "SELECT coalesce(-0.0, 1.0) FROM sensors LIMIT 1" \
+  ca_note_null "SELECT coalesce(note, null, 'z') FROM sensors" \
+  ca_case "SELECT COALESCE(NOTE, 'x') FROM sensors" \
+  ca_null_id "SELECT coalesce(null, id, 0) FROM sensors" \
+  ca_code "SELECT coalesce(code, 1) FROM sensors" \
+  ca_byte "SELECT coalesce(b, 1) FROM sensors" \
+  ca_score "SELECT coalesce(score, 1) FROM sensors" \
+  ca_reading_int "SELECT coalesce(reading, 0) FROM sensors" \
+  ca_code_byte "SELECT coalesce(code, b) FROM sensors" \
+  ca_byte_code "SELECT coalesce(b, code) FROM sensors" \
+  ca_char "SELECT coalesce(ch, 'Z') FROM sensors" \
+  ca_null_code "SELECT coalesce(null, code) FROM sensors LIMIT 1" \
+  ca_null_char "SELECT coalesce(null, ch) FROM sensors LIMIT 1" \
+  ca_order "SELECT coalesce(id, flags) FROM sensors ORDER BY coalesce(id, flags)" \
+  ca_reading_order "SELECT coalesce(reading, 0.0) FROM sensors ORDER BY coalesce(reading, 0.0)" \
+  ca_text_order "SELECT coalesce(note, tag) FROM sensors ORDER BY coalesce(note, tag)" \
+  ca_where "SELECT coalesce(note, 'x') FROM sensors WHERE id = 1" \
+  ca_limit_zero "SELECT coalesce(id, flags) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -925,7 +950,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ls_id "SELECT least(id, 2) FROM days ORDER BY ts" \
   rdn_id "SELECT round_down(id, 0) FROM days ORDER BY ts" \
   rup_id "SELECT round_up(id, 0) FROM days ORDER BY ts" \
-  rhe_id "SELECT round_half_even(id, 0) FROM days ORDER BY ts"
+  rhe_id "SELECT round_half_even(id, 0) FROM days ORDER BY ts" \
+  ca_note "SELECT coalesce(note, 'x') FROM days ORDER BY ts" \
+  ca_id "SELECT coalesce(id, 0) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1688,6 +1715,31 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT round_half_even(reading, 0) FROM sensors ORDER BY round_half_even(reading, 0)"),
     (os.environ["DIFF_H1"], "SELECT round_half_even(id, 0) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT round_half_even(id, 0) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(flags, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(score, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(note, 'x') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(location, note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(reading, 0.0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(-0.0, 1.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(note, null, 'z') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT COALESCE(NOTE, 'x') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(null, id, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(code, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(b, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(score, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(reading, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(code, b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(b, code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(ch, 'Z') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(null, code) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(null, ch) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(id, flags) FROM sensors ORDER BY coalesce(id, flags)"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(reading, 0.0) FROM sensors ORDER BY coalesce(reading, 0.0)"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(note, tag) FROM sensors ORDER BY coalesce(note, tag)"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(note, 'x') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT coalesce(id, flags) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1796,6 +1848,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT round_down(id, 0) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT round_up(id, 0) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT round_half_even(id, 0) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT coalesce(note, 'x') FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT coalesce(id, 0) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
