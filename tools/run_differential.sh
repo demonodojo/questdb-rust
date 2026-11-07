@@ -693,7 +693,14 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ex_reading_order "SELECT exp(reading) FROM sensors ORDER BY exp(reading)" \
   ex_with_id "SELECT id, exp(id) FROM sensors ORDER BY exp(id)" \
   ex_where "SELECT exp(id) FROM sensors WHERE id = -1" \
-  ex_limit_zero "SELECT exp(id) FROM sensors LIMIT 0"
+  ex_limit_zero "SELECT exp(id) FROM sensors LIMIT 0" \
+  pi_one "SELECT pi() FROM sensors LIMIT 1" \
+  pi_all "SELECT pi() FROM sensors" \
+  pi_case "SELECT PI() FROM sensors" \
+  pi_with_id "SELECT id, pi() FROM sensors ORDER BY id" \
+  pi_where "SELECT pi() FROM sensors WHERE id = 1" \
+  pi_order "SELECT pi() FROM sensors ORDER BY pi()" \
+  pi_limit_zero "SELECT pi() FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -797,7 +804,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   pw_id "SELECT power(id, 2) FROM days ORDER BY ts" \
   ln_id "SELECT ln(id) FROM days ORDER BY ts" \
   lg_id "SELECT log(id) FROM days ORDER BY ts" \
-  ex_id "SELECT exp(id) FROM days ORDER BY ts"
+  ex_id "SELECT exp(id) FROM days ORDER BY ts" \
+  pi_id "SELECT pi() FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1438,6 +1446,13 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, exp(id) FROM sensors ORDER BY exp(id)"),
     (os.environ["DIFF_H1"], "SELECT exp(id) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT exp(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT pi() FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pi() FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT PI() FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id, pi() FROM sensors ORDER BY id"),
+    (os.environ["DIFF_H1"], "SELECT pi() FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT pi() FROM sensors ORDER BY pi()"),
+    (os.environ["DIFF_H1"], "SELECT pi() FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1540,6 +1555,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT ln(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT log(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT exp(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT pi() FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

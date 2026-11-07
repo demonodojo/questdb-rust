@@ -1,9 +1,9 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CeilExpr, CmpOp, ConcatArg, ExpExpr, Filter, FloorExpr, GroupedSelect, LengthExpr, LnExpr,
-    LogExpr, LowerExpr, PadExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundExpr,
-    SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr,
-    StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    LogExpr, LowerExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
+    RoundExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -203,7 +203,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Power { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
-            | ResolvedProj::Exp { label, .. } => label.clone(),
+            | ResolvedProj::Exp { label, .. }
+            | ResolvedProj::Pi { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -349,6 +350,9 @@ enum ResolvedProj {
         label: String,
         input: SqrtInput,
     },
+    Pi {
+        label: String,
+    },
 }
 
 enum SqrtInput {
@@ -441,7 +445,8 @@ impl ResolvedProj {
             | Self::Power { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
-            | Self::Exp { label, .. } => Some(label),
+            | Self::Exp { label, .. }
+            | Self::Pi { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -456,7 +461,8 @@ impl ResolvedProj {
             | Self::Power { .. }
             | Self::Ln { .. }
             | Self::Log { .. }
-            | Self::Exp { .. } => qdb_types::TAG_DOUBLE,
+            | Self::Exp { .. }
+            | Self::Pi { .. } => qdb_types::TAG_DOUBLE,
             Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
                 if *wide {
                     qdb_types::TAG_DOUBLE
@@ -522,7 +528,27 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
         Proj::Exp(expr) => resolve_exp(table, expr),
+        Proj::Pi(expr) => resolve_pi(table, expr),
     }
+}
+
+fn resolve_pi(table: &Table, expr: &PiExpr) -> Result<ResolvedProj, Error> {
+    for arg in &expr.args {
+        if let ConcatArg::Column(name) = arg {
+            if table.column_index(name).is_none() {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            }
+        }
+    }
+    if !expr.args.is_empty() {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `pi`; expected: 0, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::Pi {
+        label: expr.label.clone(),
+    })
 }
 
 fn resolve_exp(table: &Table, expr: &ExpExpr) -> Result<ResolvedProj, Error> {
@@ -1612,6 +1638,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Power { base, exponent, .. } => power_value(table, row, base, exponent),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
+        ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
         ResolvedProj::Ln { input, .. } => log_value(table, row, input, f64::ln),
         ResolvedProj::Sqrt { input, .. } => match sqrt_number(table, row, input) {
             Some(value) => {
@@ -8578,6 +8605,79 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT exp(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn pi_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT pi() FROM sensors LIMIT 1",
+                "expected/pi_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT pi() FROM sensors",
+                "expected/pi_all.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT PI() FROM sensors",
+                "expected/pi_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, pi() FROM sensors ORDER BY id",
+                "expected/pi_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT pi() FROM sensors WHERE id = 1",
+                "expected/pi_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT pi() FROM sensors ORDER BY pi()",
+                "expected/pi_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT pi() FROM sensors LIMIT 0",
+                "expected/pi_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT pi() FROM days ORDER BY ts",
+                "expected/pi_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT pi(1) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("wrong number of arguments for function `pi`; expected: 0, provided: 1"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT pi(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("wrong number of arguments for function `pi`; expected: 0, provided: 1"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT pi(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

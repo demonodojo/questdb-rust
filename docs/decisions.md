@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — pi()
+
+`square` no es una función de 10.1.0. `pi` no admite argumentos y devuelve `Math.PI` como `DOUBLE` en cada fila. Una columna que no existe se rechaza antes que el conteo de argumentos. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — exp()
 
 Usa `Math.exp` y devuelve `DOUBLE`. `exp(0)` y `exp(-0.0)` son `1.0`. `exp(1000)` desborda a infinito positivo: se imprime como NULL y se ordena por encima de los finitos. Un número de 17 dígitos o más, o menor que `0.0001`, se imprime en notación científica con `e+` o `e-`. Un texto rompe la respuesta HTTP; aquí se rechaza como `DOUBLE` esperado. Se contrastó con `/exec` en `sensors` y `days`.
