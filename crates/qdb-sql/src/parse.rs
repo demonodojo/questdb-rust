@@ -107,6 +107,7 @@ pub enum Proj {
     Log(LogExpr),
     Exp(ExpExpr),
     Pi(PiExpr),
+    Greatest(GreatestExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,6 +287,13 @@ pub struct PiExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `greatest(number, ...)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GreatestExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -387,6 +395,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_exp()?.label
             } else if parser.starts_pi_call() {
                 parser.parse_pi()?.label
+            } else if parser.starts_greatest_call() {
+                parser.parse_greatest()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -464,6 +474,7 @@ enum SelectPiece {
     Log(LogExpr),
     Exp(ExpExpr),
     Pi(PiExpr),
+    Greatest(GreatestExpr),
 }
 
 struct Parser<'a> {
@@ -606,6 +617,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Exp(self.parse_exp()?));
             } else if self.starts_pi_call() {
                 pieces.push(SelectPiece::Pi(self.parse_pi()?));
+            } else if self.starts_greatest_call() {
+                pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -646,6 +659,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Log(_)
                     | SelectPiece::Exp(_)
                     | SelectPiece::Pi(_)
+                    | SelectPiece::Greatest(_)
             )
         });
         if counts > 0 && projected {
@@ -685,6 +699,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
                     SelectPiece::Exp(expr) => items.push(Proj::Exp(expr)),
                     SelectPiece::Pi(expr) => items.push(Proj::Pi(expr)),
+                    SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -747,7 +762,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
                 | SelectPiece::Exp(_)
-                | SelectPiece::Pi(_) => {
+                | SelectPiece::Pi(_)
+                | SelectPiece::Greatest(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -790,6 +806,24 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_greatest_call(&self) -> bool {
+        self.starts_named_call("greatest")
+    }
+
+    fn parse_greatest(&mut self) -> Result<GreatestExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "at least one argument is required by GREATEST(V)".to_string(),
+            ));
+        }
+        Ok(GreatestExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_pi_call(&self) -> bool {

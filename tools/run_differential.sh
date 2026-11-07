@@ -700,7 +700,29 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   pi_with_id "SELECT id, pi() FROM sensors ORDER BY id" \
   pi_where "SELECT pi() FROM sensors WHERE id = 1" \
   pi_order "SELECT pi() FROM sensors ORDER BY pi()" \
-  pi_limit_zero "SELECT pi() FROM sensors LIMIT 0"
+  pi_limit_zero "SELECT pi() FROM sensors LIMIT 0" \
+  gt_id_flags "SELECT greatest(id, flags) FROM sensors" \
+  gt_reading_score "SELECT greatest(reading, score) FROM sensors" \
+  gt_code_byte "SELECT greatest(code, b) FROM sensors" \
+  gt_id "SELECT greatest(id) FROM sensors" \
+  gt_three "SELECT greatest(id, flags, reading) FROM sensors" \
+  gt_null_id "SELECT greatest(null, id) FROM sensors" \
+  gt_nulls "SELECT greatest(null, null) FROM sensors LIMIT 1" \
+  gt_negzero "SELECT greatest(-0.0, 0.0) FROM sensors LIMIT 1" \
+  gt_poszero "SELECT greatest(0.0, -0.0) FROM sensors LIMIT 1" \
+  gt_neg "SELECT greatest(-1.5, -0.0) FROM sensors LIMIT 1" \
+  gt_code_one "SELECT greatest(code, 1) FROM sensors" \
+  gt_double_lit "SELECT greatest(1.5, 2) FROM sensors LIMIT 1" \
+  gt_long_lit "SELECT greatest(3000000000, 1) FROM sensors LIMIT 1" \
+  gt_score_one "SELECT greatest(score, 1) FROM sensors" \
+  gt_mix "SELECT greatest(b, code, flags) FROM sensors" \
+  gt_case "SELECT GREATEST(ID, FLAGS) FROM sensors" \
+  gt_order "SELECT greatest(id, flags) FROM sensors ORDER BY greatest(id, flags)" \
+  gt_reading_order "SELECT greatest(reading) FROM sensors ORDER BY greatest(reading)" \
+  gt_score_order "SELECT greatest(score) FROM sensors ORDER BY greatest(score)" \
+  gt_flags_order "SELECT greatest(flags) FROM sensors ORDER BY greatest(flags)" \
+  gt_where "SELECT greatest(id, flags) FROM sensors WHERE id = -1" \
+  gt_limit_zero "SELECT greatest(id, flags) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -805,7 +827,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ln_id "SELECT ln(id) FROM days ORDER BY ts" \
   lg_id "SELECT log(id) FROM days ORDER BY ts" \
   ex_id "SELECT exp(id) FROM days ORDER BY ts" \
-  pi_id "SELECT pi() FROM days ORDER BY ts"
+  pi_id "SELECT pi() FROM days ORDER BY ts" \
+  gt_id "SELECT greatest(id, 2) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1453,6 +1476,28 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pi() FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT pi() FROM sensors ORDER BY pi()"),
     (os.environ["DIFF_H1"], "SELECT pi() FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT greatest(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT greatest(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT greatest(code, b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT greatest(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT greatest(id, flags, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT greatest(null, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT greatest(null, null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT greatest(-0.0, 0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT greatest(0.0, -0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT greatest(-1.5, -0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT greatest(code, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT greatest(1.5, 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT greatest(3000000000, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT greatest(score, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT greatest(b, code, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT GREATEST(ID, FLAGS) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT greatest(id, flags) FROM sensors ORDER BY greatest(id, flags)"),
+    (os.environ["DIFF_H1"], "SELECT greatest(reading) FROM sensors ORDER BY greatest(reading)"),
+    (os.environ["DIFF_H1"], "SELECT greatest(score) FROM sensors ORDER BY greatest(score)"),
+    (os.environ["DIFF_H1"], "SELECT greatest(flags) FROM sensors ORDER BY greatest(flags)"),
+    (os.environ["DIFF_H1"], "SELECT greatest(id, flags) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT greatest(id, flags) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1556,6 +1601,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT log(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT exp(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT pi() FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT greatest(id, 2) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -1,9 +1,9 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
-    CeilExpr, CmpOp, ConcatArg, ExpExpr, Filter, FloorExpr, GroupedSelect, LengthExpr, LnExpr,
-    LogExpr, LowerExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
-    RoundExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    CeilExpr, CmpOp, ConcatArg, ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect,
+    LengthExpr, LnExpr, LogExpr, LowerExpr, PadExpr, PiExpr, PowerExpr, Proj, Query,
+    QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr,
+    SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -204,7 +204,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
             | ResolvedProj::Exp { label, .. }
-            | ResolvedProj::Pi { label, .. } => label.clone(),
+            | ResolvedProj::Pi { label, .. }
+            | ResolvedProj::Greatest { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -353,6 +354,11 @@ enum ResolvedProj {
     Pi {
         label: String,
     },
+    Greatest {
+        label: String,
+        args: Vec<GreatestArg>,
+        result_tag: i32,
+    },
 }
 
 enum SqrtInput {
@@ -446,7 +452,8 @@ impl ResolvedProj {
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
             | Self::Exp { label, .. }
-            | Self::Pi { label, .. } => Some(label),
+            | Self::Pi { label, .. }
+            | Self::Greatest { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -463,6 +470,7 @@ impl ResolvedProj {
             | Self::Log { .. }
             | Self::Exp { .. }
             | Self::Pi { .. } => qdb_types::TAG_DOUBLE,
+            Self::Greatest { result_tag, .. } => *result_tag,
             Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
                 if *wide {
                     qdb_types::TAG_DOUBLE
@@ -529,6 +537,222 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Log(expr) => resolve_log(table, expr),
         Proj::Exp(expr) => resolve_exp(table, expr),
         Proj::Pi(expr) => resolve_pi(table, expr),
+        Proj::Greatest(expr) => resolve_greatest(table, expr),
+    }
+}
+
+enum GreatestArg {
+    Null,
+    Number { value: i64, tag: i32 },
+    Real { value: f64 },
+    Column { index: usize },
+}
+
+fn resolve_greatest(table: &Table, expr: &GreatestExpr) -> Result<ResolvedProj, Error> {
+    let mut args = Vec::with_capacity(expr.args.len());
+    for arg in &expr.args {
+        match arg {
+            ConcatArg::Column(name) => {
+                let Some(index) = table.column_index(name) else {
+                    return Err(Error::new(format!("Invalid column: {name}")));
+                };
+                args.push(GreatestArg::Column { index });
+            }
+            ConcatArg::Literal(Scalar::Null) => args.push(GreatestArg::Null),
+            ConcatArg::Literal(Scalar::Long(number)) => {
+                let tag = if *number >= i32::MIN as i64 && *number <= i32::MAX as i64 {
+                    qdb_types::TAG_INT
+                } else {
+                    qdb_types::TAG_LONG
+                };
+                args.push(GreatestArg::Number {
+                    value: *number,
+                    tag,
+                });
+            }
+            ConcatArg::Literal(Scalar::Double(number)) => {
+                args.push(GreatestArg::Real { value: *number })
+            }
+            ConcatArg::Literal(Scalar::Text(_)) => {
+                return Err(Error::new("unsupported type: STRING".to_string()));
+            }
+            ConcatArg::Literal(_) => {
+                return Err(Error::new("unsupported type: UNSUPPORTED".to_string()));
+            }
+        }
+    }
+    for arg in &args {
+        if let GreatestArg::Column { index } = arg {
+            let tag = table.meta.columns[*index].tag;
+            if !matches!(
+                tag,
+                qdb_types::TAG_BYTE
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_LONG
+                    | qdb_types::TAG_FLOAT
+                    | qdb_types::TAG_DOUBLE
+            ) {
+                return Err(Error::new(format!(
+                    "unsupported type: {}",
+                    qdb_types::type_name(tag)
+                )));
+            }
+        }
+    }
+    Ok(ResolvedProj::Greatest {
+        label: expr.label.clone(),
+        result_tag: greatest_tag(table, &args),
+        args,
+    })
+}
+
+fn greatest_tag(table: &Table, args: &[GreatestArg]) -> i32 {
+    let mut rank = 0;
+    for arg in args {
+        let tag = match arg {
+            GreatestArg::Null => continue,
+            GreatestArg::Number { tag, .. } => *tag,
+            GreatestArg::Real { .. } => qdb_types::TAG_DOUBLE,
+            GreatestArg::Column { index } => table.meta.columns[*index].tag,
+        };
+        let next = match tag {
+            qdb_types::TAG_DOUBLE => 6,
+            qdb_types::TAG_FLOAT => 5,
+            qdb_types::TAG_LONG => 4,
+            qdb_types::TAG_INT => 3,
+            qdb_types::TAG_SHORT => 2,
+            qdb_types::TAG_BYTE => 1,
+            _ => 0,
+        };
+        rank = rank.max(next);
+    }
+    match rank {
+        6 => qdb_types::TAG_DOUBLE,
+        5 => qdb_types::TAG_FLOAT,
+        4 => qdb_types::TAG_LONG,
+        3 => qdb_types::TAG_INT,
+        2 => qdb_types::TAG_SHORT,
+        1 => qdb_types::TAG_BYTE,
+        _ => qdb_types::TAG_STRING,
+    }
+}
+
+fn greatest_value(table: &Table, row: usize, args: &[GreatestArg], result_tag: i32) -> Scalar {
+    if result_tag == qdb_types::TAG_STRING {
+        return Scalar::Null;
+    }
+    if matches!(result_tag, qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE) {
+        return greatest_real(table, row, args, result_tag);
+    }
+    greatest_integer(table, row, args, result_tag)
+}
+
+fn greatest_real(table: &Table, row: usize, args: &[GreatestArg], result_tag: i32) -> Scalar {
+    let mut value = f64::NEG_INFINITY;
+    for arg in args {
+        if let Some(next) = greatest_f64(table, row, arg) {
+            value = java_max(value, next);
+        }
+    }
+    if result_tag == qdb_types::TAG_FLOAT {
+        if !value.is_finite() || value > f32::MAX as f64 || value < -(f32::MAX as f64) {
+            Scalar::Null
+        } else {
+            Scalar::Float(value as f32)
+        }
+    } else {
+        Scalar::Double(value)
+    }
+}
+
+fn java_max(left: f64, right: f64) -> f64 {
+    if left.is_nan() {
+        return left;
+    }
+    if left == 0.0 && right == 0.0 && left.is_sign_negative() {
+        return right;
+    }
+    if left >= right {
+        left
+    } else {
+        right
+    }
+}
+
+fn greatest_f64(table: &Table, row: usize, arg: &GreatestArg) -> Option<f64> {
+    match arg {
+        GreatestArg::Null => None,
+        GreatestArg::Number { value, .. } => Some(*value as f64),
+        GreatestArg::Real { value } => {
+            if value.is_nan() {
+                None
+            } else {
+                Some(*value)
+            }
+        }
+        GreatestArg::Column { index } => match &table.columns[*index][row] {
+            Scalar::Null => None,
+            Scalar::Byte(value) => Some(f64::from(*value)),
+            Scalar::Short(value) => Some(f64::from(*value)),
+            Scalar::Int(value) => Some(f64::from(*value)),
+            Scalar::Long(value) => Some(*value as f64),
+            Scalar::Float(value) => {
+                if value.is_nan() {
+                    None
+                } else {
+                    Some(f64::from(*value))
+                }
+            }
+            Scalar::Double(value) => {
+                if value.is_nan() {
+                    None
+                } else {
+                    Some(*value)
+                }
+            }
+            _ => None,
+        },
+    }
+}
+
+fn greatest_integer(table: &Table, row: usize, args: &[GreatestArg], result_tag: i32) -> Scalar {
+    let mut value = greatest_i64(table, row, &args[0]);
+    for arg in &args[1..] {
+        value = value.max(greatest_i64(table, row, arg));
+    }
+    match result_tag {
+        qdb_types::TAG_BYTE if (i8::MIN as i64..=i8::MAX as i64).contains(&value) => {
+            Scalar::Byte(value as i8)
+        }
+        qdb_types::TAG_SHORT if (i16::MIN as i64..=i16::MAX as i64).contains(&value) => {
+            Scalar::Short(value as i16)
+        }
+        qdb_types::TAG_INT if value > i32::MIN as i64 && value <= i32::MAX as i64 => {
+            Scalar::Int(value as i32)
+        }
+        qdb_types::TAG_LONG if value != i64::MIN => Scalar::Long(value),
+        _ => Scalar::Null,
+    }
+}
+
+fn greatest_i64(table: &Table, row: usize, arg: &GreatestArg) -> i64 {
+    match arg {
+        GreatestArg::Null => i64::MIN,
+        GreatestArg::Number { value, .. } => *value,
+        GreatestArg::Real { value } => *value as i64,
+        GreatestArg::Column { index } => match &table.columns[*index][row] {
+            Scalar::Byte(value) => i64::from(*value),
+            Scalar::Short(value) => i64::from(*value),
+            Scalar::Int(value) => i64::from(*value),
+            Scalar::Long(value) => *value,
+            Scalar::Null => match table.meta.columns[*index].tag {
+                qdb_types::TAG_INT => i32::MIN as i64,
+                qdb_types::TAG_BYTE | qdb_types::TAG_SHORT => 0,
+                _ => i64::MIN,
+            },
+            _ => i64::MIN,
+        },
     }
 }
 
@@ -1639,6 +1863,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
+        ResolvedProj::Greatest {
+            args, result_tag, ..
+        } => greatest_value(table, row, args, *result_tag),
         ResolvedProj::Ln { input, .. } => log_value(table, row, input, f64::ln),
         ResolvedProj::Sqrt { input, .. } => match sqrt_number(table, row, input) {
             Some(value) => {
@@ -8678,6 +8905,171 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT pi(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn greatest_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT greatest(id, flags) FROM sensors",
+                "expected/gt_id_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(reading, score) FROM sensors",
+                "expected/gt_reading_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(code, b) FROM sensors",
+                "expected/gt_code_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(id) FROM sensors",
+                "expected/gt_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(id, flags, reading) FROM sensors",
+                "expected/gt_three.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(null, id) FROM sensors",
+                "expected/gt_null_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(null, null) FROM sensors LIMIT 1",
+                "expected/gt_nulls.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(-0.0, 0.0) FROM sensors LIMIT 1",
+                "expected/gt_negzero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(0.0, -0.0) FROM sensors LIMIT 1",
+                "expected/gt_poszero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(-1.5, -0.0) FROM sensors LIMIT 1",
+                "expected/gt_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(code, 1) FROM sensors",
+                "expected/gt_code_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(1.5, 2) FROM sensors LIMIT 1",
+                "expected/gt_double_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(3000000000, 1) FROM sensors LIMIT 1",
+                "expected/gt_long_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(score, 1) FROM sensors",
+                "expected/gt_score_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(b, code, flags) FROM sensors",
+                "expected/gt_mix.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT GREATEST(ID, FLAGS) FROM sensors",
+                "expected/gt_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(id, flags) FROM sensors ORDER BY greatest(id, flags)",
+                "expected/gt_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(reading) FROM sensors ORDER BY greatest(reading)",
+                "expected/gt_reading_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(score) FROM sensors ORDER BY greatest(score)",
+                "expected/gt_score_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(flags) FROM sensors ORDER BY greatest(flags)",
+                "expected/gt_flags_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(id, flags) FROM sensors WHERE id = -1",
+                "expected/gt_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT greatest(id, flags) FROM sensors LIMIT 0",
+                "expected/gt_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT greatest(id, 2) FROM days ORDER BY ts",
+                "expected/gt_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT greatest() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("at least one argument is required by GREATEST(V)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT greatest(ok, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("unsupported type: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT greatest(note, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("unsupported type: STRING"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT greatest(ch, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("unsupported type: CHAR"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT greatest(location, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("unsupported type: SYMBOL"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT greatest(ok, missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
