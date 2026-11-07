@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — bit_and()
+
+`bit_and(col)` devuelve el AND bit a bit y omite los nulos. `BYTE`, `SHORT` e `INT` conservan el tipo. `LONG`, `DATE` y `TIMESTAMP` pasan a `LONG`. Un `CHAR` se lee como `SHORT` y un `SYMBOL` como la clave `INT` de su orden de aparición. `bit_and(flags)` es `0` y la fila con `id = 1` es `10`. `bit_and(day)` es `0` y `bit_and(ts)` es `1577934242721792`. Sin filas, un `INT` o un `LONG` es NULL; un `BYTE`, un `SHORT` o un `CHAR` es `0`. `FLOAT`, `DOUBLE` y `BOOLEAN` no tienen función. `alpha` se rechaza como `STRING` hacia `LONG` y `A` como `CHAR` hacia `SHORT`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — last_not_null()
 
 `last_not_null(col)` devuelve el último valor no nulo en el orden de las filas y conserva el tipo. `BYTE` y `SHORT` se ensanchan a `INT`: `last_not_null(b)` es `1` y `last_not_null(code)` es `1`. `last_not_null(note)` es `βeta`. `last_not_null(reading)` es `-0.0`. La fila con `id` nulo tiene la nota vacía, y esa cadena cuenta. Sin filas el resultado es NULL. `BOOLEAN` no tiene función. Un segundo argumento se rechaza con la lista de tipos: `(STRING, INT)` para `last_not_null(note, 1)`. Se contrastó con `/exec` en `sensors` y `days`.

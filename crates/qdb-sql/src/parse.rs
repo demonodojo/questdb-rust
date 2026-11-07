@@ -67,6 +67,7 @@ pub enum AggFunc {
     BoolOr,
     FirstNotNull,
     LastNotNull,
+    BitAnd,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3075,6 +3076,7 @@ impl<'a> Parser<'a> {
                 | "bool_or"
                 | "first_not_null"
                 | "last_not_null"
+                | "bit_and"
         ) {
             return false;
         }
@@ -3131,6 +3133,7 @@ impl<'a> Parser<'a> {
             "bool_or" => AggFunc::BoolOr,
             "first_not_null" => AggFunc::FirstNotNull,
             "last_not_null" => AggFunc::LastNotNull,
+            "bit_and" => AggFunc::BitAnd,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3295,7 +3298,10 @@ impl<'a> Parser<'a> {
                 )));
             }
         }
-        if matches!(func, AggFunc::FirstNotNull | AggFunc::LastNotNull) && self.peek() == Some(b',')
+        if matches!(
+            func,
+            AggFunc::FirstNotNull | AggFunc::LastNotNull | AggFunc::BitAnd
+        ) && self.peek() == Some(b',')
         {
             self.pos += 1;
             self.skip();

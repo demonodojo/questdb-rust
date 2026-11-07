@@ -7327,6 +7327,10 @@ enum Accumulator {
         value: bool,
         count: i64,
     },
+    BitAnd {
+        bits: Option<i64>,
+        tag: i32,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -7348,6 +7352,10 @@ impl Accumulator {
             | AggFunc::Last
             | AggFunc::FirstNotNull
             | AggFunc::LastNotNull => Self::Value(None),
+            AggFunc::BitAnd => Self::BitAnd {
+                bits: None,
+                tag: qdb_types::TAG_LONG,
+            },
             AggFunc::Avg => Self::Average {
                 total: None,
                 count: 0,
@@ -7515,6 +7523,7 @@ impl Accumulator {
                 PairKind::R2 => r2_result(*sum_xy, *sum_y, *sum_x, *count),
                 PairKind::Corr => corr_result(*sum_xy, *sum_y, *sum_x, *count),
             },
+            Self::BitAnd { bits, tag } => bit_and_scalar(*bits, *tag),
             Self::BoolAnd { value, count } | Self::BoolOr { value, count } => {
                 if *count == 0 {
                     Scalar::Boolean(false)
@@ -7562,6 +7571,32 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         if tag == qdb_types::TAG_BOOLEAN {
             return Err(Error::new(format!(
                 "there is no matching function `{fname}` with the argument types: (BOOLEAN)"
+            )));
+        }
+    }
+    if aggregate.func == AggFunc::BitAnd {
+        if let Some(extra) = &aggregate.extra {
+            let second = match extra {
+                AggregateExtra::Type(kind) => kind.clone(),
+                AggregateExtra::Column(name) => {
+                    let other = table
+                        .column_index(name)
+                        .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+                    qdb_types::type_name(table.meta.columns[other].tag).to_string()
+                }
+            };
+            return Err(Error::new(format!(
+                "there is no matching function `bit_and` with the argument types: ({}, {second})",
+                qdb_types::type_name(tag)
+            )));
+        }
+        if matches!(
+            tag,
+            qdb_types::TAG_BOOLEAN | qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE
+        ) {
+            return Err(Error::new(format!(
+                "there is no matching function `bit_and` with the argument types: ({})",
+                qdb_types::type_name(tag)
             )));
         }
     }
@@ -7624,19 +7659,22 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             "there is no matching function `{name}` with the argument types: (BOOLEAN)"
         )));
     }
-    let symbol_keys =
-        if matches!(aggregate.func, AggFunc::Sum | AggFunc::Avg) && tag == qdb_types::TAG_SYMBOL {
-            let mut keys = Vec::new();
-            for value in &table.columns[index] {
-                if value.is_null() || keys.contains(value) {
-                    continue;
-                }
-                keys.push(value.clone());
+    let symbol_keys = if matches!(
+        aggregate.func,
+        AggFunc::Sum | AggFunc::Avg | AggFunc::BitAnd
+    ) && tag == qdb_types::TAG_SYMBOL
+    {
+        let mut keys = Vec::new();
+        for value in &table.columns[index] {
+            if value.is_null() || keys.contains(value) {
+                continue;
             }
-            keys
-        } else {
-            Vec::new()
-        };
+            keys.push(value.clone());
+        }
+        keys
+    } else {
+        Vec::new()
+    };
     Ok(AggColumn {
         index: Some(index),
         tag,
@@ -7674,6 +7712,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::RegrIntercept
         | AggFunc::RegrR2 => qdb_types::TAG_DOUBLE,
         AggFunc::BoolAnd | AggFunc::BoolOr => qdb_types::TAG_BOOLEAN,
+        AggFunc::BitAnd => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
             if matches!(input.tag, qdb_types::TAG_BYTE | qdb_types::TAG_SHORT) =>
         {
@@ -7705,6 +7744,7 @@ fn contribution(
             Ok(Some(Scalar::Int(as_i64(value)? as i32)))
         }
         AggFunc::FirstNotNull | AggFunc::LastNotNull => Ok(Some(value.clone())),
+        AggFunc::BitAnd => bit_and_addend(value, input),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::CountDistinct => Ok(Some(value.clone())),
         AggFunc::ApproxCountDistinct => approx_distinct_value(value, input),
@@ -8028,6 +8068,9 @@ fn start_accumulator(aggregate: &AggregateExpr, input: &AggColumn) -> Accumulato
     if let Accumulator::StringAgg { delimiter, .. } = &mut accumulator {
         *delimiter = input.delimiter;
     }
+    if let Accumulator::BitAnd { tag, .. } = &mut accumulator {
+        *tag = bit_and_result_tag(input.tag);
+    }
     accumulator
 }
 
@@ -8198,6 +8241,82 @@ fn parse_integer_text(text: &str) -> Option<i64> {
     } else {
         Some(magnitude)
     }
+}
+
+fn bit_and_result_tag(tag: i32) -> i32 {
+    match tag {
+        qdb_types::TAG_BYTE => qdb_types::TAG_BYTE,
+        qdb_types::TAG_SHORT | qdb_types::TAG_CHAR => qdb_types::TAG_SHORT,
+        qdb_types::TAG_INT | qdb_types::TAG_SYMBOL => qdb_types::TAG_INT,
+        _ => qdb_types::TAG_LONG,
+    }
+}
+
+fn bit_and_scalar(bits: Option<i64>, tag: i32) -> Scalar {
+    let Some(bits) = bits else {
+        return match tag {
+            qdb_types::TAG_BYTE => Scalar::Byte(0),
+            qdb_types::TAG_SHORT => Scalar::Short(0),
+            _ => Scalar::Null,
+        };
+    };
+    match tag {
+        qdb_types::TAG_BYTE => Scalar::Byte(bits as i8),
+        qdb_types::TAG_SHORT => Scalar::Short(bits as i16),
+        qdb_types::TAG_INT => Scalar::Int(bits as i32),
+        _ => Scalar::Long(bits),
+    }
+}
+
+fn bit_and_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Error> {
+    let bits = match input.tag {
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT | qdb_types::TAG_LONG => {
+            as_i64(value)?
+        }
+        qdb_types::TAG_DATE => match value {
+            Scalar::Date(millis) => *millis,
+            _ => return Err(Error::new("internal: date column value")),
+        },
+        qdb_types::TAG_TIMESTAMP => match value {
+            Scalar::Timestamp(micros) => *micros,
+            _ => return Err(Error::new("internal: timestamp column value")),
+        },
+        qdb_types::TAG_SYMBOL => {
+            let key = input
+                .symbol_keys
+                .iter()
+                .position(|found| found == value)
+                .ok_or_else(|| Error::new("internal: symbol key"))?;
+            i64::from(i32::try_from(key).unwrap_or(i32::MAX))
+        }
+        qdb_types::TAG_CHAR => {
+            let text = scalar_text(value);
+            let parsed = parse_integer_text(&text).and_then(|number| i16::try_from(number).ok());
+            let Some(number) = parsed else {
+                return Err(Error::new(format!(
+                    "inconvertible value: {text} [CHAR -> SHORT]"
+                )));
+            };
+            i64::from(number)
+        }
+        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR => {
+            let text = scalar_text(value);
+            let Some(number) = parse_integer_text(&text) else {
+                let kind = qdb_types::type_name(input.tag);
+                return Err(Error::new(format!(
+                    "inconvertible value: `{text}` [{kind} -> LONG]"
+                )));
+            };
+            number
+        }
+        _ => {
+            return Err(Error::new(format!(
+                "there is no matching function `bit_and` with the argument types: ({})",
+                qdb_types::type_name(input.tag)
+            )));
+        }
+    };
+    Ok(Some(Scalar::Long(bits)))
 }
 
 fn null_agg_name(func: AggFunc) -> &'static str {
@@ -8413,6 +8532,12 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
                 *value = bit;
             }
             *count += 1;
+        }
+        Accumulator::BitAnd { bits, .. } => {
+            let Scalar::Long(next) = next else {
+                return;
+            };
+            *bits = Some(bits.map(|current| current & next).unwrap_or(next));
         }
         Accumulator::BoolOr { value, count } => {
             let Scalar::Boolean(bit) = next else {
@@ -22032,6 +22157,190 @@ mod tests {
             err.message.contains(
                 "there is no matching function `last_not_null` with the argument types: (BOOLEAN)"
             ),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn bit_and_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT bit_and(flags) FROM sensors",
+                "expected/bw_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(id) FROM sensors",
+                "expected/bw_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(b) FROM sensors",
+                "expected/bw_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(code) FROM sensors",
+                "expected/bw_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(flags) FROM sensors WHERE id = 1",
+                "expected/bw_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(flags) FROM sensors WHERE id > 100",
+                "expected/bw_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(b) FROM sensors WHERE id > 100",
+                "expected/bw_byte0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(code) FROM sensors WHERE id > 100",
+                "expected/bw_short0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(ch) FROM sensors WHERE id > 100",
+                "expected/bw_ch0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(id) FROM sensors WHERE id = NULL",
+                "expected/bw_nullid.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(id) FROM sensors WHERE id = -1",
+                "expected/bw_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT BIT_AND(flags) FROM sensors",
+                "expected/bw_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(flags) FROM sensors LIMIT 0",
+                "expected/bw_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(location) FROM sensors",
+                "expected/bw_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(location) FROM sensors GROUP BY location ORDER BY location",
+                "expected/bw_loc_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(day) FROM sensors",
+                "expected/bw_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(ts) FROM sensors",
+                "expected/bw_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/bw_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bit_and(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/bw_grp_id.tsv",
+            ),
+            (
+                &days,
+                "SELECT bit_and(id) FROM days",
+                "expected/bw_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT bit_and(id) FROM days GROUP BY location ORDER BY location",
+                "expected/bw_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT bit_and() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `bit_and` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bit_and(flags, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `bit_and` with the argument types: (INT, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bit_and(id, note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `bit_and` with the argument types: (LONG, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bit_and(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bit_and(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bit_and(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `bit_and` with the argument types: (BOOLEAN)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bit_and(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `bit_and` with the argument types: (DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bit_and(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bit_and(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> SHORT]"),
             "{}",
             err.message
         );
