@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — ksum()
+
+`ksum(col)` devuelve la suma de Kahan como `DOUBLE`. El primer valor finito se guarda tal cual, así que un único `-0.0` sigue siendo `-0.0`. Los siguientes se compensan. Sin valores es NULL. Un nulo no cuenta. `ksum(reading)` es `1.5` y `ksum(score)` es `-0.25`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `ksum(ts)` imprime `6.311736986E15` en 10.1.0 y `6311736986000000.0` en Rust. `ksum(day)` imprime `3.1701474E12` y `3170147400000.0`. Esas dos consultas no se capturan. Se contrastó el resto con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — stddev_pop()
 
 `stddev_pop(col)` devuelve la desviación típica poblacional como `DOUBLE`: la raíz cuadrada de `var_pop`. Con un solo valor el resultado es `0.0`. Sin valores es NULL. Un nulo no cuenta. `stddev_pop(reading)` es `0.7071067811865476`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `stddev_pop(day)` imprime `7.472337167301272E11` en 10.1.0 y `747233716730.1272` en Rust. Esa consulta no se captura. Se contrastó el resto con `/exec` en `sensors` y `days`.

@@ -7290,6 +7290,11 @@ enum Accumulator {
         population: bool,
     },
     Distinct(Vec<Scalar>),
+    Kahan {
+        sum: f64,
+        compensation: f64,
+        count: i64,
+    },
 }
 
 impl Accumulator {
@@ -7313,6 +7318,11 @@ impl Accumulator {
                 }
             }
             AggFunc::CountDistinct => Self::Distinct(Vec::new()),
+            AggFunc::KSum => Self::Kahan {
+                sum: 0.0,
+                compensation: 0.0,
+                count: 0,
+            },
         }
     }
 
@@ -7321,9 +7331,10 @@ impl Accumulator {
             Self::Count(total) => Scalar::Long(*total),
             Self::Distinct(seen) => Scalar::Long(seen.len() as i64),
             Self::Value(Some(value)) => value.clone(),
-            Self::Value(None) | Self::Average { count: 0, .. } | Self::StdDev { count: 0, .. } => {
-                Scalar::Null
-            }
+            Self::Value(None)
+            | Self::Average { count: 0, .. }
+            | Self::StdDev { count: 0, .. }
+            | Self::Kahan { count: 0, .. } => Scalar::Null,
             Self::Average {
                 total: Some(total),
                 count,
@@ -7352,6 +7363,13 @@ impl Accumulator {
                     Scalar::Null
                 }
             }
+            Self::Kahan { sum, count, .. } => {
+                if *count > 0 && sum.is_finite() {
+                    Scalar::Double(*sum)
+                } else {
+                    Scalar::Null
+                }
+            }
         }
     }
 }
@@ -7371,7 +7389,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     let tag = table.meta.columns[index].tag;
     if matches!(
         aggregate.func,
-        AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop | AggFunc::StdDevPop
+        AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop | AggFunc::StdDevPop | AggFunc::KSum
     ) && matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL)
     {
         let fname = moment_name(aggregate.func);
@@ -7420,7 +7438,8 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::StdDev
         | AggFunc::Variance
         | AggFunc::VarPop
-        | AggFunc::StdDevPop => qdb_types::TAG_DOUBLE,
+        | AggFunc::StdDevPop
+        | AggFunc::KSum => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
@@ -7451,9 +7470,11 @@ fn contribution(
         AggFunc::Min | AggFunc::Max => Ok(Some(value.clone())),
         AggFunc::Sum => sum_addend(value, input),
         AggFunc::Avg => avg_addend(value, input),
-        AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop | AggFunc::StdDevPop => {
-            stddev_addend(value, input)
-        }
+        AggFunc::StdDev
+        | AggFunc::Variance
+        | AggFunc::VarPop
+        | AggFunc::StdDevPop
+        | AggFunc::KSum => stddev_addend(value, input),
     }
 }
 
@@ -7523,6 +7544,7 @@ fn moment_name(func: AggFunc) -> &'static str {
         AggFunc::Variance => "variance",
         AggFunc::VarPop => "var_pop",
         AggFunc::StdDevPop => "stddev_pop",
+        AggFunc::KSum => "ksum",
         _ => "stddev",
     }
 }
@@ -7653,6 +7675,29 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             let old_mean = *mean;
             *mean += (value - *mean) / (*count as f64);
             *m2 += (value - *mean) * (value - old_mean);
+        }
+        Accumulator::Kahan {
+            sum,
+            compensation,
+            count,
+        } => {
+            let Scalar::Double(value) = next else {
+                return;
+            };
+            if !value.is_finite() {
+                return;
+            }
+            if *count == 0 {
+                *sum = value;
+                *compensation = 0.0;
+                *count = 1;
+                return;
+            }
+            let y = value - *compensation;
+            let t = *sum + y;
+            *compensation = (t - *sum) - y;
+            *sum = t;
+            *count += 1;
         }
         Accumulator::Value(current) => match current {
             None => *current = Some(next),
@@ -18553,6 +18598,164 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT stddev_pop(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn ksum_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT ksum(reading) FROM sensors",
+                "expected/ks_read.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(id) FROM sensors",
+                "expected/ks_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(score) FROM sensors",
+                "expected/ks_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(b) FROM sensors",
+                "expected/ks_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(code) FROM sensors",
+                "expected/ks_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(flags) FROM sensors",
+                "expected/ks_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(reading) FROM sensors WHERE id = 1",
+                "expected/ks_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(reading) FROM sensors WHERE id > 100",
+                "expected/ks_none.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(reading) FROM sensors WHERE id = -1",
+                "expected/ks_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT KSUM(reading) FROM sensors",
+                "expected/ks_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(reading) FROM sensors LIMIT 0",
+                "expected/ks_lim0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/ks_grp.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/ks_grp_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ksum(reading) FROM sensors WHERE location = 'madrid'",
+                "expected/ks_where.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT ksum(id) FROM days",
+                "expected/ks_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT ksum(id) FROM days GROUP BY location ORDER BY location",
+                "expected/ks_days_grp.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT ksum() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `ksum` requires arguments: ksum(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ksum(reading, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `ksum`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ksum(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ksum(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ksum(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `ksum` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ksum(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `ksum` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ksum(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ksum(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ksum(ch) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),

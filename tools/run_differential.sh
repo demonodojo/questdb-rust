@@ -1551,7 +1551,21 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   dp_lim0 "SELECT stddev_pop(reading) FROM sensors LIMIT 0" \
   dp_grp "SELECT stddev_pop(reading) FROM sensors GROUP BY location ORDER BY location" \
   dp_grp_id "SELECT stddev_pop(id) FROM sensors GROUP BY location ORDER BY location" \
-  dp_where "SELECT stddev_pop(reading) FROM sensors WHERE location = 'madrid'"
+  dp_where "SELECT stddev_pop(reading) FROM sensors WHERE location = 'madrid'" \
+  ks_read "SELECT ksum(reading) FROM sensors" \
+  ks_id "SELECT ksum(id) FROM sensors" \
+  ks_score "SELECT ksum(score) FROM sensors" \
+  ks_byte "SELECT ksum(b) FROM sensors" \
+  ks_code "SELECT ksum(code) FROM sensors" \
+  ks_flags "SELECT ksum(flags) FROM sensors" \
+  ks_one "SELECT ksum(reading) FROM sensors WHERE id = 1" \
+  ks_none "SELECT ksum(reading) FROM sensors WHERE id > 100" \
+  ks_neg "SELECT ksum(reading) FROM sensors WHERE id = -1" \
+  ks_case "SELECT KSUM(reading) FROM sensors" \
+  ks_lim0 "SELECT ksum(reading) FROM sensors LIMIT 0" \
+  ks_grp "SELECT ksum(reading) FROM sensors GROUP BY location ORDER BY location" \
+  ks_grp_id "SELECT ksum(id) FROM sensors GROUP BY location ORDER BY location" \
+  ks_where "SELECT ksum(reading) FROM sensors WHERE location = 'madrid'"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1719,7 +1733,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   vp_days "SELECT var_pop(id) FROM days" \
   vp_days_grp "SELECT var_pop(id) FROM days GROUP BY location ORDER BY location" \
   dp_days "SELECT stddev_pop(id) FROM days" \
-  dp_days_grp "SELECT stddev_pop(id) FROM days GROUP BY location ORDER BY location"
+  dp_days_grp "SELECT stddev_pop(id) FROM days GROUP BY location ORDER BY location" \
+  ks_days "SELECT ksum(id) FROM days" \
+  ks_days_grp "SELECT ksum(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3218,6 +3234,20 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT stddev_pop(reading) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT stddev_pop(id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT stddev_pop(reading) FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT ksum(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ksum(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ksum(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ksum(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ksum(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ksum(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ksum(reading) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT ksum(reading) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT ksum(reading) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT KSUM(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ksum(reading) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT ksum(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT ksum(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT ksum(reading) FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3384,6 +3414,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT var_pop(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT stddev_pop(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT stddev_pop(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT ksum(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT ksum(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
