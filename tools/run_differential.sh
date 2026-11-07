@@ -1611,7 +1611,23 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sa_pipe "SELECT string_agg(note, '|') FROM sensors" \
   sa_beta "SELECT string_agg(note, 'β') FROM sensors" \
   sa_nul "SELECT string_agg(note, '') FROM sensors" \
-  sa_nullsep "SELECT string_agg(note, null) FROM sensors"
+  sa_nullsep "SELECT string_agg(note, null) FROM sensors" \
+  cp_read "SELECT covar_pop(reading, score) FROM sensors" \
+  cp_id "SELECT covar_pop(reading, id) FROM sensors" \
+  cp_flags "SELECT covar_pop(id, flags) FROM sensors" \
+  cp_byte "SELECT covar_pop(b, code) FROM sensors" \
+  cp_score "SELECT covar_pop(score, flags) FROM sensors" \
+  cp_ts "SELECT covar_pop(ts, id) FROM sensors" \
+  cp_code "SELECT covar_pop(flags, code) FROM sensors" \
+  cp_one "SELECT covar_pop(reading, score) FROM sensors WHERE id = 1" \
+  cp_none "SELECT covar_pop(reading, score) FROM sensors WHERE id > 100" \
+  cp_neg "SELECT covar_pop(reading, score) FROM sensors WHERE id = -1" \
+  cp_null "SELECT covar_pop(reading, score) FROM sensors WHERE id = NULL" \
+  cp_case "SELECT COVAR_POP(reading, score) FROM sensors" \
+  cp_lim0 "SELECT covar_pop(reading, score) FROM sensors LIMIT 0" \
+  cp_grp "SELECT covar_pop(reading, score) FROM sensors GROUP BY location ORDER BY location" \
+  cp_grp_id "SELECT covar_pop(reading, id) FROM sensors GROUP BY location ORDER BY location" \
+  cp_where "SELECT covar_pop(reading, score) FROM sensors WHERE location = 'madrid'"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3348,6 +3364,22 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT string_agg(note, 'β') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT string_agg(note, '') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT string_agg(note, null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(reading, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(b, code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(score, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(ts, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(flags, code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(reading, score) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(reading, score) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(reading, score) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(reading, score) FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT COVAR_POP(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(reading, score) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(reading, score) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(reading, id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT covar_pop(reading, score) FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),

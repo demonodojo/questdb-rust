@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — covar_pop()
+
+`covar_pop(y, x)` devuelve la covarianza poblacional como `DOUBLE`: la suma de productos cruzados dividida por el número de parejas finitas. Una sola pareja es `0.0`. Sin parejas es NULL. Un nulo en cualquiera de las dos columnas omite la pareja. `covar_pop(reading, score)` es `0.6666666666666666`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `covar_pop(day, id)` imprime `-7.1505E9` en 10.1.0 y `-7150500000.0` en Rust. `covar_pop(id, ts)` en `days` imprime `2.5118333333291668E10` y `25118333333.291668`. El grupo `madrid` imprime `3.76775E10` y `37677500000.0`. Esas consultas no se capturan. Se contrastó el resto con `/exec` en `sensors`.
+
 ## 2026-11-07 — string_agg()
 
 `string_agg(col, sep)` une los textos en orden de fila con un separador de un carácter. Un nulo no aporta. Una cadena vacía sí, así que `string_agg(note, ',')` es `alpha,,βeta`. Un `CHAR` 0 no cuenta: `string_agg(ch, ',')` es `A,β,東`. El resultado es `STRING`, o `VARCHAR` si la columna lo es. Sin valores es NULL. El separador vacío y el nulo insertan el carácter 0. Un separador de dos caracteres no tiene función. Se contrastó con `/exec` en `sensors` y `days`.

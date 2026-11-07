@@ -55,6 +55,7 @@ pub enum AggFunc {
     NSum,
     ApproxCountDistinct,
     StringAgg,
+    CovarPop,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +75,8 @@ pub struct AggregateExpr {
     pub separator_column: Option<String>,
     /// Third argument of `string_agg`, when present.
     pub separator_more: Option<Scalar>,
+    /// Second column of `covar_pop(y, x)`.
+    pub pair: Option<String>,
 }
 
 /// One grouping column plus one aggregate, in select-list order.
@@ -3040,6 +3043,7 @@ impl<'a> Parser<'a> {
                 | "nsum"
                 | "approx_count_distinct"
                 | "string_agg"
+                | "covar_pop"
         ) {
             return false;
         }
@@ -3084,6 +3088,7 @@ impl<'a> Parser<'a> {
             "nsum" => AggFunc::NSum,
             "approx_count_distinct" => AggFunc::ApproxCountDistinct,
             "string_agg" => AggFunc::StringAgg,
+            "covar_pop" => AggFunc::CovarPop,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3125,6 +3130,7 @@ impl<'a> Parser<'a> {
         let mut separator_column = None;
         let mut separator_more = None;
         let mut separator_label = None;
+        let mut pair = None;
         if func == AggFunc::StringAgg && self.peek() == Some(b',') {
             self.pos += 1;
             self.skip();
@@ -3202,6 +3208,36 @@ impl<'a> Parser<'a> {
                 self.skip();
             }
         }
+        if func == AggFunc::CovarPop && self.peek() == Some(b',') {
+            self.pos += 1;
+            self.skip();
+            if !self
+                .peek()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            {
+                return Err(Error::new("unsupported: covar_pop expects a column"));
+            }
+            pair = Some(self.ident_spelling()?);
+            self.skip();
+            if self.peek() == Some(b',') {
+                let mut provided = 2;
+                while self.peek().is_some() && self.peek() != Some(b')') {
+                    if self.eat(b',') {
+                        provided += 1;
+                    } else {
+                        self.pos += 1;
+                    }
+                }
+                if !self.eat(b')') {
+                    return Err(Error::new(format!(
+                        "unsupported: expected ')' after {name}"
+                    )));
+                }
+                return Err(Error::new(format!(
+                    "wrong number of arguments for function `covar_pop`; expected: 2, provided: {provided}"
+                )));
+            }
+        }
         if !self.eat(b')') {
             return Err(Error::new(format!(
                 "unsupported: expected ')' after {name}"
@@ -3222,17 +3258,28 @@ impl<'a> Parser<'a> {
                 "function `{fname}` requires arguments: {fname}(DOUBLE)"
             )));
         }
+        if func == AggFunc::CovarPop && column.is_none() {
+            return Err(Error::new(
+                "function `covar_pop` requires arguments: covar_pop(DOUBLE, DOUBLE)",
+            ));
+        }
+        if func == AggFunc::CovarPop && pair.is_none() {
+            return Err(Error::new(
+                "wrong number of arguments for function `covar_pop`; expected: 2, provided: 1",
+            ));
+        }
         if func != AggFunc::Count && column.is_none() {
             return Err(Error::new(format!(
                 "function `{}` requires arguments",
                 name.to_ascii_lowercase()
             )));
         }
-        let label = match (&column, &precision_label, &separator_label) {
-            (Some(column), Some(precision), _) => format!("{name}({column}, {precision})"),
-            (Some(column), None, Some(separator)) => format!("{name}({column}, {separator})"),
-            (Some(column), None, None) => format!("{name}({column})"),
-            (None, _, _) => format!("{name}()"),
+        let label = match (&column, &precision_label, &separator_label, &pair) {
+            (Some(column), Some(precision), _, _) => format!("{name}({column}, {precision})"),
+            (Some(column), None, Some(separator), _) => format!("{name}({column}, {separator})"),
+            (Some(column), None, None, Some(pair)) => format!("{name}({column}, {pair})"),
+            (Some(column), None, None, None) => format!("{name}({column})"),
+            (None, _, _, _) => format!("{name}()"),
         };
         Ok(AggregateExpr {
             func,
@@ -3243,6 +3290,7 @@ impl<'a> Parser<'a> {
             separator,
             separator_column,
             separator_more,
+            pair,
         })
     }
 
