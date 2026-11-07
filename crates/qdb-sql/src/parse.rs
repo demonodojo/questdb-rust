@@ -108,6 +108,7 @@ pub enum Proj {
     DateDiff(DateDiffExpr),
     Year(YearExpr),
     Month(MonthExpr),
+    Day(DayExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -306,6 +307,13 @@ pub struct MonthExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `day(timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DayExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -484,6 +492,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_year()?.label
             } else if parser.starts_month_call() {
                 parser.parse_month()?.label
+            } else if parser.starts_day_call() {
+                parser.parse_day()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -586,6 +596,7 @@ enum SelectPiece {
     DateDiff(DateDiffExpr),
     Year(YearExpr),
     Month(MonthExpr),
+    Day(DayExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -739,6 +750,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Year(self.parse_year()?));
             } else if self.starts_month_call() {
                 pieces.push(SelectPiece::Month(self.parse_month()?));
+            } else if self.starts_day_call() {
+                pieces.push(SelectPiece::Day(self.parse_day()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -804,6 +817,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::DateDiff(_)
                     | SelectPiece::Year(_)
                     | SelectPiece::Month(_)
+                    | SelectPiece::Day(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -855,6 +869,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::DateDiff(expr) => items.push(Proj::DateDiff(expr)),
                     SelectPiece::Year(expr) => items.push(Proj::Year(expr)),
                     SelectPiece::Month(expr) => items.push(Proj::Month(expr)),
+                    SelectPiece::Day(expr) => items.push(Proj::Day(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -930,6 +945,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::DateDiff(_)
                 | SelectPiece::Year(_)
                 | SelectPiece::Month(_)
+                | SelectPiece::Day(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1176,6 +1192,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_day_call(&self) -> bool {
+        self.starts_named_call("day")
+    }
+
+    fn parse_day(&mut self) -> Result<DayExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `day` requires arguments: day(TIMESTAMP)".to_string(),
+            ));
+        }
+        Ok(DayExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
