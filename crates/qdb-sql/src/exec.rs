@@ -8032,6 +8032,7 @@ struct AggColumn {
     delimiter: char,
     pair_index: Option<usize>,
     pair_tag: i32,
+    clock_index: Option<usize>,
     /// Significant digits for `approx_median` and `approx_percentile`. One when omitted.
     precision: i32,
     /// Percentile in the closed interval `0.0..=1.0`. `approx_median` uses `0.5`.
@@ -8128,6 +8129,13 @@ enum Accumulator {
     IsOrdered {
         ordered: bool,
         previous: Option<i64>,
+    },
+    Haversine {
+        last_lat: f64,
+        last_lon: f64,
+        last_ts: i64,
+        has_last: bool,
+        distance: f64,
     },
     PercentileDisc {
         longs: Vec<i64>,
@@ -8343,6 +8351,13 @@ impl Accumulator {
                 ordered: true,
                 previous: None,
             },
+            AggFunc::Haversine => Self::Haversine {
+                last_lat: f64::NAN,
+                last_lon: f64::NAN,
+                last_ts: i64::MIN,
+                has_last: false,
+                distance: 0.0,
+            },
             AggFunc::PercentileDisc
             | AggFunc::QuantileDisc
             | AggFunc::PercentileCont
@@ -8542,6 +8557,7 @@ impl Accumulator {
                 }
             }
             Self::IsOrdered { ordered, .. } => Scalar::Boolean(*ordered),
+            Self::Haversine { distance, .. } => Scalar::Double(*distance),
             Self::PercentileDisc { .. } => Scalar::Null,
         }
     }
@@ -8557,6 +8573,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             delimiter: '\0',
             pair_index: None,
             pair_tag: qdb_types::TAG_DOUBLE,
+            clock_index: None,
             precision: 1,
             percentile: 0.5,
         });
@@ -8565,6 +8582,9 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         .column_index(name)
         .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
     let tag = table.meta.columns[index].tag;
+    if aggregate.func == AggFunc::Haversine {
+        return haversine_input(table, index, tag, aggregate);
+    }
     if aggregate.func == AggFunc::Sparkline {
         if let Some(extra) = &aggregate.fourth_type {
             let mut types = vec![qdb_types::type_name(tag).to_string()];
@@ -8837,9 +8857,91 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         delimiter,
         pair_index,
         pair_tag,
+        clock_index: None,
         precision,
         percentile,
     })
+}
+
+fn haversine_input(
+    table: &Table,
+    index: usize,
+    tag: i32,
+    aggregate: &AggregateExpr,
+) -> Result<AggColumn, Error> {
+    if !haversine_number(tag) {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `haversine_dist_deg` at #1 expected: DOUBLE, actual: {}",
+            qdb_types::type_name(tag)
+        )));
+    }
+    let lon_name = aggregate
+        .pair
+        .as_deref()
+        .ok_or_else(|| Error::new("internal: haversine longitude"))?;
+    let lon = table
+        .column_index(lon_name)
+        .ok_or_else(|| Error::new(format!("Invalid column: {lon_name}")))?;
+    let lon_tag = table.meta.columns[lon].tag;
+    if !haversine_number(lon_tag) {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `haversine_dist_deg` at #2 expected: DOUBLE, actual: {}",
+            qdb_types::type_name(lon_tag)
+        )));
+    }
+    let AggregateExtra::Column(clock_name) = aggregate
+        .extra
+        .as_ref()
+        .ok_or_else(|| Error::new("internal: haversine timestamp"))?
+    else {
+        return Err(Error::new("internal: haversine timestamp"));
+    };
+    let clock = table
+        .column_index(clock_name)
+        .ok_or_else(|| Error::new(format!("Invalid column: {clock_name}")))?;
+    let clock_tag = table.meta.columns[clock].tag;
+    if !haversine_clock(clock_tag) {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `haversine_dist_deg` at #3 expected: TIMESTAMP, actual: {}",
+            qdb_types::type_name(clock_tag)
+        )));
+    }
+    Ok(AggColumn {
+        index: Some(index),
+        tag,
+        func: aggregate.func,
+        symbol_keys: Vec::new(),
+        delimiter: '\0',
+        pair_index: Some(lon),
+        pair_tag: lon_tag,
+        clock_index: Some(clock),
+        precision: 1,
+        percentile: 0.5,
+    })
+}
+
+fn haversine_number(tag: i32) -> bool {
+    matches!(
+        tag,
+        qdb_types::TAG_BYTE
+            | qdb_types::TAG_SHORT
+            | qdb_types::TAG_INT
+            | qdb_types::TAG_LONG
+            | qdb_types::TAG_FLOAT
+            | qdb_types::TAG_DOUBLE
+    )
+}
+
+fn haversine_clock(tag: i32) -> bool {
+    matches!(
+        tag,
+        qdb_types::TAG_TIMESTAMP
+            | qdb_types::TAG_DATE
+            | qdb_types::TAG_LONG
+            | qdb_types::TAG_INT
+            | qdb_types::TAG_SHORT
+            | qdb_types::TAG_BYTE
+    )
 }
 
 fn aggregate_order_tag(input: &AggColumn) -> i32 {
@@ -8887,7 +8989,9 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::ArgMin => arg_min_result_tag(input.tag, input.pair_tag),
         AggFunc::BoolAnd | AggFunc::BoolOr | AggFunc::IsOrdered => qdb_types::TAG_BOOLEAN,
         AggFunc::PercentileDisc | AggFunc::QuantileDisc => percentile_disc_tag(input.tag),
-        AggFunc::PercentileCont | AggFunc::QuantileCont => qdb_types::TAG_DOUBLE,
+        AggFunc::PercentileCont | AggFunc::QuantileCont | AggFunc::Haversine => {
+            qdb_types::TAG_DOUBLE
+        }
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
             if matches!(input.tag, qdb_types::TAG_BYTE | qdb_types::TAG_SHORT) =>
@@ -8981,7 +9085,8 @@ fn contribution(
         | AggFunc::PercentileDisc
         | AggFunc::QuantileDisc
         | AggFunc::PercentileCont
-        | AggFunc::QuantileCont => Ok(None),
+        | AggFunc::QuantileCont
+        | AggFunc::Haversine => Ok(None),
     }
 }
 
@@ -9046,12 +9151,96 @@ fn scalar_text(value: &Scalar) -> String {
     }
 }
 
+fn update_haversine(
+    accumulator: &mut Accumulator,
+    columns: &[Vec<Scalar>],
+    row: usize,
+    input: &AggColumn,
+) -> Result<(), Error> {
+    let Accumulator::Haversine {
+        last_lat,
+        last_lon,
+        last_ts,
+        has_last,
+        distance,
+    } = accumulator
+    else {
+        return Err(Error::new("internal: haversine accumulator"));
+    };
+    let (Some(lat_index), Some(lon_index), Some(clock_index)) =
+        (input.index, input.pair_index, input.clock_index)
+    else {
+        return Err(Error::new("internal: haversine columns"));
+    };
+    let lat = haversine_degrees(&columns[lat_index][row]);
+    let lon = haversine_degrees(&columns[lon_index][row]);
+    let ts = haversine_timestamp(&columns[clock_index][row]);
+    if !*has_last {
+        *last_lat = lat;
+        *last_lon = lon;
+        *last_ts = ts;
+        *has_last = true;
+        return Ok(());
+    }
+    if last_lat.is_finite() && last_lon.is_finite() && *last_ts != i64::MIN {
+        if lat.is_finite() && lon.is_finite() && ts != i64::MIN {
+            *distance += haversine_km(*last_lat, *last_lon, lat, lon);
+            *last_lat = lat;
+            *last_lon = lon;
+            *last_ts = ts;
+        }
+    } else {
+        *last_lat = lat;
+        *last_lon = lon;
+        *last_ts = ts;
+    }
+    Ok(())
+}
+
+fn haversine_degrees(value: &Scalar) -> f64 {
+    match value {
+        Scalar::Double(number) => *number,
+        Scalar::Float(number) => f64::from(*number),
+        Scalar::Long(number) => *number as f64,
+        Scalar::Int(number) => f64::from(*number),
+        Scalar::Short(number) => f64::from(*number),
+        Scalar::Byte(number) => f64::from(*number),
+        _ => f64::NAN,
+    }
+}
+
+fn haversine_timestamp(value: &Scalar) -> i64 {
+    match value {
+        Scalar::Timestamp(number) | Scalar::Date(number) | Scalar::Long(number) => *number,
+        Scalar::Int(number) => i64::from(*number),
+        Scalar::Short(number) => i64::from(*number),
+        Scalar::Byte(number) => i64::from(*number),
+        _ => i64::MIN,
+    }
+}
+
+fn haversine_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    const EARTH_RADIUS_KM: f64 = 6371.088;
+    let lat1 = lat1.to_radians();
+    let lon1 = lon1.to_radians();
+    let lat2 = lat2.to_radians();
+    let lon2 = lon2.to_radians();
+    let half_lat = (lat2 - lat1) / 2.0;
+    let half_lon = (lon2 - lon1) / 2.0;
+    let chord = half_lat.sin().powi(2) + lat1.cos() * lat2.cos() * half_lon.sin().powi(2);
+    let angle = 2.0 * chord.sqrt().atan2((1.0 - chord).sqrt());
+    EARTH_RADIUS_KM * angle
+}
+
 fn feed(
     accumulator: &mut Accumulator,
     columns: &[Vec<Scalar>],
     row: usize,
     input: &AggColumn,
 ) -> Result<(), Error> {
+    if input.func == AggFunc::Haversine {
+        return update_haversine(accumulator, columns, row, input);
+    }
     if input.func == AggFunc::Vwap {
         let price_index = input
             .index
@@ -11105,7 +11294,7 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
                 }
             }
         },
-        Accumulator::ArgMax { .. } => {}
+        Accumulator::ArgMax { .. } | Accumulator::Haversine { .. } => {}
     }
 }
 
@@ -14653,6 +14842,120 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn haversine_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT haversine_dist_deg(reading, score, ts) FROM sensors",
+                "expected/hv_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT haversine_dist_deg(reading, score, ts) FROM sensors WHERE id = 1",
+                "expected/hv_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT haversine_dist_deg(reading, score, ts) FROM sensors WHERE id > 100",
+                "expected/hv_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT HAVERSINE_DIST_DEG(reading, score, ts) FROM sensors WHERE id = 1",
+                "expected/hv_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT haversine_dist_deg(reading, score, ts) FROM sensors LIMIT 0",
+                "expected/hv_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT haversine_dist_deg(id, id, ts) FROM days",
+                "expected/hv_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT haversine_dist_deg(id, id, ts) FROM days WHERE id = 1",
+                "expected/hv_days_one.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT haversine_dist_deg() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `haversine_dist_deg` requires arguments: haversine_dist_deg(DOUBLE, DOUBLE, TIMESTAMP)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT haversine_dist_deg(reading, score) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `haversine_dist_deg`; expected: 3, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT haversine_dist_deg(reading, score, ts, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `haversine_dist_deg`; expected: 3, provided: 4"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT haversine_dist_deg(reading, score, reading) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `haversine_dist_deg` at #3 expected: TIMESTAMP, actual: DOUBLE"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT haversine_dist_deg(location, score, ts) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `haversine_dist_deg` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT haversine_dist_deg(missing, score, ts) FROM sensors",
+        )
+        .unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

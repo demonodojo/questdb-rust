@@ -2320,7 +2320,12 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   bn_zero "SELECT bar(flags, 0, 42, 0) FROM sensors WHERE id = 1" \
   bn_case "SELECT BAR(flags, 0, 42, 4) FROM sensors WHERE id = 1" \
   bn_none "SELECT bar(flags, 0, 42, 4) FROM sensors WHERE id > 100" \
-  bn_lim0 "SELECT bar(flags, 0, 42, 4) FROM sensors LIMIT 0"
+  bn_lim0 "SELECT bar(flags, 0, 42, 4) FROM sensors LIMIT 0" \
+  hv_all "SELECT haversine_dist_deg(reading, score, ts) FROM sensors" \
+  hv_one "SELECT haversine_dist_deg(reading, score, ts) FROM sensors WHERE id = 1" \
+  hv_none "SELECT haversine_dist_deg(reading, score, ts) FROM sensors WHERE id > 100" \
+  hv_case "SELECT HAVERSINE_DIST_DEG(reading, score, ts) FROM sensors WHERE id = 1" \
+  hv_lim0 "SELECT haversine_dist_deg(reading, score, ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2585,7 +2590,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   sx_days "SELECT switch(id, 1, 'one', 'other') FROM days" \
   sx_days_one "SELECT switch(id, 1, 'one', 'other') FROM days WHERE id = 1" \
   bn_days "SELECT bar(id, 0, 3, 3) FROM days" \
-  bn_days_one "SELECT bar(id, 0, 3, 3) FROM days WHERE id = 1"
+  bn_days_one "SELECT bar(id, 0, 3, 3) FROM days WHERE id = 1" \
+  hv_days "SELECT haversine_dist_deg(id, id, ts) FROM days" \
+  hv_days_one "SELECT haversine_dist_deg(id, id, ts) FROM days WHERE id = 1"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4853,6 +4860,11 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT BAR(flags, 0, 42, 4) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT bar(flags, 0, 42, 4) FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT bar(flags, 0, 42, 4) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT haversine_dist_deg(reading, score, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT haversine_dist_deg(reading, score, ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT haversine_dist_deg(reading, score, ts) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT HAVERSINE_DIST_DEG(reading, score, ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT haversine_dist_deg(reading, score, ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -5116,6 +5128,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT switch(id, 1, 'one', 'other') FROM days WHERE id = 1"),
     (os.environ["DIFF_H2"], "SELECT bar(id, 0, 3, 3) FROM days"),
     (os.environ["DIFF_H2"], "SELECT bar(id, 0, 3, 3) FROM days WHERE id = 1"),
+    (os.environ["DIFF_H2"], "SELECT haversine_dist_deg(id, id, ts) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT haversine_dist_deg(id, id, ts) FROM days WHERE id = 1"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

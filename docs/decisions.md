@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — haversine_dist_deg()
+
+`haversine_dist_deg(lat, lon, ts)` suma, en kilómetros, la distancia entre puntos consecutivos finitos y devuelve un `DOUBLE`. `haversine_dist_deg(reading, score, ts)` es `383.9025620024131`. Con una sola fila, o sin filas, el resultado es `0.0`. En `days`, `haversine_dist_deg(id, id, ts)` es `314.4073265716869`. La llamada vacía exige `haversine_dist_deg(DOUBLE, DOUBLE, TIMESTAMP)`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — bar()
 
 `bar(value, min, max, width)` dibuja el valor entre el mínimo y el máximo con bloques y devuelve `VARCHAR`. `bar(flags, 0, 42, 4)` es `▉`, NULL, cadena vacía y `████`. `bar(reading, 0, 2, 4)` con `id = 1` es `███`. Un ancho no positivo, un mínimo que no es menor que el máximo, o un valor nulo devuelven NULL. La llamada vacía exige `bar(DOUBLE, DOUBLE, DOUBLE, INT)`. Se contrastó con `/exec` en `sensors` y `days`.

@@ -93,6 +93,7 @@ pub enum AggFunc {
     ApproxPercentile,
     ArgMax,
     ArgMin,
+    Haversine,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3361,6 +3362,7 @@ impl<'a> Parser<'a> {
                 | "bit_and"
                 | "bit_or"
                 | "bit_xor"
+                | "haversine_dist_deg"
         ) {
             return false;
         }
@@ -3443,8 +3445,12 @@ impl<'a> Parser<'a> {
             "bit_and" => AggFunc::BitAnd,
             "bit_or" => AggFunc::BitOr,
             "bit_xor" => AggFunc::BitXor,
+            "haversine_dist_deg" => AggFunc::Haversine,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
+        if func == AggFunc::Haversine {
+            return self.finish_haversine(name, column);
+        }
         if func != AggFunc::Count && starred {
             return Err(Error::new("too few arguments for '*' [found=0,expected=2]"));
         }
@@ -4085,6 +4091,69 @@ impl<'a> Parser<'a> {
             third_type,
             third_value,
             fourth_type,
+        })
+    }
+
+    fn finish_haversine(
+        &mut self,
+        name: String,
+        lat: Option<String>,
+    ) -> Result<AggregateExpr, Error> {
+        let fname = "haversine_dist_deg";
+        self.skip();
+        if lat.is_none() {
+            if self.eat(b')') {
+                return Err(Error::new(format!(
+                    "function `{fname}` requires arguments: {fname}(DOUBLE, DOUBLE, TIMESTAMP)"
+                )));
+            }
+            return Err(Error::new(format!(
+                "unsupported: {fname} argument near `{}`",
+                self.rest()
+            )));
+        }
+        let mut names = vec![lat.expect("lat")];
+        while self.peek() == Some(b',') {
+            self.pos += 1;
+            self.skip();
+            if self
+                .peek()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            {
+                names.push(self.ident_spelling()?);
+            } else {
+                return Err(Error::new(format!(
+                    "unsupported: {fname} argument near `{}`",
+                    self.rest()
+                )));
+            }
+            self.skip();
+        }
+        if !self.eat(b')') {
+            return Err(Error::new(format!(
+                "unsupported: expected ')' after {name}"
+            )));
+        }
+        if names.len() != 3 {
+            return Err(Error::new(format!(
+                "wrong number of arguments for function `{fname}`; expected: 3, provided: {}",
+                names.len()
+            )));
+        }
+        Ok(AggregateExpr {
+            func: AggFunc::Haversine,
+            label: format!("{name}({}, {}, {})", names[0], names[1], names[2]),
+            column: Some(names[0].clone()),
+            precision: None,
+            precision_more: false,
+            separator: None,
+            separator_column: None,
+            separator_more: None,
+            pair: Some(names[1].clone()),
+            extra: Some(AggregateExtra::Column(names[2].clone())),
+            third_type: None,
+            third_value: None,
+            fourth_type: None,
         })
     }
 
