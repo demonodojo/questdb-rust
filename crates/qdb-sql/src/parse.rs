@@ -99,6 +99,7 @@ pub enum Proj {
     Abs(AbsExpr),
     Round(RoundExpr),
     RoundDown(RoundDownExpr),
+    RoundUp(RoundUpExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -229,6 +230,13 @@ pub struct RoundExpr {
 /// `round_down(number, scale)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoundDownExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `round_up(number, scale)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoundUpExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -393,6 +401,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_abs()?.label
             } else if parser.starts_round_down_call() {
                 parser.parse_round_down()?.label
+            } else if parser.starts_round_up_call() {
+                parser.parse_round_up()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -486,6 +496,7 @@ enum SelectPiece {
     Abs(AbsExpr),
     Round(RoundExpr),
     RoundDown(RoundDownExpr),
+    RoundUp(RoundUpExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -621,6 +632,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Abs(self.parse_abs()?));
             } else if self.starts_round_down_call() {
                 pieces.push(SelectPiece::RoundDown(self.parse_round_down()?));
+            } else if self.starts_round_up_call() {
+                pieces.push(SelectPiece::RoundUp(self.parse_round_up()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -677,6 +690,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Abs(_)
                     | SelectPiece::Round(_)
                     | SelectPiece::RoundDown(_)
+                    | SelectPiece::RoundUp(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -719,6 +733,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Abs(expr) => items.push(Proj::Abs(expr)),
                     SelectPiece::Round(expr) => items.push(Proj::Round(expr)),
                     SelectPiece::RoundDown(expr) => items.push(Proj::RoundDown(expr)),
+                    SelectPiece::RoundUp(expr) => items.push(Proj::RoundUp(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -785,6 +800,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Abs(_)
                 | SelectPiece::Round(_)
                 | SelectPiece::RoundDown(_)
+                | SelectPiece::RoundUp(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1031,6 +1047,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_round_up_call(&self) -> bool {
+        self.starts_named_call("round_up")
+    }
+
+    fn parse_round_up(&mut self) -> Result<RoundUpExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `round_up` requires arguments".to_string(),
+            ));
+        }
+        Ok(RoundUpExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
