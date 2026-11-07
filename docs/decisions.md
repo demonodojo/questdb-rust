@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — variance()
+
+`variance(col)` devuelve la varianza muestral como `DOUBLE`, el cuadrado de `stddev` antes de la raíz. Hace falta más de un valor finito; con cero o uno el resultado es NULL. Un nulo no cuenta. `variance(reading)` es `0.75`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `variance(code)` imprime `2.68479158E8` en 10.1.0 y `268479158.0` en Rust. `variance(ts)` imprime `1.6666666666666667E12` y `1666666666666.6667`. `variance(day)` imprime `8.3753734112748E23` y `8.3753734112748e+23`. Esas tres consultas no se capturan. Se contrastó el resto con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — stddev()
 
 `stddev(col)` devuelve la desviación típica muestral como `DOUBLE`. Hace falta más de un valor finito; con cero o uno el resultado es NULL. Un nulo no cuenta. `stddev(reading)` es `0.8660254037844386`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `stddev(day)` imprime `9.151706622960988E11` en 10.1.0 y `915170662296.0988` en Rust, así que esa consulta no se captura. Se contrastó el resto con `/exec` en `sensors` y `days`.

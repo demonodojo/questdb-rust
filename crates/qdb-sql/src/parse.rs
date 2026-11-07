@@ -48,6 +48,7 @@ pub enum AggFunc {
     Last,
     CountDistinct,
     StdDev,
+    Variance,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3016,6 +3017,7 @@ impl<'a> Parser<'a> {
                 | "last"
                 | "count_distinct"
                 | "stddev"
+                | "variance"
         ) {
             return false;
         }
@@ -3053,13 +3055,14 @@ impl<'a> Parser<'a> {
             "last" => AggFunc::Last,
             "count_distinct" => AggFunc::CountDistinct,
             "stddev" => AggFunc::StdDev,
+            "variance" => AggFunc::Variance,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
             return Err(Error::new("too few arguments for '*' [found=0,expected=2]"));
         }
         self.skip();
-        if func == AggFunc::StdDev && self.peek() != Some(b')') {
+        if matches!(func, AggFunc::StdDev | AggFunc::Variance) && self.peek() != Some(b')') {
             let mut provided = if column.is_some() { 1 } else { 0 };
             while self.peek().is_some() && self.peek() != Some(b')') {
                 if self.eat(b',') {
@@ -3073,8 +3076,9 @@ impl<'a> Parser<'a> {
                     "unsupported: expected ')' after {name}"
                 )));
             }
+            let fname = name.to_ascii_lowercase();
             return Err(Error::new(format!(
-                "wrong number of arguments for function `stddev`; expected: 1, provided: {provided}"
+                "wrong number of arguments for function `{fname}`; expected: 1, provided: {provided}"
             )));
         }
         if !self.eat(b')') {
@@ -3082,10 +3086,11 @@ impl<'a> Parser<'a> {
                 "unsupported: expected ')' after {name}"
             )));
         }
-        if func == AggFunc::StdDev && column.is_none() {
-            return Err(Error::new(
-                "function `stddev` requires arguments: stddev(DOUBLE)",
-            ));
+        if matches!(func, AggFunc::StdDev | AggFunc::Variance) && column.is_none() {
+            let fname = name.to_ascii_lowercase();
+            return Err(Error::new(format!(
+                "function `{fname}` requires arguments: {fname}(DOUBLE)"
+            )));
         }
         if func != AggFunc::Count && column.is_none() {
             return Err(Error::new(format!(

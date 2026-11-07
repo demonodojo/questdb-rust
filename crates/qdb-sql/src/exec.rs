@@ -7278,8 +7278,16 @@ struct AggColumn {
 enum Accumulator {
     Count(i64),
     Value(Option<Scalar>),
-    Average { total: Option<Scalar>, count: i64 },
-    StdDev { mean: f64, m2: f64, count: i64 },
+    Average {
+        total: Option<Scalar>,
+        count: i64,
+    },
+    StdDev {
+        mean: f64,
+        m2: f64,
+        count: i64,
+        deviation: bool,
+    },
     Distinct(Vec<Scalar>),
 }
 
@@ -7294,10 +7302,11 @@ impl Accumulator {
                 total: None,
                 count: 0,
             },
-            AggFunc::StdDev => Self::StdDev {
+            AggFunc::StdDev | AggFunc::Variance => Self::StdDev {
                 mean: 0.0,
                 m2: 0.0,
                 count: 0,
+                deviation: func == AggFunc::StdDev,
             },
             AggFunc::CountDistinct => Self::Distinct(Vec::new()),
         }
@@ -7316,9 +7325,17 @@ impl Accumulator {
                 count,
             } => average_of(total, *count),
             Self::Average { total: None, .. } => Scalar::Null,
-            Self::StdDev { m2, count, .. } => {
+            Self::StdDev {
+                m2,
+                count,
+                deviation,
+                ..
+            } => {
                 if *count > 1 {
-                    let result = (*m2 / (*count - 1) as f64).sqrt();
+                    let mut result = *m2 / (*count - 1) as f64;
+                    if *deviation {
+                        result = result.sqrt();
+                    }
                     if result.is_finite() {
                         Scalar::Double(result)
                     } else {
@@ -7345,11 +7362,16 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         .column_index(name)
         .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
     let tag = table.meta.columns[index].tag;
-    if aggregate.func == AggFunc::StdDev
+    if matches!(aggregate.func, AggFunc::StdDev | AggFunc::Variance)
         && matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL)
     {
+        let fname = if aggregate.func == AggFunc::Variance {
+            "variance"
+        } else {
+            "stddev"
+        };
         return Err(Error::new(format!(
-            "argument type mismatch for function `stddev` at #1 expected: DOUBLE, actual: {}",
+            "argument type mismatch for function `{fname}` at #1 expected: DOUBLE, actual: {}",
             qdb_types::type_name(tag)
         )));
     }
@@ -7389,7 +7411,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::Sum if input.tag == qdb_types::TAG_FLOAT => qdb_types::TAG_FLOAT,
         AggFunc::Sum if input.tag == qdb_types::TAG_DOUBLE => qdb_types::TAG_DOUBLE,
         AggFunc::Sum => qdb_types::TAG_LONG,
-        AggFunc::Avg | AggFunc::StdDev => qdb_types::TAG_DOUBLE,
+        AggFunc::Avg | AggFunc::StdDev | AggFunc::Variance => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
@@ -7420,7 +7442,7 @@ fn contribution(
         AggFunc::Min | AggFunc::Max => Ok(Some(value.clone())),
         AggFunc::Sum => sum_addend(value, input),
         AggFunc::Avg => avg_addend(value, input),
-        AggFunc::StdDev => stddev_addend(value, input),
+        AggFunc::StdDev | AggFunc::Variance => stddev_addend(value, input),
     }
 }
 
@@ -7523,8 +7545,13 @@ fn stddev_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Er
             number
         }
         _ => {
+            let fname = if input.func == AggFunc::Variance {
+                "variance"
+            } else {
+                "stddev"
+            };
             return Err(Error::new(format!(
-                "argument type mismatch for function `stddev` at #1 expected: DOUBLE, actual: {}",
+                "argument type mismatch for function `{fname}` at #1 expected: DOUBLE, actual: {}",
                 qdb_types::type_name(input.tag)
             )));
         }
@@ -7597,7 +7624,9 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
                 Some(kept) => add_sum(&kept, &next),
             });
         }
-        Accumulator::StdDev { mean, m2, count } => {
+        Accumulator::StdDev {
+            mean, m2, count, ..
+        } => {
             let Scalar::Double(value) = next else {
                 return;
             };
@@ -18039,6 +18068,159 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT stddev(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn variance_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT variance(reading) FROM sensors",
+                "expected/vr_read.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT variance(id) FROM sensors",
+                "expected/vr_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT variance(score) FROM sensors",
+                "expected/vr_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT variance(b) FROM sensors",
+                "expected/vr_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT variance(flags) FROM sensors",
+                "expected/vr_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT variance(reading) FROM sensors WHERE id = 1",
+                "expected/vr_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT variance(reading) FROM sensors WHERE id > 100",
+                "expected/vr_none.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT variance(reading) FROM sensors WHERE id = -1",
+                "expected/vr_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT VARIANCE(reading) FROM sensors",
+                "expected/vr_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT variance(reading) FROM sensors LIMIT 0",
+                "expected/vr_lim0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT variance(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/vr_grp.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT variance(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/vr_grp_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT variance(reading) FROM sensors WHERE location = 'madrid'",
+                "expected/vr_where.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT variance(id) FROM days",
+                "expected/vr_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT variance(id) FROM days GROUP BY location ORDER BY location",
+                "expected/vr_days_grp.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT variance() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `variance` requires arguments: variance(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT variance(reading, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `variance`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT variance(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT variance(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT variance(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `variance` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT variance(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `variance` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT variance(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT variance(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT variance(ch) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),
