@@ -90,6 +90,7 @@ pub enum Proj {
     Substr(SubstrExpr),
     Trim(TrimExpr),
     Replace(ReplaceExpr),
+    StartsWith(StartsWithExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +145,13 @@ pub struct TrimExpr {
 /// `replace(value, old, new)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplaceExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `starts_with(text, prefix)` returns a boolean.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartsWithExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -215,6 +223,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_trim()?.label
             } else if parser.starts_replace_call() {
                 parser.parse_replace()?.label
+            } else if parser.starts_starts_with_call() {
+                parser.parse_starts_with()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -275,6 +285,7 @@ enum SelectPiece {
     Substr(SubstrExpr),
     Trim(TrimExpr),
     Replace(ReplaceExpr),
+    StartsWith(StartsWithExpr),
 }
 
 struct Parser<'a> {
@@ -383,6 +394,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Trim(self.parse_trim()?));
             } else if self.starts_replace_call() {
                 pieces.push(SelectPiece::Replace(self.parse_replace()?));
+            } else if self.starts_starts_with_call() {
+                pieces.push(SelectPiece::StartsWith(self.parse_starts_with()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -406,6 +419,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Substr(_)
                     | SelectPiece::Trim(_)
                     | SelectPiece::Replace(_)
+                    | SelectPiece::StartsWith(_)
             )
         });
         if counts > 0 && projected {
@@ -428,6 +442,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Substr(expr) => items.push(Proj::Substr(expr)),
                     SelectPiece::Trim(expr) => items.push(Proj::Trim(expr)),
                     SelectPiece::Replace(expr) => items.push(Proj::Replace(expr)),
+                    SelectPiece::StartsWith(expr) => items.push(Proj::StartsWith(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -473,7 +488,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Side(_)
                 | SelectPiece::Substr(_)
                 | SelectPiece::Trim(_)
-                | SelectPiece::Replace(_) => {
+                | SelectPiece::Replace(_)
+                | SelectPiece::StartsWith(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -516,6 +532,25 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_starts_with_call(&self) -> bool {
+        self.starts_named_call("starts_with")
+    }
+
+    fn parse_starts_with(&mut self) -> Result<StartsWithExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, false)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(StartsWithExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_replace_call(&self) -> bool {

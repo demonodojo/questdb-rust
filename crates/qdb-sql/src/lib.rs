@@ -36,7 +36,9 @@
 //! length is rejected. `trim` removes ASCII spaces from both ends and keeps a
 //! null text null. `ltrim` and `rtrim` do the same from the left or the right.
 //! `replace` substitutes non-overlapping matches. A null argument stays null,
-//! and an empty search leaves the text unchanged. An aggregate without `GROUP BY` returns one
+//! and an empty search leaves the text unchanged. `starts_with` returns a
+//! boolean. A null text or prefix is false, and an empty prefix matches any
+//! non-null text. An aggregate without `GROUP BY` returns one
 //! row, or none when `LIMIT` removes it.
 //! `GROUP BY` of one column returns one row per distinct value, in first-seen
 //! order until `ORDER BY` sorts it. `-0.0` and `0.0` stay in different groups.

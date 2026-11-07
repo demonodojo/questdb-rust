@@ -1,0 +1,5 @@
+starts_with(note, 'a')
+false
+false
+false
+true

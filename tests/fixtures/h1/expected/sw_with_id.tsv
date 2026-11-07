@@ -1,0 +1,5 @@
+id	starts_with(note, 'a')
+2	false
+NULL	false
+-1	false
+1	true

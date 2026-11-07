@@ -1,0 +1,5 @@
+STARTS_WITH(NOTE, 'a')
+true
+false
+false
+false

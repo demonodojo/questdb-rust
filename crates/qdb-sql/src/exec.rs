@@ -1,7 +1,7 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
     ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, ReplaceExpr, SelectList,
-    SideExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    SideExpr, StartsWithExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -185,7 +185,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Side { label, .. }
             | ResolvedProj::Substr { label, .. }
             | ResolvedProj::Trim { label, .. }
-            | ResolvedProj::Replace { label, .. } => label.clone(),
+            | ResolvedProj::Replace { label, .. }
+            | ResolvedProj::StartsWith { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -252,6 +253,11 @@ enum ResolvedProj {
         label: String,
         mode: ReplaceMode,
     },
+    StartsWith {
+        label: String,
+        value: ResolvedArg,
+        prefix: ResolvedArg,
+    },
 }
 
 enum ReplaceMode {
@@ -285,7 +291,8 @@ impl ResolvedProj {
             | Self::Side { label, .. }
             | Self::Substr { label, .. }
             | Self::Trim { label, .. }
-            | Self::Replace { label, .. } => Some(label),
+            | Self::Replace { label, .. }
+            | Self::StartsWith { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -293,6 +300,7 @@ impl ResolvedProj {
     fn expr_tag(&self) -> i32 {
         match self {
             Self::Length { .. } => qdb_types::TAG_INT,
+            Self::StartsWith { .. } => qdb_types::TAG_BOOLEAN,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -334,12 +342,24 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Substr(expr) => resolve_substr(table, expr),
         Proj::Trim(expr) => resolve_trim(table, expr),
         Proj::Replace(expr) => resolve_replace(table, expr),
+        Proj::StartsWith(expr) => resolve_starts_with(table, expr),
     }
+}
+
+fn resolve_starts_with(table: &Table, expr: &StartsWithExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 || expr.args.iter().any(|arg| !replace_text_ok(table, arg)) {
+        return Err(text_type_error(table, "starts_with", &expr.args));
+    }
+    Ok(ResolvedProj::StartsWith {
+        label: expr.label.clone(),
+        value: resolve_concat_arg(table, &expr.args[0])?,
+        prefix: resolve_concat_arg(table, &expr.args[1])?,
+    })
 }
 
 fn resolve_replace(table: &Table, expr: &ReplaceExpr) -> Result<ResolvedProj, Error> {
     if expr.args.len() != 3 || expr.args.iter().any(|arg| !replace_text_ok(table, arg)) {
-        return Err(replace_type_error(table, &expr.args));
+        return Err(text_type_error(table, "replace", &expr.args));
     }
     let mode = if matches!(expr.args[2], ConcatArg::Literal(Scalar::Null))
         || matches!(expr.args[1], ConcatArg::Literal(Scalar::Null))
@@ -380,7 +400,7 @@ fn replace_text_ok(table: &Table, arg: &ConcatArg) -> bool {
     }
 }
 
-fn replace_type_error(table: &Table, args: &[ConcatArg]) -> Error {
+fn text_type_error(table: &Table, name: &str, args: &[ConcatArg]) -> Error {
     let mut types = Vec::new();
     for arg in args {
         match replace_arg_type(table, arg) {
@@ -389,7 +409,7 @@ fn replace_type_error(table: &Table, args: &[ConcatArg]) -> Error {
         }
     }
     Error::new(format!(
-        "there is no matching function `replace` with the argument types: ({})",
+        "there is no matching function `{name}` with the argument types: ({})",
         types.join(", ")
     ))
 }
@@ -756,6 +776,13 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 }
             }
         },
+        ResolvedProj::StartsWith { value, prefix, .. } => {
+            let matched = match (text_of(table, row, value), text_of(table, row, prefix)) {
+                (Some(value), Some(prefix)) => value.starts_with(&prefix),
+                _ => false,
+            };
+            Scalar::Boolean(matched)
+        }
         ResolvedProj::Replace { mode, .. } => match mode {
             ReplaceMode::Null => Scalar::Null,
             ReplaceMode::Empty => Scalar::Text(String::new()),
@@ -4530,6 +4557,142 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn starts_with_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT starts_with(note, 'a') FROM sensors",
+                "expected/sw_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with(note, 'β') FROM sensors",
+                "expected/sw_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with(note, '') FROM sensors",
+                "expected/sw_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with(note, null) FROM sensors",
+                "expected/sw_null_prefix.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with(null, 'a') FROM sensors LIMIT 1",
+                "expected/sw_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with('', 'a') FROM sensors LIMIT 1",
+                "expected/sw_empty_text.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with('alpha', 'alp') FROM sensors LIMIT 1",
+                "expected/sw_prefix.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with('alpha', 'alphaextra') FROM sensors LIMIT 1",
+                "expected/sw_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with('Alpha', 'a') FROM sensors LIMIT 1",
+                "expected/sw_case_fold.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT STARTS_WITH(NOTE, 'a') FROM sensors",
+                "expected/sw_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with(note, 'a') FROM sensors ORDER BY starts_with(note, 'a')",
+                "expected/sw_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, starts_with(note, 'a') FROM sensors ORDER BY starts_with(note, 'a')",
+                "expected/sw_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with(note, '') FROM sensors WHERE note = ''",
+                "expected/sw_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with(note, 'a') FROM sensors LIMIT 0",
+                "expected/sw_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with(ch, 'A') FROM sensors",
+                "expected/sw_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with(tag, '0') FROM sensors",
+                "expected/sw_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT starts_with(location, '東') FROM sensors",
+                "expected/sw_location.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT starts_with(note, 'al') FROM days",
+                "expected/sw_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT starts_with(location, 'mad') FROM days ORDER BY ts",
+                "expected/sw_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT starts_with() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT starts_with(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `starts_with` with the argument types: (STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT starts_with(id, '1') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `starts_with` with the argument types: (LONG, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT starts_with(missing, 'a') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

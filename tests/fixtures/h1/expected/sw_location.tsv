@@ -1,0 +1,5 @@
+starts_with(location, '東')
+false
+false
+false
+true
