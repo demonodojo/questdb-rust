@@ -1641,6 +1641,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::And)?));
                 } else if self.eat_keyword("or") {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::Or)?));
+                } else if self.starts_is_not_null() {
+                    pieces.push(SelectPiece::Eq(self.parse_is_not_null(name)?));
                 } else if self.starts_is_null() {
                     pieces.push(SelectPiece::Eq(self.parse_is_null(name)?));
                 } else if self.starts_eq_or_ne() {
@@ -2367,6 +2369,30 @@ impl<'a> Parser<'a> {
             return None;
         }
         Some(end)
+    }
+
+    fn starts_is_not_null(&self) -> bool {
+        let Some(after_is) = self.keyword_at(self.pos, "is") else {
+            return false;
+        };
+        let Some(after_not) = self.keyword_at(after_is, "not") else {
+            return false;
+        };
+        self.keyword_at(after_not, "null").is_some()
+    }
+
+    fn parse_is_not_null(&mut self, name: String) -> Result<EqExpr, Error> {
+        if !self.eat_keyword("is") || !self.eat_keyword("not") || !self.eat_keyword("null") {
+            return Err(Error::new(
+                "unsupported: expected IS NOT NULL after column".to_string(),
+            ));
+        }
+        Ok(EqExpr {
+            label: format!("{name} != NULL"),
+            value: name,
+            op: CmpOp::NotEq,
+            literal: Scalar::Null,
+        })
     }
 
     fn starts_is_null(&self) -> bool {

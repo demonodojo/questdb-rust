@@ -16300,6 +16300,54 @@ mod tests {
     }
 
     #[test]
+    fn nn_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id IS NOT NULL FROM sensors",
+                "expected/nn_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id IS NOT NULL FROM sensors WHERE id = 1",
+                "expected/nn_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id IS NOT NULL FROM sensors WHERE id > 100",
+                "expected/nn_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note IS NOT NULL FROM sensors",
+                "expected/nn_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok IS NOT NULL FROM sensors",
+                "expected/nn_ok.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT reading IS NOT NULL FROM sensors",
+                "expected/nn_read.tsv",
+            ),
+            (
+                &days,
+                "SELECT id IS NOT NULL FROM days",
+                "expected/nn_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
     fn dj_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
