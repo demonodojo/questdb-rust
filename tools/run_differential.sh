@@ -532,7 +532,27 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   abs_with_id "SELECT id, abs(id) FROM sensors ORDER BY abs(id)" \
   abs_reading_order "SELECT abs(reading) FROM sensors ORDER BY abs(reading)" \
   abs_where "SELECT abs(id) FROM sensors WHERE id = -1" \
-  abs_limit_zero "SELECT abs(id) FROM sensors LIMIT 0"
+  abs_limit_zero "SELECT abs(id) FROM sensors LIMIT 0" \
+  rd_reading "SELECT round(reading) FROM sensors" \
+  rd_score "SELECT round(score) FROM sensors" \
+  rd_id "SELECT round(id) FROM sensors" \
+  rd_flags "SELECT round(flags) FROM sensors" \
+  rd_byte "SELECT round(b) FROM sensors" \
+  rd_half "SELECT round(1.5) FROM sensors LIMIT 1" \
+  rd_half2 "SELECT round(2.5) FROM sensors LIMIT 1" \
+  rd_neg "SELECT round(-1.5) FROM sensors LIMIT 1" \
+  rd_scale "SELECT round(reading, 1) FROM sensors" \
+  rd_quarter "SELECT round(1.25, 1) FROM sensors LIMIT 1" \
+  rd_neg_scale "SELECT round(-1.25, 1) FROM sensors LIMIT 1" \
+  rd_tens "SELECT round(15, -1) FROM sensors LIMIT 1" \
+  rd_null "SELECT round(null) FROM sensors LIMIT 1" \
+  rd_null_scale "SELECT round(reading, null) FROM sensors" \
+  rd_far "SELECT round(1.5, 20) FROM sensors LIMIT 1" \
+  rd_case "SELECT ROUND(READING) FROM sensors" \
+  rd_order "SELECT round(id) FROM sensors ORDER BY round(id)" \
+  rd_with_id "SELECT id, round(id) FROM sensors ORDER BY round(id)" \
+  rd_where "SELECT round(id) FROM sensors WHERE id = -1" \
+  rd_limit_zero "SELECT round(id) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -627,7 +647,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   qi_note "SELECT quote_ident(note) FROM days" \
   lb_note "SELECT length_bytes(note) FROM days" \
   sz_id "SELECT size_pretty(id) FROM days ORDER BY ts" \
-  abs_id "SELECT abs(id) FROM days ORDER BY ts"
+  abs_id "SELECT abs(id) FROM days ORDER BY ts" \
+  rd_id "SELECT round(id) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1107,6 +1128,26 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT abs(reading) FROM sensors ORDER BY abs(reading)"),
     (os.environ["DIFF_H1"], "SELECT abs(id) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT abs(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT round(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round(1.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round(2.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round(-1.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round(reading, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round(1.25, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round(-1.25, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round(15, -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round(reading, null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round(1.5, 20) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT ROUND(READING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round(id) FROM sensors ORDER BY round(id)"),
+    (os.environ["DIFF_H1"], "SELECT id, round(id) FROM sensors ORDER BY round(id)"),
+    (os.environ["DIFF_H1"], "SELECT round(id) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT round(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1200,6 +1241,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT length_bytes(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT size_pretty(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT abs(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT round(id) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — round()
+
+Devuelve `DOUBLE` para enteros y para `FLOAT`. Sin escala usa el `Math.round` de Java: `1.5` es `2.0` y `-1.5` es `-1.0`. Con escala positiva o negativa redondea la magnitud y restaura el signo, así que `1.25` con escala 1 es `1.3` y `-0.0` sigue siendo `-0.0`. Una escala constante fuera de `[-17, 15]`, o NULL, deja toda la columna NULL. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — abs()
 
 Conserva `SHORT`, `INT`, `LONG` y `DOUBLE`. Un `BYTE` se ensancha a `SHORT`, así que `abs(-128)` es `128`. Un `FLOAT` se ensancha a `DOUBLE`. `-0.0` pasa a `0.0`. `abs` del mínimo de `SHORT` sigue siendo `-32768`, porque el cast de Java desborda. NULL queda NULL. Se contrastó con `/exec` en `sensors` y `days`.

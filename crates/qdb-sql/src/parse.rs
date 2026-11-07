@@ -97,6 +97,7 @@ pub enum Proj {
     QuoteIdent(QuoteIdentExpr),
     SizePretty(SizePrettyExpr),
     Abs(AbsExpr),
+    Round(RoundExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +207,13 @@ pub struct AbsExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `round(number[, scale])`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoundExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -287,6 +295,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_size_pretty()?.label
             } else if parser.starts_abs_call() {
                 parser.parse_abs()?.label
+            } else if parser.starts_round_call() {
+                parser.parse_round()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -354,6 +364,7 @@ enum SelectPiece {
     QuoteIdent(QuoteIdentExpr),
     SizePretty(SizePrettyExpr),
     Abs(AbsExpr),
+    Round(RoundExpr),
 }
 
 struct Parser<'a> {
@@ -476,6 +487,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::SizePretty(self.parse_size_pretty()?));
             } else if self.starts_abs_call() {
                 pieces.push(SelectPiece::Abs(self.parse_abs()?));
+            } else if self.starts_round_call() {
+                pieces.push(SelectPiece::Round(self.parse_round()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -506,6 +519,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::QuoteIdent(_)
                     | SelectPiece::SizePretty(_)
                     | SelectPiece::Abs(_)
+                    | SelectPiece::Round(_)
             )
         });
         if counts > 0 && projected {
@@ -535,6 +549,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::QuoteIdent(expr) => items.push(Proj::QuoteIdent(expr)),
                     SelectPiece::SizePretty(expr) => items.push(Proj::SizePretty(expr)),
                     SelectPiece::Abs(expr) => items.push(Proj::Abs(expr)),
+                    SelectPiece::Round(expr) => items.push(Proj::Round(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -587,7 +602,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Pad(_)
                 | SelectPiece::QuoteIdent(_)
                 | SelectPiece::SizePretty(_)
-                | SelectPiece::Abs(_) => {
+                | SelectPiece::Abs(_)
+                | SelectPiece::Round(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -630,6 +646,25 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_round_call(&self) -> bool {
+        self.starts_named_call("round")
+    }
+
+    fn parse_round(&mut self) -> Result<RoundExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(RoundExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_abs_call(&self) -> bool {
