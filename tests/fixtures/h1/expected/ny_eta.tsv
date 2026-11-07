@@ -1,0 +1,5 @@
+not(note ilike '%ETA')
+true
+true
+true
+false

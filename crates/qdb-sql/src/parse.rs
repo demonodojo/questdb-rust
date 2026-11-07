@@ -379,6 +379,7 @@ pub struct GlobExpr {
 pub struct IlikeExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
+    pub negated: bool,
 }
 
 /// `like(text, pattern)` is a case-sensitive `LIKE` and returns a boolean.
@@ -1647,6 +1648,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::Like(self.parse_not_like(name)?));
                 } else if self.starts_like_infix() {
                     pieces.push(SelectPiece::Like(self.parse_like_op(name)?));
+                } else if self.starts_not_ilike() {
+                    pieces.push(SelectPiece::Ilike(self.parse_not_ilike(name)?));
                 } else if self.starts_ilike_infix() {
                     pieces.push(SelectPiece::Ilike(self.parse_ilike_op(name)?));
                 } else if self.starts_not_between() {
@@ -3819,6 +3822,25 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn starts_not_ilike(&self) -> bool {
+        let Some(after_not) = self.keyword_at(self.pos, "not") else {
+            return false;
+        };
+        self.keyword_at(after_not, "ilike").is_some()
+    }
+
+    fn parse_not_ilike(&mut self, name: String) -> Result<IlikeExpr, Error> {
+        if !self.eat_keyword("not") {
+            return Err(Error::new(
+                "unsupported: expected NOT ILIKE after column".to_string(),
+            ));
+        }
+        let mut expr = self.parse_ilike_op(name)?;
+        expr.label = format!("not({})", expr.label);
+        expr.negated = true;
+        Ok(expr)
+    }
+
     fn starts_ilike_infix(&self) -> bool {
         self.keyword_at(self.pos, "ilike").is_some()
     }
@@ -3833,6 +3855,7 @@ impl<'a> Parser<'a> {
         Ok(IlikeExpr {
             label: format!("{name} ilike {pattern_label}"),
             args: vec![ConcatArg::Column(name), pattern],
+            negated: false,
         })
     }
 
@@ -3847,6 +3870,7 @@ impl<'a> Parser<'a> {
         Ok(IlikeExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
+            negated: false,
         })
     }
 

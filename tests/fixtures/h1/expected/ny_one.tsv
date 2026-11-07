@@ -1,0 +1,2 @@
+not(note ilike 'A%')
+false

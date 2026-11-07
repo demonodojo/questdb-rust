@@ -1,0 +1,5 @@
+not(location ilike 'MAD%')
+false
+true
+false
+true

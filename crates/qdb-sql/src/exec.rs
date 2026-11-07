@@ -379,6 +379,7 @@ enum ResolvedProj {
         label: String,
         value: ResolvedArg,
         pattern: IlikePattern,
+        negated: bool,
     },
     Like {
         label: String,
@@ -6164,6 +6165,7 @@ fn resolve_ilike(table: &Table, expr: &IlikeExpr) -> Result<ResolvedProj, Error>
         label: expr.label.clone(),
         value: resolve_concat_arg(table, &expr.args[0])?,
         pattern,
+        negated: expr.negated,
     })
 }
 
@@ -7841,8 +7843,14 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 }
             }
         }
-        ResolvedProj::Ilike { value, pattern, .. } => {
-            Scalar::Boolean(like_row(table, row, value, pattern, true))
+        ResolvedProj::Ilike {
+            value,
+            pattern,
+            negated,
+            ..
+        } => {
+            let matched = like_row(table, row, value, pattern, true);
+            Scalar::Boolean(if *negated { !matched } else { matched })
         }
         ResolvedProj::Like {
             value,
@@ -16621,6 +16629,55 @@ mod tests {
             assert_eq!(render_tsv(&result), expected, "{sql}");
         }
         let err = execute(&sensors, "SELECT note ILIKE note FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("use constant or bind variable"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn ny_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT note NOT ILIKE 'A%' FROM sensors",
+                "expected/ny_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note NOT ILIKE 'A%' FROM sensors WHERE id = 1",
+                "expected/ny_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note NOT ILIKE 'A%' FROM sensors WHERE id > 100",
+                "expected/ny_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note NOT ILIKE '%ETA' FROM sensors",
+                "expected/ny_eta.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT location NOT ILIKE 'MAD%' FROM sensors",
+                "expected/ny_loc.tsv",
+            ),
+            (
+                &days,
+                "SELECT note NOT ILIKE 'A%' FROM days",
+                "expected/ny_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT note NOT ILIKE note FROM sensors").unwrap_err();
         assert!(
             err.message.contains("use constant or bind variable"),
             "{}",
