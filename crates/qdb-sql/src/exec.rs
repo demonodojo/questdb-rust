@@ -1726,7 +1726,7 @@ fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
 }
 
 fn apply_i64(op: ArithOp, left: i64, right: i64) -> Option<i64> {
-    if op == ArithOp::Div && right == 0 {
+    if matches!(op, ArithOp::Div | ArithOp::Mod) && right == 0 {
         return None;
     }
     Some(match op {
@@ -1734,11 +1734,12 @@ fn apply_i64(op: ArithOp, left: i64, right: i64) -> Option<i64> {
         ArithOp::Sub => left.wrapping_sub(right),
         ArithOp::Mul => left.wrapping_mul(right),
         ArithOp::Div => left.wrapping_div(right),
+        ArithOp::Mod => left.wrapping_rem(right),
     })
 }
 
 fn apply_f64(op: ArithOp, left: f64, right: f64) -> Option<f64> {
-    if op == ArithOp::Div && right == 0.0 {
+    if matches!(op, ArithOp::Div | ArithOp::Mod) && right == 0.0 {
         return None;
     }
     let value = match op {
@@ -1746,8 +1747,9 @@ fn apply_f64(op: ArithOp, left: f64, right: f64) -> Option<f64> {
         ArithOp::Sub => left - right,
         ArithOp::Mul => left * right,
         ArithOp::Div => left / right,
+        ArithOp::Mod => left % right,
     };
-    if op == ArithOp::Div && !value.is_finite() {
+    if matches!(op, ArithOp::Div | ArithOp::Mod) && !value.is_finite() {
         None
     } else {
         Some(value)
@@ -15593,6 +15595,76 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn rm_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id % 2 FROM sensors",
+                "expected/rm_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id % 2 FROM sensors WHERE id = 1",
+                "expected/rm_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id % 2 FROM sensors WHERE id = 2",
+                "expected/rm_two.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id % 2 FROM sensors WHERE id > 100",
+                "expected/rm_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id % null FROM sensors",
+                "expected/rm_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id % 0 FROM sensors",
+                "expected/rm_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT reading % 2 FROM sensors",
+                "expected/rm_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags % 2 FROM sensors",
+                "expected/rm_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id % 2 FROM sensors LIMIT 0",
+                "expected/rm_lim0.tsv",
+            ),
+            (&days, "SELECT id % 2 FROM days", "expected/rm_days.tsv"),
+            (
+                &days,
+                "SELECT id % null FROM days",
+                "expected/rm_days_null.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT missing % 2 FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
