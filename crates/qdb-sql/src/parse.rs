@@ -134,6 +134,7 @@ pub enum Proj {
     Ceil(CeilExpr),
     Sign(SignExpr),
     Sqrt(SqrtExpr),
+    Sin(SinExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -511,6 +512,13 @@ pub struct SqrtExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `sin(number)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SinExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `power(base, exponent)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerExpr {
@@ -713,6 +721,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_ceil()?.label
             } else if parser.starts_sign_call() {
                 parser.parse_sign()?.label
+            } else if parser.starts_sin_call() {
+                parser.parse_sin()?.label
             } else if parser.starts_sqrt_call() {
                 parser.parse_sqrt()?.label
             } else if parser.starts_power_call() {
@@ -833,6 +843,7 @@ enum SelectPiece {
     Ceil(CeilExpr),
     Sign(SignExpr),
     Sqrt(SqrtExpr),
+    Sin(SinExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -1036,6 +1047,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Ceil(self.parse_ceil()?));
             } else if self.starts_sign_call() {
                 pieces.push(SelectPiece::Sign(self.parse_sign()?));
+            } else if self.starts_sin_call() {
+                pieces.push(SelectPiece::Sin(self.parse_sin()?));
             } else if self.starts_sqrt_call() {
                 pieces.push(SelectPiece::Sqrt(self.parse_sqrt()?));
             } else if self.starts_power_call() {
@@ -1119,6 +1132,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
                     | SelectPiece::Sqrt(_)
+                    | SelectPiece::Sin(_)
                     | SelectPiece::Power(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
@@ -1194,6 +1208,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
                     SelectPiece::Sqrt(expr) => items.push(Proj::Sqrt(expr)),
+                    SelectPiece::Sin(expr) => items.push(Proj::Sin(expr)),
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
@@ -1291,6 +1306,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
                 | SelectPiece::Sqrt(_)
+                | SelectPiece::Sin(_)
                 | SelectPiece::Power(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
@@ -1458,6 +1474,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(PowerExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_sin_call(&self) -> bool {
+        self.starts_named_call("sin")
+    }
+
+    fn parse_sin(&mut self) -> Result<SinExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `sin` requires arguments: sin(DOUBLE)".to_string(),
+            ));
+        }
+        Ok(SinExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

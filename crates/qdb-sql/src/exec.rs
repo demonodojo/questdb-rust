@@ -6,9 +6,9 @@ use crate::parse::{
     LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MillisExpr, MinuteExpr,
     MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
     RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr,
-    Sha256Expr, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr,
-    StrPosExpr, SubstrExpr, TimestampCeilExpr, TimestampFloorExpr, ToDateExpr, ToStrExpr,
-    ToTimestampExpr, TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, TimestampCeilExpr, TimestampFloorExpr, ToDateExpr,
+    ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -153,17 +153,31 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
                 order.descending,
             ));
         }
+        let mut order_error = None;
         row_ids.sort_by(|a, b| {
+            if order_error.is_some() {
+                return Ordering::Equal;
+            }
             for key in &keys {
-                let mut ordering = match key {
-                    OrderKey::Column(index, tag, _) => {
-                        compare_asc(&table.columns[*index][*a], &table.columns[*index][*b], *tag)
+                let ordering = match key {
+                    OrderKey::Column(index, tag, _) => Ok(compare_asc(
+                        &table.columns[*index][*a],
+                        &table.columns[*index][*b],
+                        *tag,
+                    )),
+                    OrderKey::Expr(index, _) => eval_checked(table, *a, &resolved[*index])
+                        .and_then(|left| {
+                            eval_checked(table, *b, &resolved[*index]).map(|right| {
+                                compare_asc(&left, &right, resolved[*index].expr_tag())
+                            })
+                        }),
+                };
+                let mut ordering = match ordering {
+                    Ok(ordering) => ordering,
+                    Err(err) => {
+                        order_error = Some(err);
+                        return Ordering::Equal;
                     }
-                    OrderKey::Expr(index, _) => compare_asc(
-                        &eval_resolved(table, *a, &resolved[*index]),
-                        &eval_resolved(table, *b, &resolved[*index]),
-                        resolved[*index].expr_tag(),
-                    ),
                 };
                 if key.descending() {
                     ordering = ordering.reverse();
@@ -174,6 +188,9 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             }
             Ordering::Equal
         });
+        if let Some(err) = order_error {
+            return Err(err);
+        }
     }
     if let Some(limit) = query.limit {
         if limit.lo < 0 && limit.hi > 0 && limit_follows_timestamp_order(table, query)? {
@@ -237,6 +254,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
             | ResolvedProj::Sqrt { label, .. }
+            | ResolvedProj::Sin { label, .. }
             | ResolvedProj::Power { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
@@ -246,15 +264,14 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
         .collect();
-    let rows = row_ids
-        .into_iter()
-        .map(|row| {
-            resolved
-                .iter()
-                .map(|item| eval_resolved(table, row, item))
-                .collect()
-        })
-        .collect();
+    let mut rows = Vec::with_capacity(row_ids.len());
+    for row in row_ids {
+        let mut values = Vec::with_capacity(resolved.len());
+        for item in &resolved {
+            values.push(eval_checked(table, row, item)?);
+        }
+        rows.push(values);
+    }
     Ok(QueryResult { columns, rows })
 }
 
@@ -518,6 +535,10 @@ enum ResolvedProj {
         label: String,
         input: SqrtInput,
     },
+    Sin {
+        label: String,
+        input: SinInput,
+    },
     Power {
         label: String,
         base: SqrtInput,
@@ -555,6 +576,12 @@ enum SqrtInput {
     Long(i64),
     Double(f64),
     Column { index: usize },
+}
+
+enum SinInput {
+    Null,
+    Number(f64),
+    Column { index: usize, tag: i32 },
 }
 
 enum SignInput {
@@ -669,6 +696,7 @@ impl ResolvedProj {
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
             | Self::Sqrt { label, .. }
+            | Self::Sin { label, .. }
             | Self::Power { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
@@ -719,6 +747,7 @@ impl ResolvedProj {
             },
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
+            | Self::Sin { .. }
             | Self::Power { .. }
             | Self::Ln { .. }
             | Self::Log { .. }
@@ -818,6 +847,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
         Proj::Sqrt(expr) => resolve_sqrt(table, expr),
+        Proj::Sin(expr) => resolve_sin(table, expr),
         Proj::Power(expr) => resolve_power(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
@@ -1281,6 +1311,80 @@ fn power_type_error(table: &Table, arg: &ConcatArg) -> Error {
             "expression type mismatch, expected: DOUBLE, actual: {actual}"
         )),
         Err(err) => err,
+    }
+}
+
+fn resolve_sin(table: &Table, expr: &SinExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `sin`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let input = match &expr.args[0] {
+        ConcatArg::Literal(Scalar::Null) => SinInput::Null,
+        ConcatArg::Literal(Scalar::Long(number)) => SinInput::Number(*number as f64),
+        ConcatArg::Literal(Scalar::Double(number)) => SinInput::Number(*number),
+        ConcatArg::Literal(Scalar::Text(text)) => match parse_questdb_f64(text) {
+            Some(number) => SinInput::Number(number),
+            None => return Err(sin_text_error(text)),
+        },
+        ConcatArg::Literal(Scalar::Char(unit)) => {
+            let ch = char::from_u32(u32::from(*unit)).unwrap_or('\u{0}');
+            match parse_questdb_f64(&ch.to_string()) {
+                Some(number) => SinInput::Number(number),
+                None => {
+                    return Err(Error::new(format!(
+                        "inconvertible value: {ch} [CHAR -> DOUBLE]"
+                    )));
+                }
+            }
+        }
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            let tag = table.meta.columns[index].tag;
+            if !matches!(
+                tag,
+                qdb_types::TAG_BYTE
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_LONG
+                    | qdb_types::TAG_FLOAT
+                    | qdb_types::TAG_DOUBLE
+                    | qdb_types::TAG_DATE
+                    | qdb_types::TAG_TIMESTAMP
+                    | qdb_types::TAG_STRING
+                    | qdb_types::TAG_VARCHAR
+                    | qdb_types::TAG_CHAR
+            ) {
+                return Err(Error::new(format!(
+                    "argument type mismatch for function `sin` at #1 expected: DOUBLE, actual: {}",
+                    qdb_types::type_name(tag)
+                )));
+            }
+            SinInput::Column { index, tag }
+        }
+        _ => {
+            return Err(Error::new(format!(
+                "argument type mismatch for function `sin` at #1 expected: DOUBLE, actual: {}",
+                timestamp_floor_arg_type(table, &expr.args[0])?
+            )));
+        }
+    };
+    Ok(ResolvedProj::Sin {
+        label: expr.label.clone(),
+        input,
+    })
+}
+
+fn sin_text_error(text: &str) -> Error {
+    if text.chars().count() == 1 {
+        let ch = text.chars().next().unwrap_or('\u{0}');
+        Error::new(format!("inconvertible value: {ch} [CHAR -> DOUBLE]"))
+    } else {
+        Error::new(format!("inconvertible value: `{text}` [STRING -> DOUBLE]"))
     }
 }
 
@@ -5251,6 +5355,13 @@ fn resolve_concat_arg(table: &Table, arg: &ConcatArg) -> Result<ResolvedArg, Err
     }
 }
 
+fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar, Error> {
+    match item {
+        ResolvedProj::Sin { input, .. } => sin_scalar(table, row, input),
+        _ => Ok(eval_resolved(table, row, item)),
+    }
+}
+
 fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
     match item {
         ResolvedProj::Column { index } => table.columns[*index][row].clone(),
@@ -5315,6 +5426,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             args, result_tag, ..
         } => least_value(table, row, args, *result_tag),
         ResolvedProj::Ln { input, .. } => log_value(table, row, input, f64::ln),
+        ResolvedProj::Sin { input, .. } => match sin_scalar(table, row, input) {
+            Ok(value) => value,
+            Err(_) => Scalar::Null,
+        },
         ResolvedProj::Sqrt { input, .. } => match sqrt_number(table, row, input) {
             Some(value) => {
                 let result = value.sqrt();
@@ -5629,6 +5744,98 @@ fn log_value(table: &Table, row: usize, input: &SqrtInput, function: fn(f64) -> 
         }
         None => Scalar::Null,
     }
+}
+
+fn sin_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar, Error> {
+    Ok(match sin_number(table, row, input)? {
+        Some(value) => Scalar::Double(value.sin()),
+        None => Scalar::Null,
+    })
+}
+
+fn sin_number(table: &Table, row: usize, input: &SinInput) -> Result<Option<f64>, Error> {
+    match input {
+        SinInput::Null => Ok(None),
+        SinInput::Number(number) => Ok(Some(*number)),
+        SinInput::Column { index, tag } => sin_column(table, row, *index, *tag),
+    }
+}
+
+fn sin_column(table: &Table, row: usize, index: usize, tag: i32) -> Result<Option<f64>, Error> {
+    match &table.columns[index][row] {
+        Scalar::Null => Ok(None),
+        Scalar::Byte(number) => Ok(Some(f64::from(*number))),
+        Scalar::Short(number) => Ok(Some(f64::from(*number))),
+        Scalar::Int(number) => Ok(Some(f64::from(*number))),
+        Scalar::Long(number) => Ok(Some(*number as f64)),
+        Scalar::Float(number) => Ok(Some(f64::from(*number))),
+        Scalar::Double(number) => Ok(Some(*number)),
+        Scalar::Date(number) | Scalar::Timestamp(number) => Ok(Some(*number as f64)),
+        Scalar::Char(unit) => {
+            let ch = char::from_u32(u32::from(*unit)).unwrap_or('\u{0}');
+            match parse_questdb_f64(&ch.to_string()) {
+                Some(number) => Ok(Some(number)),
+                None => Err(Error::new(format!(
+                    "inconvertible value: {ch} [CHAR -> DOUBLE]"
+                ))),
+            }
+        }
+        Scalar::Text(text) => {
+            let kind = if tag == qdb_types::TAG_VARCHAR {
+                "VARCHAR"
+            } else {
+                "STRING"
+            };
+            match parse_questdb_f64(text) {
+                Some(number) => Ok(Some(number)),
+                None => Err(Error::new(format!(
+                    "inconvertible value: `{text}` [{kind} -> DOUBLE]"
+                ))),
+            }
+        }
+        _ => Err(Error::new("internal: sin argument")),
+    }
+}
+
+fn parse_questdb_f64(text: &str) -> Option<f64> {
+    let trimmed = text.trim_matches(|ch: char| ch <= ' ');
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed {
+        "NaN" | "+NaN" | "-NaN" => return Some(f64::NAN),
+        "Infinity" | "+Infinity" => return Some(f64::INFINITY),
+        "-Infinity" => return Some(f64::NEG_INFINITY),
+        _ => {}
+    }
+    let body = if trimmed.len() > 1 {
+        let bytes = trimmed.as_bytes();
+        let last = bytes[bytes.len() - 1];
+        if last == b'd' || last == b'D' {
+            &trimmed[..trimmed.len() - 1]
+        } else {
+            trimmed
+        }
+    } else {
+        trimmed
+    };
+    let value = body.parse::<f64>().ok()?;
+    if !value.is_finite() {
+        return None;
+    }
+    if value == 0.0 && !sin_significand_is_zero(body) {
+        return None;
+    }
+    Some(value)
+}
+
+fn sin_significand_is_zero(body: &str) -> bool {
+    let digits = body
+        .trim_start_matches(['+', '-'])
+        .split(['e', 'E'])
+        .next()
+        .unwrap_or("");
+    digits.contains('0') && digits.chars().all(|ch| ch == '0' || ch == '.')
 }
 
 fn sqrt_number(table: &Table, row: usize, input: &SqrtInput) -> Option<f64> {
@@ -14615,6 +14822,237 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn sin_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT sin(0) FROM sensors LIMIT 1",
+                "expected/sn_zero_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(1) FROM sensors LIMIT 1",
+                "expected/sn_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(-1) FROM sensors LIMIT 1",
+                "expected/sn_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(-0.0) FROM sensors LIMIT 1",
+                "expected/sn_neg0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(null) FROM sensors LIMIT 1",
+                "expected/sn_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(id) FROM sensors",
+                "expected/sn_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(reading) FROM sensors",
+                "expected/sn_read.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(score) FROM sensors LIMIT 1",
+                "expected/sn_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(flags) FROM sensors LIMIT 1",
+                "expected/sn_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(b) FROM sensors LIMIT 1",
+                "expected/sn_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(code) FROM sensors LIMIT 1",
+                "expected/sn_short.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(ts) FROM sensors LIMIT 1",
+                "expected/sn_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(day) FROM sensors LIMIT 1",
+                "expected/sn_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin('1.5') FROM sensors LIMIT 1",
+                "expected/sn_text.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(' 1') FROM sensors LIMIT 1",
+                "expected/sn_ws.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin('1.5d') FROM sensors LIMIT 1",
+                "expected/sn_suffix.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin('NaN') FROM sensors LIMIT 1",
+                "expected/sn_nan.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT SIN(0) FROM sensors LIMIT 1",
+                "expected/sn_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(note) FROM sensors WHERE id = 2",
+                "expected/sn_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(id) FROM sensors WHERE id = 1",
+                "expected/sn_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(id) FROM sensors ORDER BY sin(id)",
+                "expected/sn_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(id) FROM sensors LIMIT 0",
+                "expected/sn_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sin(ch) FROM sensors LIMIT 0",
+                "expected/sn_ch0.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT sin(id) FROM days ORDER BY ts",
+                "expected/sn_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT sin(ts) FROM days ORDER BY ts",
+                "expected/sn_days_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT sin() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `sin` requires arguments: sin(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin(1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("wrong number of arguments for function `sin`; expected: 1, provided: 2"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `sin` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `sin` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin('nope') FROM sensors LIMIT 0").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `nope` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin('') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin('A') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin('inf') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `inf` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin('1e309') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `1e309` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin(note) FROM sensors LIMIT 1").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin(ch) FROM sensors WHERE id = 2").unwrap_err();
+        assert!(
+            err.message.contains("[CHAR -> DOUBLE]") && err.message.contains('\0'),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin(tag) FROM sensors LIMIT 1").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sin(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let result = execute(&sensors, "SELECT sin(note) FROM sensors LIMIT 0").unwrap();
+        assert_eq!(result.rows.len(), 0);
     }
 
     #[test]
