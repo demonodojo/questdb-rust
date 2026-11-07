@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — bit_xor()
+
+`bit_xor(col)` devuelve el XOR bit a bit con los mismos tipos que `bit_and`. `bit_xor(flags)` es `32`, `bit_xor(id)` es `-4` y `bit_xor(b)` es `-126`. `bit_xor(id)` en `days` es `0`. Sin filas, un `INT` o un `LONG` es NULL; un `BYTE`, un `SHORT` o un `CHAR` es `0`. `FLOAT`, `DOUBLE` y `BOOLEAN` no tienen función. Un texto que no es entero se rechaza en la fila. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — bit_or()
 
 `bit_or(col)` devuelve el OR bit a bit con los mismos tipos que `bit_and`. `bit_or(flags)` es `42`, `bit_or(id)` es `-1` y `bit_or(b)` es `-125`. `bit_or(id)` en `days` es `3`. Sin filas, un `INT` o un `LONG` es NULL; un `BYTE`, un `SHORT` o un `CHAR` es `0`. `FLOAT`, `DOUBLE` y `BOOLEAN` no tienen función. Un texto que no es entero se rechaza en la fila. Se contrastó con `/exec` en `sensors` y `days`.
