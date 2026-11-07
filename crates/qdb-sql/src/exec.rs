@@ -7,8 +7,8 @@ use crate::parse::{
     MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
     RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr,
     SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
-    TimestampCeilExpr, TimestampFloorExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr,
-    UpperExpr, WeekOfYearExpr, YearExpr,
+    TimestampCeilExpr, TimestampFloorExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd,
+    TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -228,6 +228,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::IsEndOfMonth { label, .. }
             | ResolvedProj::DayOfWeekSundayFirst { label, .. }
             | ResolvedProj::ToTimestamp { label, .. }
+            | ResolvedProj::ToDate { label, .. }
             | ResolvedProj::Extract { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
@@ -473,6 +474,11 @@ enum ResolvedProj {
         arg: ResolvedArg,
         pattern: Option<Vec<TimestampToken>>,
     },
+    ToDate {
+        label: String,
+        arg: ResolvedArg,
+        pattern: Vec<TimestampToken>,
+    },
     Extract {
         label: String,
         part: ExtractPart,
@@ -639,6 +645,7 @@ impl ResolvedProj {
             | Self::IsEndOfMonth { label, .. }
             | Self::DayOfWeekSundayFirst { label, .. }
             | Self::ToTimestamp { label, .. }
+            | Self::ToDate { label, .. }
             | Self::Extract { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
@@ -686,6 +693,7 @@ impl ResolvedProj {
             Self::IsEndOfMonth { .. } => qdb_types::TAG_BOOLEAN,
             Self::DayOfWeekSundayFirst { .. } => qdb_types::TAG_INT,
             Self::ToTimestamp { .. } => qdb_types::TAG_TIMESTAMP,
+            Self::ToDate { .. } => qdb_types::TAG_DATE,
             Self::Extract { part, .. } => match part {
                 ExtractPart::Epoch => qdb_types::TAG_LONG,
                 _ => qdb_types::TAG_INT,
@@ -782,6 +790,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::IsEndOfMonth(expr) => resolve_is_end_of_month(table, expr),
         Proj::DayOfWeekSundayFirst(expr) => resolve_day_of_week_sunday_first(table, expr),
         Proj::ToTimestamp(expr) => resolve_to_timestamp(table, expr),
+        Proj::ToDate(expr) => resolve_to_date(table, expr),
         Proj::Extract(expr) => resolve_extract(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
@@ -1701,6 +1710,75 @@ struct TimestampToken {
     greedy: bool,
 }
 
+fn compile_date_tokens(pattern: &str) -> Vec<TimestampToken> {
+    const TOKENS: &[ToStrToken] = &[
+        ("yyyy", || ToStrOp::Year(4)),
+        ("MMMM", || ToStrOp::Month(4)),
+        ("yyy", || ToStrOp::Year(3)),
+        ("MMM", || ToStrOp::Month(3)),
+        ("SSS", || ToStrOp::Millis(true)),
+        ("zzz", || ToStrOp::Zone),
+        ("xxx", || ToStrOp::Zone),
+        ("HH", || ToStrOp::Hour24(true)),
+        ("hh", || ToStrOp::Hour12(true)),
+        ("kk", || ToStrOp::HourK(true)),
+        ("KK", || ToStrOp::HourCapK(true)),
+        ("mm", || ToStrOp::Minute(true)),
+        ("ss", || ToStrOp::Second(true)),
+        ("dd", || ToStrOp::Day(2)),
+        ("yy", || ToStrOp::Year(2)),
+        ("MM", || ToStrOp::Month(2)),
+        ("zz", || ToStrOp::Zone),
+        ("xx", || ToStrOp::Zone),
+        ("y", || ToStrOp::Year(1)),
+        ("M", || ToStrOp::Month(1)),
+        ("d", || ToStrOp::Day(1)),
+        ("a", || ToStrOp::AmPm),
+        ("H", || ToStrOp::Hour24(false)),
+        ("h", || ToStrOp::Hour12(false)),
+        ("k", || ToStrOp::HourK(false)),
+        ("K", || ToStrOp::HourCapK(false)),
+        ("m", || ToStrOp::Minute(false)),
+        ("s", || ToStrOp::Second(false)),
+        ("S", || ToStrOp::Millis(false)),
+        ("Z", || ToStrOp::Zone),
+        ("z", || ToStrOp::Zone),
+        ("x", || ToStrOp::Zone),
+    ];
+    let mut ops = Vec::new();
+    let mut index = 0;
+    while index < pattern.len() {
+        let rest = &pattern[index..];
+        if let Some((token, op)) = TOKENS.iter().find(|(token, _)| rest.starts_with(token)) {
+            ops.push(op());
+            index += token.len();
+        } else {
+            let ch = rest.chars().next().unwrap_or('\u{0}');
+            ops.push(ToStrOp::Lit(ch.to_string()));
+            index += ch.len_utf8();
+        }
+    }
+    let mut tokens: Vec<TimestampToken> = ops
+        .into_iter()
+        .map(|op| TimestampToken { op, greedy: false })
+        .collect();
+    for index in 0..tokens.len() {
+        let boundary = matches!(
+            tokens[index].op,
+            ToStrOp::Lit(_) | ToStrOp::AmPm | ToStrOp::Zone
+        );
+        if boundary && index > 0 && timestamp_token_is_flexible(&tokens[index - 1].op) {
+            tokens[index - 1].greedy = true;
+        }
+    }
+    if let Some(last) = tokens.last_mut() {
+        if timestamp_token_is_flexible(&last.op) {
+            last.greedy = true;
+        }
+    }
+    tokens
+}
+
 fn compile_timestamp_tokens(pattern: &str) -> Vec<TimestampToken> {
     let ops = compile_to_str(pattern).unwrap_or_default();
     let mut tokens: Vec<TimestampToken> = ops
@@ -2031,6 +2109,71 @@ fn resolve_extract(table: &Table, expr: &ExtractExpr) -> Result<ResolvedProj, Er
         label: expr.label.clone(),
         part: extract_part(&expr.part)?,
         value: date_trunc_timestamp(table, &expr.arg)?,
+    })
+}
+
+fn resolve_to_date(table: &Table, expr: &ToDateExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(format!(
+            "there is no matching function `to_date` with the argument types: ({})",
+            timestamp_floor_types(table, &expr.args)?
+        )));
+    }
+    let pattern = match &expr.args[1] {
+        ConcatArg::Literal(Scalar::Null) => return Err(Error::new("pattern is required")),
+        ConcatArg::Literal(Scalar::Text(text)) => compile_date_tokens(text),
+        ConcatArg::Literal(Scalar::Char(0)) => compile_date_tokens(""),
+        ConcatArg::Literal(Scalar::Char(unit)) => compile_date_tokens(
+            &char::from_u32(u32::from(*unit))
+                .unwrap_or('\u{0}')
+                .to_string(),
+        ),
+        _ => {
+            return Err(Error::new(format!(
+                "there is no matching function `to_date` with the argument types: ({})",
+                timestamp_floor_types(table, &expr.args)?
+            )));
+        }
+    };
+    let arg = match &expr.args[0] {
+        ConcatArg::Literal(Scalar::Null) => ResolvedArg::Null,
+        ConcatArg::Literal(Scalar::Text(text)) => ResolvedArg::Text(text.clone()),
+        ConcatArg::Literal(Scalar::Char(0)) => ResolvedArg::Null,
+        ConcatArg::Literal(Scalar::Char(unit)) => ResolvedArg::Text(
+            char::from_u32(u32::from(*unit))
+                .unwrap_or('\u{0}')
+                .to_string(),
+        ),
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            let tag = table.meta.columns[index].tag;
+            if !matches!(
+                tag,
+                qdb_types::TAG_STRING
+                    | qdb_types::TAG_SYMBOL
+                    | qdb_types::TAG_VARCHAR
+                    | qdb_types::TAG_CHAR
+            ) {
+                return Err(Error::new(format!(
+                    "there is no matching function `to_date` with the argument types: ({})",
+                    timestamp_floor_types(table, &expr.args)?
+                )));
+            }
+            ResolvedArg::Column { index, tag }
+        }
+        _ => {
+            return Err(Error::new(format!(
+                "there is no matching function `to_date` with the argument types: ({})",
+                timestamp_floor_types(table, &expr.args)?
+            )));
+        }
+    };
+    Ok(ResolvedProj::ToDate {
+        label: expr.label.clone(),
+        arg,
+        pattern,
     })
 }
 
@@ -4805,6 +4948,20 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::Extract { part, value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => extract_value(*part, micros),
+            None => Scalar::Null,
+        },
+        ResolvedProj::ToDate { arg, pattern, .. } => match text_of(table, row, arg) {
+            Some(text) => match parse_timestamp_pattern(pattern, &text) {
+                Some(micros) => {
+                    let millis = micros / 1_000;
+                    if millis == i64::MIN {
+                        Scalar::Null
+                    } else {
+                        Scalar::Date(millis)
+                    }
+                }
+                None => Scalar::Null,
+            },
             None => Scalar::Null,
         },
         ResolvedProj::ToTimestamp { arg, pattern, .. } => match text_of(table, row, arg) {
@@ -13850,6 +14007,172 @@ mod tests {
             err.message.contains(
                 "there is no matching function `to_str` with the argument types: (TIMESTAMP, STRING, CHAR)"
             ),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn to_date_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1",
+                "expected/td_date.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('2020-1-2', 'yyyy-M-d') FROM sensors LIMIT 1",
+                "expected/td_loose.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('20', 'yy') FROM sensors LIMIT 1",
+                "expected/td_yy.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('69', 'yy') FROM sensors LIMIT 1",
+                "expected/td_yy69.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('2020-01-02 15:07:09', 'yyyy-MM-dd HH:mm:ss') FROM sensors LIMIT 1",
+                "expected/td_time.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('03:04:05.123', 'HH:mm:ss.SSS') FROM sensors LIMIT 1",
+                "expected/td_frac.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('03:04:05.123456', 'HH:mm:ss.SSSUUU') FROM sensors LIMIT 1",
+                "expected/td_badu.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('Jan 2, 2020', 'MMM d, yyyy') FROM sensors LIMIT 1",
+                "expected/td_mon.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('3 PM', 'h a') FROM sensors LIMIT 1",
+                "expected/td_pm.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('12 AM', 'h a') FROM sensors LIMIT 1",
+                "expected/td_mid.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('U', 'U') FROM sensors LIMIT 1",
+                "expected/td_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('2020-02-29', 'yyyy-MM-dd') FROM sensors LIMIT 1",
+                "expected/td_leap.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('2019-02-29', 'yyyy-MM-dd') FROM sensors LIMIT 1",
+                "expected/td_nleap.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date(note, 'yyyy-MM-dd') FROM sensors",
+                "expected/td_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date(location, 'yyyy-MM-dd') FROM sensors LIMIT 1",
+                "expected/td_sym.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date(null, 'yyyy-MM-dd') FROM sensors LIMIT 1",
+                "expected/td_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('nope', 'yyyy-MM-dd') FROM sensors LIMIT 1",
+                "expected/td_bad.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT TO_DATE('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1",
+                "expected/td_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date(note, 'yyyy-MM-dd') FROM sensors ORDER BY to_date(note, 'yyyy-MM-dd')",
+                "expected/td_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1",
+                "expected/td_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0",
+                "expected/td_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT to_date(note, 'yyyy-MM-dd') FROM days ORDER BY ts",
+                "expected/td_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT to_date() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `to_date` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_date('2020-01-02') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_date` with the argument types: (STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_date('2020-01-02', null) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("pattern is required"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_date(id, 'yyyy-MM-dd') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_date` with the argument types: (LONG, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_date('2020-01-02', note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_date` with the argument types: (STRING, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_date(missing, 'yyyy') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );

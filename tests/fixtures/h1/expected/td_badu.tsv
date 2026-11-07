@@ -1,0 +1,2 @@
+to_date('03:04:05.123456', 'HH:mm:ss.SSSUUU')
+NULL

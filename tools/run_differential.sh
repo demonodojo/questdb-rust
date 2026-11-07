@@ -1175,7 +1175,28 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   xt_case "SELECT EXTRACT(YEAR FROM TS) FROM sensors LIMIT 1" \
   xt_order "SELECT extract(year FROM id) FROM sensors ORDER BY extract(year FROM id)" \
   xt_where "SELECT extract(year FROM ts) FROM sensors WHERE id = 1" \
-  xt_zero "SELECT extract(year FROM ts) FROM sensors LIMIT 0"
+  xt_zero "SELECT extract(year FROM ts) FROM sensors LIMIT 0" \
+  td_date "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  td_loose "SELECT to_date('2020-1-2', 'yyyy-M-d') FROM sensors LIMIT 1" \
+  td_yy "SELECT to_date('20', 'yy') FROM sensors LIMIT 1" \
+  td_yy69 "SELECT to_date('69', 'yy') FROM sensors LIMIT 1" \
+  td_time "SELECT to_date('2020-01-02 15:07:09', 'yyyy-MM-dd HH:mm:ss') FROM sensors LIMIT 1" \
+  td_frac "SELECT to_date('03:04:05.123', 'HH:mm:ss.SSS') FROM sensors LIMIT 1" \
+  td_badu "SELECT to_date('03:04:05.123456', 'HH:mm:ss.SSSUUU') FROM sensors LIMIT 1" \
+  td_mon "SELECT to_date('Jan 2, 2020', 'MMM d, yyyy') FROM sensors LIMIT 1" \
+  td_pm "SELECT to_date('3 PM', 'h a') FROM sensors LIMIT 1" \
+  td_mid "SELECT to_date('12 AM', 'h a') FROM sensors LIMIT 1" \
+  td_lit "SELECT to_date('U', 'U') FROM sensors LIMIT 1" \
+  td_leap "SELECT to_date('2020-02-29', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  td_nleap "SELECT to_date('2019-02-29', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  td_note "SELECT to_date(note, 'yyyy-MM-dd') FROM sensors" \
+  td_sym "SELECT to_date(location, 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  td_null "SELECT to_date(null, 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  td_bad "SELECT to_date('nope', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  td_case "SELECT TO_DATE('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  td_order "SELECT to_date(note, 'yyyy-MM-dd') FROM sensors ORDER BY to_date(note, 'yyyy-MM-dd')" \
+  td_where "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1" \
+  td_zero "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1314,7 +1335,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ds_days "SELECT day_of_week_sunday_first(ts) FROM days ORDER BY ts" \
   tt_days "SELECT to_timestamp(note) FROM days ORDER BY ts" \
   tp_days "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM days ORDER BY ts" \
-  xt_days "SELECT extract(day FROM ts) FROM days ORDER BY ts"
+  xt_days "SELECT extract(day FROM ts) FROM days ORDER BY ts" \
+  td_days "SELECT to_date(note, 'yyyy-MM-dd') FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2437,6 +2459,27 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT extract(year FROM id) FROM sensors ORDER BY extract(year FROM id)"),
     (os.environ["DIFF_H1"], "SELECT extract(year FROM ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT extract(year FROM ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('2020-1-2', 'yyyy-M-d') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('20', 'yy') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('69', 'yy') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('2020-01-02 15:07:09', 'yyyy-MM-dd HH:mm:ss') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('03:04:05.123', 'HH:mm:ss.SSS') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('03:04:05.123456', 'HH:mm:ss.SSSUUU') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('Jan 2, 2020', 'MMM d, yyyy') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('3 PM', 'h a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('12 AM', 'h a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('U', 'U') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('2020-02-29', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('2019-02-29', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date(note, 'yyyy-MM-dd') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_date(location, 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date(null, 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('nope', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT TO_DATE('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date(note, 'yyyy-MM-dd') FROM sensors ORDER BY to_date(note, 'yyyy-MM-dd')"),
+    (os.environ["DIFF_H1"], "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2574,6 +2617,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT to_timestamp(note) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT extract(day FROM ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT to_date(note, 'yyyy-MM-dd') FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -1,0 +1,2 @@
+to_date(location, 'yyyy-MM-dd')
+NULL

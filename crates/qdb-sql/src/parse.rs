@@ -125,6 +125,7 @@ pub enum Proj {
     IsEndOfMonth(IsEndOfMonthExpr),
     DayOfWeekSundayFirst(DayOfWeekSundayFirstExpr),
     ToTimestamp(ToTimestampExpr),
+    ToDate(ToDateExpr),
     Extract(ExtractExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
@@ -443,6 +444,13 @@ pub struct ToTimestampExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `to_date(text, pattern)` parses a millisecond date.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToDateExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `extract(part FROM timestamp)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractExpr {
@@ -657,6 +665,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_days_in_month()?.label
             } else if parser.starts_extract_call() {
                 parser.parse_extract()?.label
+            } else if parser.starts_to_date_call() {
+                parser.parse_to_date()?.label
             } else if parser.starts_to_timestamp_call() {
                 parser.parse_to_timestamp()?.label
             } else if parser.starts_day_of_week_sunday_first_call() {
@@ -784,6 +794,7 @@ enum SelectPiece {
     IsEndOfMonth(IsEndOfMonthExpr),
     DayOfWeekSundayFirst(DayOfWeekSundayFirstExpr),
     ToTimestamp(ToTimestampExpr),
+    ToDate(ToDateExpr),
     Extract(ExtractExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
@@ -966,6 +977,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::DaysInMonth(self.parse_days_in_month()?));
             } else if self.starts_extract_call() {
                 pieces.push(SelectPiece::Extract(self.parse_extract()?));
+            } else if self.starts_to_date_call() {
+                pieces.push(SelectPiece::ToDate(self.parse_to_date()?));
             } else if self.starts_to_timestamp_call() {
                 pieces.push(SelectPiece::ToTimestamp(self.parse_to_timestamp()?));
             } else if self.starts_day_of_week_sunday_first_call() {
@@ -1058,6 +1071,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::IsEndOfMonth(_)
                     | SelectPiece::DayOfWeekSundayFirst(_)
                     | SelectPiece::ToTimestamp(_)
+                    | SelectPiece::ToDate(_)
                     | SelectPiece::Extract(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
@@ -1129,6 +1143,7 @@ impl<'a> Parser<'a> {
                         items.push(Proj::DayOfWeekSundayFirst(expr))
                     }
                     SelectPiece::ToTimestamp(expr) => items.push(Proj::ToTimestamp(expr)),
+                    SelectPiece::ToDate(expr) => items.push(Proj::ToDate(expr)),
                     SelectPiece::Extract(expr) => items.push(Proj::Extract(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
@@ -1222,6 +1237,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::IsEndOfMonth(_)
                 | SelectPiece::DayOfWeekSundayFirst(_)
                 | SelectPiece::ToTimestamp(_)
+                | SelectPiece::ToDate(_)
                 | SelectPiece::Extract(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
@@ -1525,6 +1541,24 @@ impl<'a> Parser<'a> {
             label: format!("{name}({part_src}, {arg_label})"),
             part,
             arg,
+        })
+    }
+
+    fn starts_to_date_call(&self) -> bool {
+        self.starts_named_call("to_date")
+    }
+
+    fn parse_to_date(&mut self) -> Result<ToDateExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `to_date` requires arguments".to_string(),
+            ));
+        }
+        Ok(ToDateExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
         })
     }
 
