@@ -1196,7 +1196,18 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   td_case "SELECT TO_DATE('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
   td_order "SELECT to_date(note, 'yyyy-MM-dd') FROM sensors ORDER BY to_date(note, 'yyyy-MM-dd')" \
   td_where "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1" \
-  td_zero "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0"
+  td_zero "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0" \
+  m5_abc "SELECT md5('abc') FROM sensors LIMIT 1" \
+  m5_empty "SELECT md5('') FROM sensors LIMIT 1" \
+  m5_null "SELECT md5(null) FROM sensors LIMIT 1" \
+  m5_note "SELECT md5(note) FROM sensors" \
+  m5_sym "SELECT md5(location) FROM sensors LIMIT 1" \
+  m5_beta "SELECT md5('β') FROM sensors LIMIT 1" \
+  m5_tokyo "SELECT md5('東京') FROM sensors LIMIT 1" \
+  m5_case "SELECT MD5('abc') FROM sensors LIMIT 1" \
+  m5_order "SELECT md5(note) FROM sensors ORDER BY md5(note)" \
+  m5_where "SELECT md5(note) FROM sensors WHERE id = 1" \
+  m5_zero "SELECT md5(note) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1336,7 +1347,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   tt_days "SELECT to_timestamp(note) FROM days ORDER BY ts" \
   tp_days "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM days ORDER BY ts" \
   xt_days "SELECT extract(day FROM ts) FROM days ORDER BY ts" \
-  td_days "SELECT to_date(note, 'yyyy-MM-dd') FROM days ORDER BY ts"
+  td_days "SELECT to_date(note, 'yyyy-MM-dd') FROM days ORDER BY ts" \
+  m5_days "SELECT md5(note) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2480,6 +2492,17 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_date(note, 'yyyy-MM-dd') FROM sensors ORDER BY to_date(note, 'yyyy-MM-dd')"),
     (os.environ["DIFF_H1"], "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT md5('abc') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT md5('') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT md5(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT md5(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT md5(location) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT md5('β') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT md5('東京') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT MD5('abc') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT md5(note) FROM sensors ORDER BY md5(note)"),
+    (os.environ["DIFF_H1"], "SELECT md5(note) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT md5(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2618,6 +2641,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT extract(day FROM ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT to_date(note, 'yyyy-MM-dd') FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT md5(note) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

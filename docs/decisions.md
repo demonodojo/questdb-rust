@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — md5()
+
+`md5(texto)` devuelve `VARCHAR` con el resumen en hexadecimal en minúsculas. El texto se lee como UTF-8. Un nulo sigue NULL. Una cadena vacía tiene resumen. Un número no tiene función. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — to_date()
 
 `to_date(texto, patrón)` devuelve `DATE` en milisegundos. El patrón es una constante. Los campos que faltan salen en 1970-01-01 a medianoche. `yy` usa el siglo en curso. `U` se copia como letra. Un texto que no encaja sale NULL. Un patrón nulo se rechaza con `pattern is required`. Una columna como patrón no tiene función. Se contrastó con `/exec` en `sensors` y `days`.
