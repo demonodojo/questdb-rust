@@ -17477,6 +17477,51 @@ mod tests {
     }
 
     #[test]
+    fn zl_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id::long FROM sensors",
+                "expected/zl_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::long FROM sensors WHERE id = 1",
+                "expected/zl_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::long FROM sensors WHERE id > 100",
+                "expected/zl_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags::long FROM sensors",
+                "expected/zl_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note::long FROM sensors",
+                "expected/zl_note.tsv",
+            ),
+            (&days, "SELECT id::long FROM days", "expected/zl_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id::missing FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid constant: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
     fn dj_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");

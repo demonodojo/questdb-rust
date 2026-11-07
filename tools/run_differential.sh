@@ -2673,7 +2673,12 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   zs_one "SELECT id::string FROM sensors WHERE id = 1" \
   zs_none "SELECT id::string FROM sensors WHERE id > 100" \
   zs_flags "SELECT flags::string FROM sensors" \
-  zs_note "SELECT note::string FROM sensors"
+  zs_note "SELECT note::string FROM sensors" \
+  zl_all "SELECT id::long FROM sensors" \
+  zl_one "SELECT id::long FROM sensors WHERE id = 1" \
+  zl_none "SELECT id::long FROM sensors WHERE id > 100" \
+  zl_flags "SELECT flags::long FROM sensors" \
+  zl_note "SELECT note::long FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2999,7 +3004,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   zq_days "SELECT id >= id FROM days" \
   yl_days "SELECT id <= id FROM days" \
   yn_days "SELECT id != id FROM days" \
-  zs_days "SELECT id::string FROM days"
+  zs_days "SELECT id::string FROM days" \
+  zl_days "SELECT id::long FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5620,6 +5626,11 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id::string FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT flags::string FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT note::string FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id::long FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id::long FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT id::long FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT flags::long FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT note::long FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -5944,6 +5955,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT id <= id FROM days"),
     (os.environ["DIFF_H2"], "SELECT id != id FROM days"),
     (os.environ["DIFF_H2"], "SELECT id::string FROM days"),
+    (os.environ["DIFF_H2"], "SELECT id::long FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
