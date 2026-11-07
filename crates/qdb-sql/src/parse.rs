@@ -1641,6 +1641,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::And)?));
                 } else if self.eat_keyword("or") {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::Or)?));
+                } else if self.starts_is_null() {
+                    pieces.push(SelectPiece::Eq(self.parse_is_null(name)?));
                 } else if self.starts_eq_or_ne() {
                     pieces.push(SelectPiece::Eq(self.parse_eq(name)?));
                 } else if self.starts_add() {
@@ -2348,6 +2350,44 @@ impl<'a> Parser<'a> {
             .unwrap_or("")
             .to_ascii_lowercase();
         !matches!(word.as_str(), "null" | "true" | "false")
+    }
+
+    fn keyword_at(&self, pos: usize, word: &str) -> Option<usize> {
+        let mut pos = pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let bytes = word.as_bytes();
+        let end = pos + bytes.len();
+        if self.src.len() < end || !self.src[pos..end].eq_ignore_ascii_case(bytes) {
+            return None;
+        }
+        if matches!(self.src.get(end), Some(byte) if byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            return None;
+        }
+        Some(end)
+    }
+
+    fn starts_is_null(&self) -> bool {
+        let Some(after_is) = self.keyword_at(self.pos, "is") else {
+            return false;
+        };
+        self.keyword_at(after_is, "null").is_some()
+    }
+
+    fn parse_is_null(&mut self, name: String) -> Result<EqExpr, Error> {
+        if !self.eat_keyword("is") || !self.eat_keyword("null") {
+            return Err(Error::new(
+                "unsupported: expected IS NULL after column".to_string(),
+            ));
+        }
+        Ok(EqExpr {
+            label: format!("{name} = NULL"),
+            value: name,
+            op: CmpOp::Eq,
+            literal: Scalar::Null,
+        })
     }
 
     fn starts_eq_or_ne(&self) -> bool {
