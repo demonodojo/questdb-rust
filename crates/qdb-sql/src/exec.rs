@@ -1,8 +1,8 @@
 use crate::parse::{
-    date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr, CmpOp,
-    ConcatArg, Filter, FloorExpr, GroupedSelect, LengthExpr, LowerExpr, PadExpr, Proj, Query,
-    QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SizePrettyExpr, SplitPartExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
+    CeilExpr, CmpOp, ConcatArg, Filter, FloorExpr, GroupedSelect, LengthExpr, LowerExpr, PadExpr,
+    Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SizePrettyExpr,
+    SplitPartExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -195,7 +195,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::SizePretty { label, .. }
             | ResolvedProj::Abs { label, .. }
             | ResolvedProj::Round { label, .. }
-            | ResolvedProj::Floor { label, .. } => label.clone(),
+            | ResolvedProj::Floor { label, .. }
+            | ResolvedProj::Ceil { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -310,6 +311,11 @@ enum ResolvedProj {
         input: FloorInput,
         wide: bool,
     },
+    Ceil {
+        label: String,
+        input: FloorInput,
+        wide: bool,
+    },
 }
 
 enum FloorInput {
@@ -380,7 +386,8 @@ impl ResolvedProj {
             | Self::SizePretty { label, .. }
             | Self::Abs { label, .. }
             | Self::Round { label, .. }
-            | Self::Floor { label, .. } => Some(label),
+            | Self::Floor { label, .. }
+            | Self::Ceil { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -390,7 +397,7 @@ impl ResolvedProj {
             Self::Length { .. } | Self::StrPos { .. } => qdb_types::TAG_INT,
             Self::Abs { result_tag, .. } => *result_tag,
             Self::Round { .. } => qdb_types::TAG_DOUBLE,
-            Self::Floor { wide, .. } => {
+            Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
                 if *wide {
                     qdb_types::TAG_DOUBLE
                 } else {
@@ -448,7 +455,25 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Abs(expr) => resolve_abs(table, expr),
         Proj::Round(expr) => resolve_round(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
+        Proj::Ceil(expr) => resolve_ceil(table, expr),
     }
+}
+
+fn resolve_ceil(table: &Table, expr: &CeilExpr) -> Result<ResolvedProj, Error> {
+    let name = function_name(&expr.label);
+    if expr.args.len() != 1 {
+        if decimal_floor(table, &expr.args) {
+            return Err(Error::new(format!("unsupported: decimal {name}")));
+        }
+        return Err(named_type_error(table, &name, &expr.args));
+    }
+    let (input, wide) = floor_input(table, &expr.args[0])
+        .map_err(|_| named_type_error(table, &name, &expr.args))?;
+    Ok(ResolvedProj::Ceil {
+        label: expr.label.clone(),
+        input,
+        wide,
+    })
 }
 
 fn resolve_floor(table: &Table, expr: &FloorExpr) -> Result<ResolvedProj, Error> {
@@ -1294,6 +1319,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             }
         },
         ResolvedProj::Floor { input, wide, .. } => floor_value(table, row, input, *wide),
+        ResolvedProj::Ceil { input, wide, .. } => ceil_value(table, row, input, *wide),
         ResolvedProj::Round { input, scale, .. } => match round_row(table, row, input, scale) {
             Some(value) => Scalar::Double(value),
             None => Scalar::Null,
@@ -1396,6 +1422,19 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Some(text) => Scalar::Text(trim_ascii_space(&text, *end)),
             None => Scalar::Null,
         },
+    }
+}
+
+fn ceil_value(table: &Table, row: usize, input: &FloorInput, wide: bool) -> Scalar {
+    if wide {
+        return match floor_f64(table, row, input) {
+            Some(value) => Scalar::Double(value.ceil()),
+            None => Scalar::Null,
+        };
+    }
+    match floor_f32(table, row, input) {
+        Some(value) => Scalar::Float(value.ceil()),
+        None => Scalar::Null,
     }
 }
 
@@ -7131,6 +7170,167 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT floor(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn ceil_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT ceil(reading) FROM sensors",
+                "expected/ce_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(score) FROM sensors",
+                "expected/ce_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(id) FROM sensors",
+                "expected/ce_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(flags) FROM sensors",
+                "expected/ce_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(b) FROM sensors",
+                "expected/ce_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(code) FROM sensors",
+                "expected/ce_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(1.5) FROM sensors LIMIT 1",
+                "expected/ce_half.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(-1.5) FROM sensors LIMIT 1",
+                "expected/ce_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(1) FROM sensors LIMIT 1",
+                "expected/ce_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(3000000000) FROM sensors LIMIT 1",
+                "expected/ce_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(null) FROM sensors LIMIT 1",
+                "expected/ce_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT CEIL(READING) FROM sensors",
+                "expected/ce_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceiling(reading) FROM sensors",
+                "expected/ce_alias.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(id) FROM sensors ORDER BY ceil(id)",
+                "expected/ce_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(score) FROM sensors ORDER BY ceil(score)",
+                "expected/ce_score_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(reading) FROM sensors ORDER BY ceil(reading)",
+                "expected/ce_reading_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, ceil(id) FROM sensors ORDER BY ceil(id)",
+                "expected/ce_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(id) FROM sensors WHERE id = -1",
+                "expected/ce_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ceil(id) FROM sensors LIMIT 0",
+                "expected/ce_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT ceil(id) FROM days ORDER BY ts",
+                "expected/ce_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT ceil() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("function `ceil` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ceiling() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `ceiling` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ceil(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `ceil` with the argument types: (STRING)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ceiling(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `ceiling` with the argument types: (BOOLEAN)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ceil(reading, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `ceil` with the argument types: (DOUBLE, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ceiling(id, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("unsupported: decimal ceiling"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ceil(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
