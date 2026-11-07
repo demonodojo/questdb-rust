@@ -60,6 +60,7 @@ pub enum AggFunc {
     Corr,
     RegrSlope,
     RegrIntercept,
+    RegrR2,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3052,6 +3053,7 @@ impl<'a> Parser<'a> {
                 | "corr"
                 | "regr_slope"
                 | "regr_intercept"
+                | "regr_r2"
         ) {
             return false;
         }
@@ -3101,6 +3103,7 @@ impl<'a> Parser<'a> {
             "corr" => AggFunc::Corr,
             "regr_slope" => AggFunc::RegrSlope,
             "regr_intercept" => AggFunc::RegrIntercept,
+            "regr_r2" => AggFunc::RegrR2,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3227,6 +3230,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Corr
                 | AggFunc::RegrSlope
                 | AggFunc::RegrIntercept
+                | AggFunc::RegrR2
         ) && self.peek() == Some(b',')
         {
             self.pos += 1;
@@ -3286,6 +3290,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Corr
                 | AggFunc::RegrSlope
                 | AggFunc::RegrIntercept
+                | AggFunc::RegrR2
         ) && column.is_none()
         {
             let fname = name.to_ascii_lowercase();
@@ -3300,6 +3305,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Corr
                 | AggFunc::RegrSlope
                 | AggFunc::RegrIntercept
+                | AggFunc::RegrR2
         ) && pair.is_none()
         {
             return Err(Error::new(format!(

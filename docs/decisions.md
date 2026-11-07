@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — regr_r2()
+
+`regr_r2(y, x)` usa las mismas sumas y devuelve el cuadrado de la suma cruzada partido por el producto de las dos sumas de cuadrados. Sin parejas, o si la suma de cuadrados de `x` es cero, el resultado es NULL. Si `x` varía y `y` es constante, el resultado es `1.0`. `regr_r2(reading, score)` es `0.7032967032967034`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — regr_intercept()
 
 `regr_intercept(y, x)` usa las mismas sumas que `regr_slope` y devuelve `media(y) - media(x) * pendiente`. Sin parejas, o si la suma de cuadrados de `x` es cero, el resultado es NULL. `regr_intercept(reading, score)` es `0.543956043956044`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `regr_intercept(ts, id)` imprime `1.5779342468571428E15` en 10.1.0 y `1577934246857142.8` en Rust. `regr_intercept(day, id)` imprime `1.5850737E12` y `1585073700000.0`. Esas dos consultas no se capturan. Se contrastó el resto con `/exec` en `sensors` y `days`.
