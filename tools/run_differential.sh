@@ -1844,7 +1844,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   bx_day "SELECT bit_xor(day) FROM sensors" \
   bx_ts "SELECT bit_xor(ts) FROM sensors" \
   bx_grp "SELECT bit_xor(flags) FROM sensors GROUP BY location ORDER BY location" \
-  bx_grp_id "SELECT bit_xor(id) FROM sensors GROUP BY location ORDER BY location"
+  bx_grp_id "SELECT bit_xor(id) FROM sensors GROUP BY location ORDER BY location" \
+  gm_read "SELECT geomean(reading) FROM sensors" \
+  gm_one "SELECT geomean(reading) FROM sensors WHERE id = 1" \
+  gm_none "SELECT geomean(reading) FROM sensors WHERE id > 100" \
+  gm_score "SELECT geomean(score) FROM sensors WHERE id = 1" \
+  gm_pos "SELECT geomean(score) FROM sensors WHERE score > 0" \
+  gm_flags "SELECT geomean(flags) FROM sensors WHERE flags > 0" \
+  gm_byte "SELECT geomean(b) FROM sensors WHERE b > 0" \
+  gm_idpos "SELECT geomean(id) FROM sensors WHERE id > 0" \
+  gm_grp "SELECT geomean(reading) FROM sensors GROUP BY location ORDER BY location" \
+  gm_one_grp "SELECT geomean(score) FROM sensors WHERE id = 1 GROUP BY location ORDER BY location" \
+  gm_lim0 "SELECT geomean(reading) FROM sensors LIMIT 0" \
+  gm_case "SELECT GEOMEAN(reading) FROM sensors WHERE id = 1" \
+  gm_day "SELECT geomean(day) FROM sensors" \
+  gm_nullread "SELECT geomean(reading) FROM sensors WHERE id = 2" \
+  gm_neg "SELECT geomean(score) FROM sensors WHERE id = 2" \
+  gm_flag1 "SELECT geomean(flags) FROM sensors WHERE id = 1" \
+  gm_byte1 "SELECT geomean(b) FROM sensors WHERE id = 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2042,7 +2059,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   br_days "SELECT bit_or(id) FROM days" \
   br_days_grp "SELECT bit_or(id) FROM days GROUP BY location ORDER BY location" \
   bx_days "SELECT bit_xor(id) FROM days" \
-  bx_days_grp "SELECT bit_xor(id) FROM days GROUP BY location ORDER BY location"
+  bx_days_grp "SELECT bit_xor(id) FROM days GROUP BY location ORDER BY location" \
+  gm_days "SELECT geomean(id) FROM days" \
+  gm_days_grp "SELECT geomean(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3834,6 +3853,23 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT bit_xor(ts) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT bit_xor(flags) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT bit_xor(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT geomean(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT geomean(reading) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT geomean(reading) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT geomean(score) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT geomean(score) FROM sensors WHERE score > 0"),
+    (os.environ["DIFF_H1"], "SELECT geomean(flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT geomean(b) FROM sensors WHERE b > 0"),
+    (os.environ["DIFF_H1"], "SELECT geomean(id) FROM sensors WHERE id > 0"),
+    (os.environ["DIFF_H1"], "SELECT geomean(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT geomean(score) FROM sensors WHERE id = 1 GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT geomean(reading) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT GEOMEAN(reading) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT geomean(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT geomean(reading) FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT geomean(score) FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT geomean(flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT geomean(b) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4030,6 +4066,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT bit_or(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT bit_xor(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT bit_xor(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT geomean(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT geomean(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

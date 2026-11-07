@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — geomean()
+
+`geomean(col)` devuelve `exp` de la media de los logaritmos naturales, como `DOUBLE`. Los nulos se omiten. Un cero o un negativo anula el grupo. `geomean(reading)` con `id = 1` es `1.5` y la columna entera es NULL por el `-0.0`. `geomean(id)` en `days` es `1.8171205928321397`. Sin filas el resultado es NULL. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `geomean(code)` con `code > 0` imprime `2.6457513110645907` en 10.1.0 y `2.6457513110645903` en Rust. `geomean(ts)` imprime `1.5779342464999918E15`. Esas dos consultas no se capturan. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — bit_xor()
 
 `bit_xor(col)` devuelve el XOR bit a bit con los mismos tipos que `bit_and`. `bit_xor(flags)` es `32`, `bit_xor(id)` es `-4` y `bit_xor(b)` es `-126`. `bit_xor(id)` en `days` es `0`. Sin filas, un `INT` o un `LONG` es NULL; un `BYTE`, un `SHORT` o un `CHAR` es `0`. `FLOAT`, `DOUBLE` y `BOOLEAN` no tienen función. Un texto que no es entero se rechaza en la fila. Se contrastó con `/exec` en `sensors` y `days`.

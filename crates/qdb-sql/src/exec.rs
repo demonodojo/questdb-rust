@@ -7339,6 +7339,11 @@ enum Accumulator {
         bits: Option<i64>,
         tag: i32,
     },
+    GeoMean {
+        sum_ln: f64,
+        count: i64,
+        invalid: bool,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -7371,6 +7376,11 @@ impl Accumulator {
             AggFunc::BitXor => Self::BitXor {
                 bits: None,
                 tag: qdb_types::TAG_LONG,
+            },
+            AggFunc::GeoMean => Self::GeoMean {
+                sum_ln: 0.0,
+                count: 0,
+                invalid: false,
             },
             AggFunc::Avg => Self::Average {
                 total: None,
@@ -7539,6 +7549,17 @@ impl Accumulator {
                 PairKind::R2 => r2_result(*sum_xy, *sum_y, *sum_x, *count),
                 PairKind::Corr => corr_result(*sum_xy, *sum_y, *sum_x, *count),
             },
+            Self::GeoMean {
+                sum_ln,
+                count,
+                invalid,
+            } => {
+                if *count == 0 || *invalid {
+                    Scalar::Null
+                } else {
+                    Scalar::Double((*sum_ln / *count as f64).exp())
+                }
+            }
             Self::BitAnd { bits, tag } | Self::BitOr { bits, tag } | Self::BitXor { bits, tag } => {
                 bit_and_scalar(*bits, *tag)
             }
@@ -7651,6 +7672,14 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             qdb_types::type_name(tag)
         )));
     }
+    if aggregate.func == AggFunc::GeoMean
+        && matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL)
+    {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `geomean` at #1 expected: DOUBLE, actual: {}",
+            qdb_types::type_name(tag)
+        )));
+    }
     if aggregate.func == AggFunc::ApproxCountDistinct {
         reject_approx_count_distinct(tag, aggregate)?;
     }
@@ -7732,7 +7761,8 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::Corr
         | AggFunc::RegrSlope
         | AggFunc::RegrIntercept
-        | AggFunc::RegrR2 => qdb_types::TAG_DOUBLE,
+        | AggFunc::RegrR2
+        | AggFunc::GeoMean => qdb_types::TAG_DOUBLE,
         AggFunc::BoolAnd | AggFunc::BoolOr => qdb_types::TAG_BOOLEAN,
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
@@ -7769,6 +7799,7 @@ fn contribution(
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => {
             bit_and_addend(value, input, bit_agg_name(input.func))
         }
+        AggFunc::GeoMean => geomean_addend(value, input),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::CountDistinct => Ok(Some(value.clone())),
         AggFunc::ApproxCountDistinct => approx_distinct_value(value, input),
@@ -8426,6 +8457,57 @@ fn stddev_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Er
     }
 }
 
+fn geomean_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Error> {
+    let number = match input.tag {
+        qdb_types::TAG_BYTE
+        | qdb_types::TAG_SHORT
+        | qdb_types::TAG_INT
+        | qdb_types::TAG_LONG
+        | qdb_types::TAG_FLOAT
+        | qdb_types::TAG_DOUBLE => as_f64(value)?,
+        qdb_types::TAG_DATE => match value {
+            Scalar::Date(millis) => *millis as f64,
+            _ => return Err(Error::new("internal: date column value")),
+        },
+        qdb_types::TAG_TIMESTAMP => match value {
+            Scalar::Timestamp(micros) => *micros as f64,
+            _ => return Err(Error::new("internal: timestamp column value")),
+        },
+        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR => {
+            let text = scalar_text(value);
+            let parsed = parse_questdb_f64(&text).filter(|number| number.is_finite());
+            let Some(number) = parsed else {
+                let kind = qdb_types::type_name(input.tag);
+                return Err(Error::new(format!(
+                    "inconvertible value: `{text}` [{kind} -> DOUBLE]"
+                )));
+            };
+            number
+        }
+        qdb_types::TAG_CHAR => {
+            let text = scalar_text(value);
+            let parsed = parse_questdb_f64(&text).filter(|number| number.is_finite());
+            let Some(number) = parsed else {
+                return Err(Error::new(format!(
+                    "inconvertible value: {text} [CHAR -> DOUBLE]"
+                )));
+            };
+            number
+        }
+        _ => {
+            return Err(Error::new(format!(
+                "argument type mismatch for function `geomean` at #1 expected: DOUBLE, actual: {}",
+                qdb_types::type_name(input.tag)
+            )));
+        }
+    };
+    if number.is_finite() {
+        Ok(Some(Scalar::Double(number)))
+    } else {
+        Ok(None)
+    }
+}
+
 fn avg_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Error> {
     if input.tag == qdb_types::TAG_BOOLEAN {
         let Scalar::Boolean(bit) = value else {
@@ -8585,6 +8667,21 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
                 return;
             };
             *bits = Some(bits.map(|current| current ^ next).unwrap_or(next));
+        }
+        Accumulator::GeoMean {
+            sum_ln,
+            count,
+            invalid,
+        } => {
+            let Scalar::Double(next) = next else {
+                return;
+            };
+            *count += 1;
+            if *invalid || !next.is_finite() || next <= 0.0 {
+                *invalid = true;
+            } else {
+                *sum_ln += next.ln();
+            }
         }
         Accumulator::BoolOr { value, count } => {
             let Scalar::Boolean(bit) = next else {
@@ -22751,6 +22848,172 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> SHORT]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn geomean_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT geomean(reading) FROM sensors",
+                "expected/gm_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(reading) FROM sensors WHERE id = 1",
+                "expected/gm_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(reading) FROM sensors WHERE id > 100",
+                "expected/gm_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(score) FROM sensors WHERE id = 1",
+                "expected/gm_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(score) FROM sensors WHERE score > 0",
+                "expected/gm_pos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(flags) FROM sensors WHERE flags > 0",
+                "expected/gm_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(b) FROM sensors WHERE b > 0",
+                "expected/gm_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(id) FROM sensors WHERE id > 0",
+                "expected/gm_idpos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/gm_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(score) FROM sensors WHERE id = 1 GROUP BY location ORDER BY location",
+                "expected/gm_one_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(reading) FROM sensors LIMIT 0",
+                "expected/gm_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT GEOMEAN(reading) FROM sensors WHERE id = 1",
+                "expected/gm_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(day) FROM sensors",
+                "expected/gm_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(reading) FROM sensors WHERE id = 2",
+                "expected/gm_nullread.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(score) FROM sensors WHERE id = 2",
+                "expected/gm_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(flags) FROM sensors WHERE id = 1",
+                "expected/gm_flag1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geomean(b) FROM sensors WHERE id = 1",
+                "expected/gm_byte1.tsv",
+            ),
+            (
+                &days,
+                "SELECT geomean(id) FROM days",
+                "expected/gm_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT geomean(id) FROM days GROUP BY location ORDER BY location",
+                "expected/gm_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT geomean() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `geomean` requires arguments: geomean(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT geomean(reading, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `geomean`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT geomean(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT geomean(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT geomean(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `geomean` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT geomean(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `geomean` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT geomean(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT geomean(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
             "{}",
             err.message
         );
