@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — lower()
+
+`lower` devuelve `STRING`. Un NULL de texto, símbolo, varchar o char sigue siendo NULL; una cadena vacía sigue vacía. Las mayúsculas ASCII pasan a minúsculas y `β` no cambia. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-06 — length()
 
 `length` cuenta caracteres Unicode y devuelve `INT`. Un NULL de texto, símbolo, varchar o char vale `-1`. Una cadena vacía vale 0. `βeta` vale 4 y `東京` vale 2. Un entero no tiene función. Se contrastó con `/exec` en `sensors` y `days`.

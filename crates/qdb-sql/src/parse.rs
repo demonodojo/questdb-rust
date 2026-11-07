@@ -84,10 +84,17 @@ pub enum Proj {
     Column(String),
     Concat(ConcatExpr),
     Length(LengthExpr),
+    Lower(LowerExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LengthExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LowerExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -147,6 +154,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_concat()?.label
             } else if parser.starts_length_call() {
                 parser.parse_length()?.label
+            } else if parser.starts_lower_call() {
+                parser.parse_lower()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -201,6 +210,7 @@ enum SelectPiece {
     Aggregate(AggregateExpr),
     Concat(ConcatExpr),
     Length(LengthExpr),
+    Lower(LowerExpr),
 }
 
 struct Parser<'a> {
@@ -297,6 +307,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Concat(self.parse_concat()?));
             } else if self.starts_length_call() {
                 pieces.push(SelectPiece::Length(self.parse_length()?));
+            } else if self.starts_lower_call() {
+                pieces.push(SelectPiece::Lower(self.parse_lower()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -309,9 +321,12 @@ impl<'a> Parser<'a> {
             .iter()
             .filter(|piece| matches!(piece, SelectPiece::Aggregate(_)))
             .count();
-        let projected = pieces
-            .iter()
-            .any(|piece| matches!(piece, SelectPiece::Concat(_) | SelectPiece::Length(_)));
+        let projected = pieces.iter().any(|piece| {
+            matches!(
+                piece,
+                SelectPiece::Concat(_) | SelectPiece::Length(_) | SelectPiece::Lower(_)
+            )
+        });
         if counts > 0 && projected {
             return Err(Error::new(
                 "unsupported: aggregate mixed with other select expressions",
@@ -326,6 +341,7 @@ impl<'a> Parser<'a> {
                     }
                     SelectPiece::Concat(expr) => items.push(Proj::Concat(expr)),
                     SelectPiece::Length(expr) => items.push(Proj::Length(expr)),
+                    SelectPiece::Lower(expr) => items.push(Proj::Lower(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -364,7 +380,7 @@ impl<'a> Parser<'a> {
                     key = Some(name);
                 }
                 SelectPiece::Aggregate(expr) => aggregate = Some(expr),
-                SelectPiece::Concat(_) | SelectPiece::Length(_) => {
+                SelectPiece::Concat(_) | SelectPiece::Length(_) | SelectPiece::Lower(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -391,6 +407,25 @@ impl<'a> Parser<'a> {
 
     fn starts_length_call(&self) -> bool {
         self.starts_named_call("length")
+    }
+
+    fn starts_lower_call(&self) -> bool {
+        self.starts_named_call("lower")
+    }
+
+    fn parse_lower(&mut self) -> Result<LowerExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(LowerExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn parse_length(&mut self) -> Result<LengthExpr, Error> {

@@ -1,6 +1,6 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
-    ConcatArg, Filter, GroupedSelect, LengthExpr, Proj, Query, SelectList,
+    ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, SelectList,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -172,9 +172,9 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
         .iter()
         .map(|item| match item {
             ResolvedProj::Column { index, .. } => table.meta.columns[*index].name.clone(),
-            ResolvedProj::Concat { label, .. } | ResolvedProj::Length { label, .. } => {
-                label.clone()
-            }
+            ResolvedProj::Concat { label, .. }
+            | ResolvedProj::Length { label, .. }
+            | ResolvedProj::Lower { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -214,12 +214,18 @@ enum ResolvedProj {
         label: String,
         arg: ResolvedArg,
     },
+    Lower {
+        label: String,
+        arg: ResolvedArg,
+    },
 }
 
 impl ResolvedProj {
     fn expr_label(&self) -> Option<&str> {
         match self {
-            Self::Concat { label, .. } | Self::Length { label, .. } => Some(label),
+            Self::Concat { label, .. } | Self::Length { label, .. } | Self::Lower { label, .. } => {
+                Some(label)
+            }
             Self::Column { .. } => None,
         }
     }
@@ -255,7 +261,44 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
                 .collect::<Result<Vec<_>, _>>()?,
         }),
         Proj::Length(expr) => resolve_length(table, expr),
+        Proj::Lower(expr) => resolve_lower(table, expr),
     }
+}
+
+fn resolve_lower(table: &Table, expr: &LowerExpr) -> Result<ResolvedProj, Error> {
+    Ok(ResolvedProj::Lower {
+        label: expr.label.clone(),
+        arg: resolve_one_text(table, "lower", &expr.args)?,
+    })
+}
+
+fn resolve_one_text(table: &Table, name: &str, args: &[ConcatArg]) -> Result<ResolvedArg, Error> {
+    if args.len() != 1 {
+        let types = args
+            .iter()
+            .map(|arg| concat_arg_type(table, arg))
+            .collect::<Result<Vec<_>, _>>()?
+            .join(", ");
+        return Err(Error::new(format!(
+            "there is no matching function `{name}` with the argument types: ({types})"
+        )));
+    }
+    let arg = resolve_concat_arg(table, &args[0])?;
+    if let ResolvedArg::Column { tag, .. } = &arg {
+        if !matches!(
+            *tag,
+            qdb_types::TAG_STRING
+                | qdb_types::TAG_SYMBOL
+                | qdb_types::TAG_VARCHAR
+                | qdb_types::TAG_CHAR
+        ) {
+            return Err(Error::new(format!(
+                "there is no matching function `{name}` with the argument types: ({})",
+                qdb_types::type_name(*tag)
+            )));
+        }
+    }
+    Ok(arg)
 }
 
 fn resolve_length(table: &Table, expr: &LengthExpr) -> Result<ResolvedProj, Error> {
@@ -335,6 +378,23 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 .collect(),
         ),
         ResolvedProj::Length { arg, .. } => Scalar::Int(text_length(table, row, arg)),
+        ResolvedProj::Lower { arg, .. } => match text_of(table, row, arg) {
+            Some(text) => Scalar::Text(text.to_lowercase()),
+            None => Scalar::Null,
+        },
+    }
+}
+
+fn text_of(table: &Table, row: usize, arg: &ResolvedArg) -> Option<String> {
+    match arg {
+        ResolvedArg::Null => None,
+        ResolvedArg::Text(text) => Some(text.clone()),
+        ResolvedArg::Column { index, .. } => match &table.columns[*index][row] {
+            Scalar::Text(text) => Some(text.clone()),
+            Scalar::Char(0) => None,
+            Scalar::Char(unit) => char::from_u32(u32::from(*unit)).map(|unit| unit.to_string()),
+            _ => None,
+        },
     }
 }
 
@@ -2971,6 +3031,126 @@ mod tests {
         assert!(
             err.message
                 .contains("there is no matching function `length` with the argument types: (LONG)"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn lower_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT lower(note) FROM sensors",
+                "expected/lower_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lower(location) FROM sensors",
+                "expected/lower_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lower(tag) FROM sensors",
+                "expected/lower_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lower(ch) FROM sensors",
+                "expected/lower_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lower('BETA') FROM sensors LIMIT 1",
+                "expected/lower_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lower('Héllo') FROM sensors LIMIT 1",
+                "expected/lower_hello.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lower('東京') FROM sensors LIMIT 1",
+                "expected/lower_tokyo.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lower('') FROM sensors LIMIT 1",
+                "expected/lower_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lower(null) FROM sensors LIMIT 1",
+                "expected/lower_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT LOWER(NOTE) FROM sensors",
+                "expected/lower_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lower(note) FROM sensors ORDER BY lower(note)",
+                "expected/lower_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, lower(note) FROM sensors ORDER BY lower(note)",
+                "expected/lower_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lower(note) FROM sensors WHERE note = ''",
+                "expected/lower_where_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lower(note) FROM sensors LIMIT 0",
+                "expected/lower_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT lower(note) FROM days",
+                "expected/lower_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT lower(location) FROM days ORDER BY ts",
+                "expected/lower_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT lower() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT lower(note, location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `lower` with the argument types: (STRING, SYMBOL)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT lower(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT lower(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `lower` with the argument types: (LONG)"),
             "{}",
             err.message
         );
