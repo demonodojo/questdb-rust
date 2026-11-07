@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — regr_intercept()
+
+`regr_intercept(y, x)` usa las mismas sumas que `regr_slope` y devuelve `media(y) - media(x) * pendiente`. Sin parejas, o si la suma de cuadrados de `x` es cero, el resultado es NULL. `regr_intercept(reading, score)` es `0.543956043956044`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `regr_intercept(ts, id)` imprime `1.5779342468571428E15` en 10.1.0 y `1577934246857142.8` en Rust. `regr_intercept(day, id)` imprime `1.5850737E12` y `1585073700000.0`. Esas dos consultas no se capturan. Se contrastó el resto con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — regr_slope()
 
 `regr_slope(y, x)` usa las mismas sumas que `corr` y divide la suma de productos cruzados por la suma de cuadrados de `x`. Sin parejas, o si esa suma es cero, el resultado es NULL. `regr_slope(reading, score)` es `0.5274725274725275`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `regr_slope(day, id)` imprime `-7.1505E9` en 10.1.0 y `-7150500000.0` en Rust. `regr_slope(flags, code)` imprime `7.932260878679345E-4` y `0.0007932260878679345`. `regr_slope(id, ts)` en `days` imprime `2.085448153480154E-11` y `2.085448153480154e-11`. El grupo `madrid` imprime `2.6541039081680048E-11` y `2.6541039081680048e-11`. Esas consultas no se capturan. Se contrastó el resto con `/exec` en `sensors`.

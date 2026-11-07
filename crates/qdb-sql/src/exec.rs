@@ -7317,8 +7317,15 @@ enum Accumulator {
         sum_x: f64,
         sum_xy: f64,
         count: i64,
-        slope: bool,
+        kind: PairKind,
     },
+}
+
+#[derive(Clone, Copy)]
+enum PairKind {
+    Corr,
+    Slope,
+    Intercept,
 }
 
 impl Accumulator {
@@ -7364,14 +7371,18 @@ impl Accumulator {
                 count: 0,
                 population: func == AggFunc::CovarPop,
             },
-            AggFunc::Corr | AggFunc::RegrSlope => Self::Corr {
+            AggFunc::Corr | AggFunc::RegrSlope | AggFunc::RegrIntercept => Self::Corr {
                 mean_y: 0.0,
                 sum_y: 0.0,
                 mean_x: 0.0,
                 sum_x: 0.0,
                 sum_xy: 0.0,
                 count: 0,
-                slope: func == AggFunc::RegrSlope,
+                kind: match func {
+                    AggFunc::RegrSlope => PairKind::Slope,
+                    AggFunc::RegrIntercept => PairKind::Intercept,
+                    _ => PairKind::Corr,
+                },
             },
         }
     }
@@ -7461,19 +7472,18 @@ impl Accumulator {
                 }
             }
             Self::Corr {
+                mean_y,
                 sum_y,
+                mean_x,
                 sum_x,
                 sum_xy,
                 count,
-                slope,
-                ..
-            } => {
-                if *slope {
-                    slope_result(*sum_xy, *sum_x, *count)
-                } else {
-                    corr_result(*sum_xy, *sum_y, *sum_x, *count)
-                }
-            }
+                kind,
+            } => match kind {
+                PairKind::Slope => slope_result(*sum_xy, *sum_x, *count),
+                PairKind::Intercept => intercept_result(*mean_y, *mean_x, *sum_xy, *sum_x, *count),
+                PairKind::Corr => corr_result(*sum_xy, *sum_y, *sum_x, *count),
+            },
         }
     }
 }
@@ -7520,7 +7530,11 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     };
     let (pair_index, pair_tag) = if matches!(
         aggregate.func,
-        AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr | AggFunc::RegrSlope
+        AggFunc::CovarPop
+            | AggFunc::CovarSamp
+            | AggFunc::Corr
+            | AggFunc::RegrSlope
+            | AggFunc::RegrIntercept
     ) {
         covar_pair(table, tag, aggregate)?
     } else {
@@ -7579,7 +7593,8 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::CovarPop
         | AggFunc::CovarSamp
         | AggFunc::Corr
-        | AggFunc::RegrSlope => qdb_types::TAG_DOUBLE,
+        | AggFunc::RegrSlope
+        | AggFunc::RegrIntercept => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
@@ -7618,7 +7633,11 @@ fn contribution(
         | AggFunc::StdDevPop
         | AggFunc::KSum
         | AggFunc::NSum => stddev_addend(value, input),
-        AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr | AggFunc::RegrSlope => Ok(None),
+        AggFunc::CovarPop
+        | AggFunc::CovarSamp
+        | AggFunc::Corr
+        | AggFunc::RegrSlope
+        | AggFunc::RegrIntercept => Ok(None),
     }
 }
 
@@ -7691,7 +7710,11 @@ fn feed(
 ) -> Result<(), Error> {
     if matches!(
         input.func,
-        AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr | AggFunc::RegrSlope
+        AggFunc::CovarPop
+            | AggFunc::CovarSamp
+            | AggFunc::Corr
+            | AggFunc::RegrSlope
+            | AggFunc::RegrIntercept
     ) {
         let y_index = input
             .index
@@ -7702,7 +7725,10 @@ fn feed(
         let y = covar_value(&columns[y_index][row], input.tag)?;
         let x = covar_value(&columns[x_index][row], input.pair_tag)?;
         if let (Some(y), Some(x)) = (y, x) {
-            if matches!(input.func, AggFunc::Corr | AggFunc::RegrSlope) {
+            if matches!(
+                input.func,
+                AggFunc::Corr | AggFunc::RegrSlope | AggFunc::RegrIntercept
+            ) {
                 update_corr(accumulator, y, x);
             } else {
                 update_covar(accumulator, y, x);
@@ -7835,6 +7861,18 @@ fn update_corr(accumulator: &mut Accumulator, y: f64, x: f64) {
     *mean_x += (x - *mean_x) / (*count as f64);
     *sum_x += (x - *mean_x) * (x - old_mean_x);
     *sum_xy += (y - old_mean_y) * (x - *mean_x);
+}
+
+fn intercept_result(mean_y: f64, mean_x: f64, sum_xy: f64, sum_x: f64, count: i64) -> Scalar {
+    if count <= 0 || sum_x == 0.0 {
+        return Scalar::Null;
+    }
+    let result = mean_y - mean_x * (sum_xy / sum_x);
+    if result.is_finite() {
+        Scalar::Double(result)
+    } else {
+        Scalar::Null
+    }
 }
 
 fn slope_result(sum_xy: f64, sum_x: f64, count: i64) -> Scalar {
@@ -20583,6 +20621,209 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT regr_slope(ch, reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn regr_intercept_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT regr_intercept(reading, score) FROM sensors",
+                "expected/ri_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(reading, id) FROM sensors",
+                "expected/ri_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(id, flags) FROM sensors",
+                "expected/ri_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(b, code) FROM sensors",
+                "expected/ri_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(score, flags) FROM sensors",
+                "expected/ri_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(flags, code) FROM sensors",
+                "expected/ri_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(reading, score) FROM sensors WHERE id = 1",
+                "expected/ri_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(reading, score) FROM sensors WHERE id > 100",
+                "expected/ri_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(reading, score) FROM sensors WHERE id = -1",
+                "expected/ri_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(reading, score) FROM sensors WHERE id = NULL",
+                "expected/ri_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT REGR_INTERCEPT(reading, score) FROM sensors",
+                "expected/ri_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(reading, score) FROM sensors LIMIT 0",
+                "expected/ri_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(reading, score) FROM sensors GROUP BY location ORDER BY location",
+                "expected/ri_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(reading, id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/ri_grp_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regr_intercept(reading, score) FROM sensors WHERE location = 'madrid'",
+                "expected/ri_where.tsv",
+            ),
+            (
+                &days,
+                "SELECT regr_intercept(id, ts) FROM days",
+                "expected/ri_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT regr_intercept(id, ts) FROM days GROUP BY location ORDER BY location",
+                "expected/ri_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT regr_intercept() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `regr_intercept` requires arguments: regr_intercept(DOUBLE, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT regr_intercept(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `regr_intercept`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT regr_intercept(reading, score, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `regr_intercept`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT regr_intercept(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT regr_intercept(missing, score) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT regr_intercept(reading, missing) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT regr_intercept(ok, reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT regr_intercept(reading, ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT regr_intercept(location, reading) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: SYMBOL"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT regr_intercept(note, reading) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT regr_intercept(tag, score) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT regr_intercept(ch, reading) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),

@@ -59,6 +59,7 @@ pub enum AggFunc {
     CovarSamp,
     Corr,
     RegrSlope,
+    RegrIntercept,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3050,6 +3051,7 @@ impl<'a> Parser<'a> {
                 | "covar_samp"
                 | "corr"
                 | "regr_slope"
+                | "regr_intercept"
         ) {
             return false;
         }
@@ -3098,6 +3100,7 @@ impl<'a> Parser<'a> {
             "covar_samp" => AggFunc::CovarSamp,
             "corr" => AggFunc::Corr,
             "regr_slope" => AggFunc::RegrSlope,
+            "regr_intercept" => AggFunc::RegrIntercept,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3219,7 +3222,11 @@ impl<'a> Parser<'a> {
         }
         if matches!(
             func,
-            AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr | AggFunc::RegrSlope
+            AggFunc::CovarPop
+                | AggFunc::CovarSamp
+                | AggFunc::Corr
+                | AggFunc::RegrSlope
+                | AggFunc::RegrIntercept
         ) && self.peek() == Some(b',')
         {
             self.pos += 1;
@@ -3274,7 +3281,11 @@ impl<'a> Parser<'a> {
         }
         if matches!(
             func,
-            AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr | AggFunc::RegrSlope
+            AggFunc::CovarPop
+                | AggFunc::CovarSamp
+                | AggFunc::Corr
+                | AggFunc::RegrSlope
+                | AggFunc::RegrIntercept
         ) && column.is_none()
         {
             let fname = name.to_ascii_lowercase();
@@ -3284,7 +3295,11 @@ impl<'a> Parser<'a> {
         }
         if matches!(
             func,
-            AggFunc::CovarPop | AggFunc::CovarSamp | AggFunc::Corr | AggFunc::RegrSlope
+            AggFunc::CovarPop
+                | AggFunc::CovarSamp
+                | AggFunc::Corr
+                | AggFunc::RegrSlope
+                | AggFunc::RegrIntercept
         ) && pair.is_none()
         {
             return Err(Error::new(format!(

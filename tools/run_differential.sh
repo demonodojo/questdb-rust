@@ -1675,7 +1675,22 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rs_lim0 "SELECT regr_slope(reading, score) FROM sensors LIMIT 0" \
   rs_grp "SELECT regr_slope(reading, score) FROM sensors GROUP BY location ORDER BY location" \
   rs_grp_id "SELECT regr_slope(reading, id) FROM sensors GROUP BY location ORDER BY location" \
-  rs_where "SELECT regr_slope(reading, score) FROM sensors WHERE location = 'madrid'"
+  rs_where "SELECT regr_slope(reading, score) FROM sensors WHERE location = 'madrid'" \
+  ri_read "SELECT regr_intercept(reading, score) FROM sensors" \
+  ri_id "SELECT regr_intercept(reading, id) FROM sensors" \
+  ri_flags "SELECT regr_intercept(id, flags) FROM sensors" \
+  ri_byte "SELECT regr_intercept(b, code) FROM sensors" \
+  ri_score "SELECT regr_intercept(score, flags) FROM sensors" \
+  ri_code "SELECT regr_intercept(flags, code) FROM sensors" \
+  ri_one "SELECT regr_intercept(reading, score) FROM sensors WHERE id = 1" \
+  ri_none "SELECT regr_intercept(reading, score) FROM sensors WHERE id > 100" \
+  ri_neg "SELECT regr_intercept(reading, score) FROM sensors WHERE id = -1" \
+  ri_null "SELECT regr_intercept(reading, score) FROM sensors WHERE id = NULL" \
+  ri_case "SELECT REGR_INTERCEPT(reading, score) FROM sensors" \
+  ri_lim0 "SELECT regr_intercept(reading, score) FROM sensors LIMIT 0" \
+  ri_grp "SELECT regr_intercept(reading, score) FROM sensors GROUP BY location ORDER BY location" \
+  ri_grp_id "SELECT regr_intercept(reading, id) FROM sensors GROUP BY location ORDER BY location" \
+  ri_where "SELECT regr_intercept(reading, score) FROM sensors WHERE location = 'madrid'"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1855,7 +1870,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   sa_days "SELECT string_agg(note, ',') FROM days" \
   sa_days_grp "SELECT string_agg(note, ',') FROM days GROUP BY location ORDER BY location" \
   cr_days "SELECT corr(id, ts) FROM days" \
-  cr_days_grp "SELECT corr(id, ts) FROM days GROUP BY location ORDER BY location"
+  cr_days_grp "SELECT corr(id, ts) FROM days GROUP BY location ORDER BY location" \
+  ri_days "SELECT regr_intercept(id, ts) FROM days" \
+  ri_days_grp "SELECT regr_intercept(id, ts) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3478,6 +3495,21 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT regr_slope(reading, score) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT regr_slope(reading, id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT regr_slope(reading, score) FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(reading, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(b, code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(score, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(flags, code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(reading, score) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(reading, score) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(reading, score) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(reading, score) FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT REGR_INTERCEPT(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(reading, score) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(reading, score) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(reading, id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT regr_intercept(reading, score) FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3656,6 +3688,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT string_agg(note, ',') FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT corr(id, ts) FROM days"),
     (os.environ["DIFF_H2"], "SELECT corr(id, ts) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT regr_intercept(id, ts) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT regr_intercept(id, ts) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
