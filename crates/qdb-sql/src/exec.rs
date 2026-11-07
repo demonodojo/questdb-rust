@@ -230,6 +230,7 @@ enum ResolvedProj {
     Length {
         label: String,
         arg: ResolvedArg,
+        bytes: bool,
     },
     Lower {
         label: String,
@@ -844,6 +845,9 @@ fn resolve_one_text(table: &Table, name: &str, args: &[ConcatArg]) -> Result<Res
 }
 
 fn resolve_length(table: &Table, expr: &LengthExpr) -> Result<ResolvedProj, Error> {
+    if expr.bytes {
+        return resolve_length_bytes(table, expr);
+    }
     if expr.args.len() != 1 {
         let types = expr
             .args
@@ -873,7 +877,46 @@ fn resolve_length(table: &Table, expr: &LengthExpr) -> Result<ResolvedProj, Erro
     Ok(ResolvedProj::Length {
         label: expr.label.clone(),
         arg,
+        bytes: false,
     })
+}
+
+fn resolve_length_bytes(table: &Table, expr: &LengthExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `length_bytes`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    length_bytes_arg(table, &expr.args[0])?;
+    Ok(ResolvedProj::Length {
+        label: expr.label.clone(),
+        arg: resolve_concat_arg(table, &expr.args[0])?,
+        bytes: true,
+    })
+}
+
+fn length_bytes_arg(table: &Table, arg: &ConcatArg) -> Result<(), Error> {
+    let accepted = match arg {
+        ConcatArg::Literal(Scalar::Null | Scalar::Text(_)) => true,
+        ConcatArg::Literal(_) => false,
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            matches!(
+                table.meta.columns[index].tag,
+                qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR | qdb_types::TAG_CHAR
+            )
+        }
+    };
+    if accepted {
+        return Ok(());
+    }
+    let actual = concat_arg_type(table, arg)?;
+    Err(Error::new(format!(
+        "argument type mismatch for function `length_bytes` at #1 expected: VARCHAR, actual: {actual}"
+    )))
 }
 
 fn concat_arg_type(table: &Table, arg: &ConcatArg) -> Result<String, Error> {
@@ -922,7 +965,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 })
                 .collect(),
         ),
-        ResolvedProj::Length { arg, .. } => Scalar::Int(text_length(table, row, arg)),
+        ResolvedProj::Length { arg, bytes, .. } => {
+            Scalar::Int(text_length(table, row, arg, *bytes))
+        }
         ResolvedProj::Lower { arg, .. } => match text_of(table, row, arg) {
             Some(text) => Scalar::Text(text.to_lowercase()),
             None => Scalar::Null,
@@ -1378,7 +1423,7 @@ fn text_of(table: &Table, row: usize, arg: &ResolvedArg) -> Option<String> {
     }
 }
 
-fn text_length(table: &Table, row: usize, arg: &ResolvedArg) -> i32 {
+fn text_length(table: &Table, row: usize, arg: &ResolvedArg, bytes: bool) -> i32 {
     let text = match arg {
         ResolvedArg::Null => None,
         ResolvedArg::Text(text) => Some(text.as_str()),
@@ -1386,13 +1431,21 @@ fn text_length(table: &Table, row: usize, arg: &ResolvedArg) -> i32 {
             Scalar::Text(text) => Some(text.as_str()),
             Scalar::Char(0) => None,
             Scalar::Char(unit) => {
-                return i32::from(char::from_u32(u32::from(*unit)).is_some());
+                let Some(ch) = char::from_u32(u32::from(*unit)) else {
+                    return -1;
+                };
+                return if bytes {
+                    i32::try_from(ch.len_utf8()).unwrap_or(i32::MAX)
+                } else {
+                    1
+                };
             }
             _ if *tag == qdb_types::TAG_CHAR => None,
             _ => None,
         },
     };
     match text {
+        Some(text) if bytes => i32::try_from(text.len()).unwrap_or(i32::MAX),
         Some(text) => i32::try_from(text.chars().count()).unwrap_or(i32::MAX),
         None => -1,
     }
@@ -5867,6 +5920,121 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT quote_ident(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn length_bytes_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT length_bytes(note) FROM sensors",
+                "expected/lb_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length_bytes(tag) FROM sensors",
+                "expected/lb_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length_bytes('β') FROM sensors LIMIT 1",
+                "expected/lb_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length_bytes('東京') FROM sensors LIMIT 1",
+                "expected/lb_tokyo.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length_bytes(null) FROM sensors LIMIT 1",
+                "expected/lb_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length_bytes('') FROM sensors LIMIT 1",
+                "expected/lb_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length_bytes(ch) FROM sensors",
+                "expected/lb_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT LENGTH_BYTES(NOTE) FROM sensors",
+                "expected/lb_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length_bytes(note) FROM sensors ORDER BY length_bytes(note)",
+                "expected/lb_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, length_bytes(note) FROM sensors ORDER BY length_bytes(note)",
+                "expected/lb_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length_bytes(note) FROM sensors WHERE note = ''",
+                "expected/lb_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT length_bytes(note) FROM sensors LIMIT 0",
+                "expected/lb_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT length_bytes(note) FROM days",
+                "expected/lb_note.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT length_bytes() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `length_bytes` requires arguments: length_bytes(VARCHAR)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT length_bytes(note, 'a') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `length_bytes`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT length_bytes(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `length_bytes` at #1 expected: VARCHAR, actual: LONG"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT length_bytes(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `length_bytes` at #1 expected: VARCHAR, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT length_bytes(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

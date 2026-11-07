@@ -40,7 +40,8 @@
 //! boolean. A null text or prefix is false, and an empty prefix matches any
 //! non-null text. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
-//! null. `quote_ident` quotes a text only when it is not an identifier.
+//! null. `length_bytes` counts UTF-8 bytes and returns `-1` for null text.
+//! `quote_ident` quotes a text only when it is not an identifier.
 //! `lpad` and `rpad` pad or trim to a width. Two arguments pad with spaces.
 //! A negative width is NULL. `to_lowercase` and `to_uppercase` are the same functions as `lower`
 //! and `upper`. `split_part` returns one field around a delimiter. Index 1 is the

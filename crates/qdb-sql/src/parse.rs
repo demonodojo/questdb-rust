@@ -101,6 +101,7 @@ pub enum Proj {
 pub struct LengthExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
+    pub bytes: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -580,7 +581,7 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_length_call(&self) -> bool {
-        self.starts_named_call("length")
+        self.starts_named_call("length") || self.starts_named_call("length_bytes")
     }
 
     fn starts_lower_call(&self) -> bool {
@@ -808,16 +809,23 @@ impl<'a> Parser<'a> {
 
     fn parse_length(&mut self) -> Result<LengthExpr, Error> {
         let name = self.ident_spelling()?;
+        let bytes = name.eq_ignore_ascii_case("length_bytes");
         let (labels, args) = self.parse_call_args(&name, false)?;
         if args.is_empty() {
-            return Err(Error::new(format!(
-                "function `{}` requires arguments",
-                name.to_ascii_lowercase()
-            )));
+            let message = if bytes {
+                "function `length_bytes` requires arguments: length_bytes(VARCHAR)".to_string()
+            } else {
+                format!(
+                    "function `{}` requires arguments",
+                    name.to_ascii_lowercase()
+                )
+            };
+            return Err(Error::new(message));
         }
         Ok(LengthExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
+            bytes,
         })
     }
 
