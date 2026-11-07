@@ -6,7 +6,7 @@ use crate::parse::{
     MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
     RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr,
     SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
-    TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    TimestampFloorExpr, TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -218,6 +218,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::DayOfWeek { label, .. }
             | ResolvedProj::WeekOfYear { label, .. }
             | ResolvedProj::DateTrunc { label, .. }
+            | ResolvedProj::TimestampFloor { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -425,6 +426,12 @@ enum ResolvedProj {
         unit: &'static str,
         value: DateDiffSide,
     },
+    TimestampFloor {
+        label: String,
+        unit: char,
+        stride: i32,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -578,6 +585,7 @@ impl ResolvedProj {
             | Self::DayOfWeek { label, .. }
             | Self::WeekOfYear { label, .. }
             | Self::DateTrunc { label, .. }
+            | Self::TimestampFloor { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -615,7 +623,7 @@ impl ResolvedProj {
             | Self::Micros { .. }
             | Self::DayOfWeek { .. }
             | Self::WeekOfYear { .. } => qdb_types::TAG_INT,
-            Self::DateTrunc { .. } => qdb_types::TAG_TIMESTAMP,
+            Self::DateTrunc { .. } | Self::TimestampFloor { .. } => qdb_types::TAG_TIMESTAMP,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -700,6 +708,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::DayOfWeek(expr) => resolve_day_of_week(table, expr),
         Proj::WeekOfYear(expr) => resolve_week_of_year(table, expr),
         Proj::DateTrunc(expr) => resolve_date_trunc(table, expr),
+        Proj::TimestampFloor(expr) => resolve_timestamp_floor(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1354,6 +1363,129 @@ enum DateDiffSide {
     Micros(i64),
     Column { index: usize },
     Null,
+}
+
+fn resolve_timestamp_floor(
+    table: &Table,
+    expr: &TimestampFloorExpr,
+) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2
+        || !matches!(
+            &expr.args[0],
+            ConcatArg::Literal(Scalar::Null | Scalar::Text(_) | Scalar::Char(_))
+        )
+    {
+        return Err(Error::new(format!(
+            "there is no matching function `timestamp_floor` with the argument types: ({})",
+            timestamp_floor_types(table, &expr.args)?
+        )));
+    }
+    let (unit, stride) = timestamp_floor_unit(&expr.args[0])?;
+    Ok(ResolvedProj::TimestampFloor {
+        label: expr.label.clone(),
+        unit,
+        stride,
+        value: date_trunc_timestamp(table, &expr.args[1])?,
+    })
+}
+
+fn timestamp_floor_types(table: &Table, args: &[ConcatArg]) -> Result<String, Error> {
+    let mut names = Vec::with_capacity(args.len());
+    for arg in args {
+        names.push(timestamp_floor_arg_type(table, arg)?);
+    }
+    Ok(names.join(", "))
+}
+
+fn timestamp_floor_arg_type(table: &Table, arg: &ConcatArg) -> Result<&'static str, Error> {
+    match arg {
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            Ok(qdb_types::type_name(table.meta.columns[index].tag))
+        }
+        ConcatArg::Literal(Scalar::Char(_)) => Ok("CHAR"),
+        ConcatArg::Literal(Scalar::Text(text)) if text.chars().count() == 1 => Ok("CHAR"),
+        ConcatArg::Literal(Scalar::Text(_)) => Ok("STRING"),
+        ConcatArg::Literal(Scalar::Long(number)) if i32::try_from(*number).is_ok() => Ok("INT"),
+        ConcatArg::Literal(Scalar::Long(_)) => Ok("LONG"),
+        ConcatArg::Literal(Scalar::Double(_)) => Ok("DOUBLE"),
+        ConcatArg::Literal(Scalar::Boolean(_)) => Ok("BOOLEAN"),
+        ConcatArg::Literal(Scalar::Timestamp(_)) => Ok("TIMESTAMP"),
+        ConcatArg::Literal(Scalar::Null) => Ok("NULL"),
+        ConcatArg::Literal(_) => Ok("UNSUPPORTED"),
+    }
+}
+
+fn timestamp_floor_unit(arg: &ConcatArg) -> Result<(char, i32), Error> {
+    let text = match arg {
+        ConcatArg::Literal(Scalar::Null) => return Err(Error::new("invalid unit 'null'")),
+        ConcatArg::Literal(Scalar::Text(text)) => text.clone(),
+        ConcatArg::Literal(Scalar::Char(unit)) => char::from_u32(u32::from(*unit))
+            .unwrap_or('\u{0}')
+            .to_string(),
+        _ => return Err(Error::new("invalid unit ''")),
+    };
+    let (digits, unit) = match text.chars().count() {
+        0 => return Err(Error::new("invalid unit ''")),
+        1 => ("1", text.as_str()),
+        _ => {
+            let split = text.char_indices().next_back().map(|(i, _)| i).unwrap_or(0);
+            (&text[..split], &text[split..])
+        }
+    };
+    let stride = digits.parse::<i32>().ok().filter(|stride| *stride > 0);
+    let unit = unit.chars().next().filter(|_| unit.chars().count() == 1);
+    match (stride, unit) {
+        (Some(stride), Some(unit))
+            if matches!(
+                unit,
+                'n' | 'U' | 'T' | 's' | 'm' | 'h' | 'd' | 'w' | 'M' | 'y'
+            ) =>
+        {
+            Ok((unit, stride))
+        }
+        _ => Err(Error::new(format!("invalid unit '{text}'"))),
+    }
+}
+
+fn timestamp_floor_micros(unit: char, stride: i32, micros: i64) -> i64 {
+    let stride = i64::from(stride);
+    let floor_step = |step: i64| micros - micros.rem_euclid(step);
+    match unit {
+        'n' => {
+            let nanos = micros * 1_000;
+            let floored = nanos - nanos.rem_euclid(stride);
+            floored / 1_000
+        }
+        'U' => floor_step(stride),
+        'T' => floor_step(stride * 1_000),
+        's' => floor_step(stride * 1_000_000),
+        'm' => floor_step(stride * 60 * 1_000_000),
+        'h' => floor_step(stride * 3_600 * 1_000_000),
+        'd' => floor_step(stride * DATEADD_DAY),
+        'w' => {
+            let span = stride * 7 * DATEADD_DAY;
+            let shifted = micros + 3 * DATEADD_DAY;
+            micros - shifted.rem_euclid(span)
+        }
+        'M' => {
+            let (year, month, _, _) = dateadd_parts(micros);
+            let months = 12 * i64::from(year - 1970) + i64::from(month - 1);
+            let floored = months.div_euclid(stride) * stride;
+            let year = 1970 + i32::try_from(floored.div_euclid(12)).unwrap_or(0);
+            let month = u32::try_from(floored.rem_euclid(12)).unwrap_or(0) + 1;
+            qdb_types::unix_days_from_civil(year, month, 1).unwrap_or(0) * DATEADD_DAY
+        }
+        'y' => {
+            let (year, _, _, _) = dateadd_parts(micros);
+            let year = 1970 + (i64::from(year) - 1970).div_euclid(stride) * stride;
+            qdb_types::unix_days_from_civil(i32::try_from(year).unwrap_or(1970), 1, 1).unwrap_or(0)
+                * DATEADD_DAY
+        }
+        _ => micros,
+    }
 }
 
 fn resolve_date_trunc(table: &Table, expr: &DateTruncExpr) -> Result<ResolvedProj, Error> {
@@ -3696,6 +3828,15 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::DateTrunc { unit, value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Timestamp(date_trunc_micros(unit, micros)),
+            None => Scalar::Null,
+        },
+        ResolvedProj::TimestampFloor {
+            unit,
+            stride,
+            value,
+            ..
+        } => match datediff_micros(table, row, value) {
+            Some(micros) => Scalar::Timestamp(timestamp_floor_micros(*unit, *stride, micros)),
             None => Scalar::Null,
         },
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
@@ -12560,6 +12701,183 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn timestamp_floor_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('d', ts) FROM sensors",
+                "expected/tf_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('y', id) FROM sensors",
+                "expected/tf_year.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('2h', id) FROM sensors",
+                "expected/tf_2h.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('3d', '2020-01-05T12:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/tf_3d.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('3d', id) FROM sensors",
+                "expected/tf_3days.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('2M', '2020-05-15T12:30:00.000000Z') FROM sensors LIMIT 1",
+                "expected/tf_2m.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('2y', '2021-06-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/tf_2y.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('2w', ts) FROM sensors LIMIT 1",
+                "expected/tf_2w.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('5T', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1",
+                "expected/tf_ms.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('10U', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1",
+                "expected/tf_us.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT TIMESTAMP_FLOOR('d', TS) FROM sensors LIMIT 1",
+                "expected/tf_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('h', id) FROM sensors ORDER BY timestamp_floor('h', id)",
+                "expected/tf_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('d', ts) FROM sensors WHERE id = 1",
+                "expected/tf_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('d', ts) FROM sensors LIMIT 0",
+                "expected/tf_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT timestamp_floor('h', ts) FROM days ORDER BY ts",
+                "expected/tf_hour.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT timestamp_floor() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `timestamp_floor` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_floor('d') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `timestamp_floor` with the argument types: (CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_floor('2h') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `timestamp_floor` with the argument types: (STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_floor(ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `timestamp_floor` with the argument types: (TIMESTAMP)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_floor('D', ts) FROM sensors").unwrap_err();
+        assert!(err.message.contains("invalid unit 'D'"), "{}", err.message);
+        let err = execute(&sensors, "SELECT timestamp_floor('day', ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid unit 'day'"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_floor('0h', ts) FROM sensors").unwrap_err();
+        assert!(err.message.contains("invalid unit '0h'"), "{}", err.message);
+        let err = execute(&sensors, "SELECT timestamp_floor('', ts) FROM sensors").unwrap_err();
+        assert!(err.message.contains("invalid unit ''"), "{}", err.message);
+        let err = execute(&sensors, "SELECT timestamp_floor(null, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid unit 'null'"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_floor(note, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `timestamp_floor` with the argument types: (STRING, TIMESTAMP)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_floor(id, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `timestamp_floor` with the argument types: (LONG, TIMESTAMP)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_floor('d', note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT timestamp_floor('d', missing) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT timestamp_floor('d', 'nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
             "{}",

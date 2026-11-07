@@ -1032,7 +1032,21 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   dt_case "SELECT DATE_TRUNC('day', TS) FROM sensors LIMIT 1" \
   dt_order "SELECT date_trunc('hour', id) FROM sensors ORDER BY date_trunc('hour', id)" \
   dt_where "SELECT date_trunc('day', ts) FROM sensors WHERE id = 1" \
-  dt_zero "SELECT date_trunc('day', ts) FROM sensors LIMIT 0"
+  dt_zero "SELECT date_trunc('day', ts) FROM sensors LIMIT 0" \
+  tf_day "SELECT timestamp_floor('d', ts) FROM sensors" \
+  tf_year "SELECT timestamp_floor('y', id) FROM sensors" \
+  tf_2h "SELECT timestamp_floor('2h', id) FROM sensors" \
+  tf_3d "SELECT timestamp_floor('3d', '2020-01-05T12:00:00.000000Z') FROM sensors LIMIT 1" \
+  tf_3days "SELECT timestamp_floor('3d', id) FROM sensors" \
+  tf_2m "SELECT timestamp_floor('2M', '2020-05-15T12:30:00.000000Z') FROM sensors LIMIT 1" \
+  tf_2y "SELECT timestamp_floor('2y', '2021-06-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  tf_2w "SELECT timestamp_floor('2w', ts) FROM sensors LIMIT 1" \
+  tf_ms "SELECT timestamp_floor('5T', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1" \
+  tf_us "SELECT timestamp_floor('10U', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1" \
+  tf_case "SELECT TIMESTAMP_FLOOR('d', TS) FROM sensors LIMIT 1" \
+  tf_order "SELECT timestamp_floor('h', id) FROM sensors ORDER BY timestamp_floor('h', id)" \
+  tf_where "SELECT timestamp_floor('d', ts) FROM sensors WHERE id = 1" \
+  tf_zero "SELECT timestamp_floor('d', ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1161,7 +1175,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   mc_ts "SELECT micros(ts) FROM days ORDER BY ts" \
   dw_ts "SELECT day_of_week(ts) FROM days ORDER BY ts" \
   wy_ts "SELECT week_of_year(ts) FROM days ORDER BY ts" \
-  dt_hour "SELECT date_trunc('hour', ts) FROM days ORDER BY ts"
+  dt_hour "SELECT date_trunc('hour', ts) FROM days ORDER BY ts" \
+  tf_hour "SELECT timestamp_floor('h', ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2141,6 +2156,20 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT date_trunc('hour', id) FROM sensors ORDER BY date_trunc('hour', id)"),
     (os.environ["DIFF_H1"], "SELECT date_trunc('day', ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT date_trunc('day', ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('d', ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('y', id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('2h', id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('3d', '2020-01-05T12:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('3d', id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('2M', '2020-05-15T12:30:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('2y', '2021-06-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('2w', ts) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('5T', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('10U', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT TIMESTAMP_FLOOR('d', TS) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('h', id) FROM sensors ORDER BY timestamp_floor('h', id)"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('d', ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_floor('d', ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2268,6 +2297,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT day_of_week(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT week_of_year(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT date_trunc('hour', ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT timestamp_floor('h', ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
