@@ -2114,7 +2114,23 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   wd_grp "SELECT weighted_stddev(reading, flags) FROM sensors GROUP BY location ORDER BY location" \
   wd_lim0 "SELECT weighted_stddev(reading, flags) FROM sensors LIMIT 0" \
   wd_case "SELECT WEIGHTED_STDDEV(reading, flags) FROM sensors" \
-  wd_pos "SELECT weighted_stddev(reading, flags) FROM sensors WHERE flags > 0"
+  wd_pos "SELECT weighted_stddev(reading, flags) FROM sensors WHERE flags > 0" \
+  wf_read "SELECT weighted_stddev_freq(reading, flags) FROM sensors" \
+  wf_one "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE id = 1" \
+  wf_none "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE id > 100" \
+  wf_neg "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE id = -1" \
+  wf_score "SELECT weighted_stddev_freq(score, flags) FROM sensors" \
+  wf_id "SELECT weighted_stddev_freq(id, flags) FROM sensors" \
+  wf_byte "SELECT weighted_stddev_freq(b, flags) FROM sensors" \
+  wf_code "SELECT weighted_stddev_freq(code, flags) FROM sensors" \
+  wf_flags "SELECT weighted_stddev_freq(flags, reading) FROM sensors" \
+  wf_neg_w "SELECT weighted_stddev_freq(reading, b) FROM sensors" \
+  wf_self "SELECT weighted_stddev_freq(flags, flags) FROM sensors" \
+  wf_ts "SELECT weighted_stddev_freq(ts, flags) FROM sensors" \
+  wf_grp "SELECT weighted_stddev_freq(reading, flags) FROM sensors GROUP BY location ORDER BY location" \
+  wf_lim0 "SELECT weighted_stddev_freq(reading, flags) FROM sensors LIMIT 0" \
+  wf_case "SELECT WEIGHTED_STDDEV_FREQ(reading, flags) FROM sensors" \
+  wf_pos "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE flags > 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2352,7 +2368,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   wa_days "SELECT weighted_avg(id, id) FROM days" \
   wa_days_grp "SELECT weighted_avg(id, id) FROM days GROUP BY location ORDER BY location" \
   wd_days "SELECT weighted_stddev(id, id) FROM days" \
-  wd_days_grp "SELECT weighted_stddev(id, id) FROM days GROUP BY location ORDER BY location"
+  wd_days_grp "SELECT weighted_stddev(id, id) FROM days GROUP BY location ORDER BY location" \
+  wf_days "SELECT weighted_stddev_freq(id, id) FROM days" \
+  wf_days_grp "SELECT weighted_stddev_freq(id, id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4414,6 +4432,22 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT weighted_stddev(reading, flags) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT WEIGHTED_STDDEV(reading, flags) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT weighted_stddev(reading, flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(score, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(b, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(code, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(flags, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(reading, b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(flags, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(ts, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(reading, flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(reading, flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT WEIGHTED_STDDEV_FREQ(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE flags > 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4650,6 +4684,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT weighted_avg(id, id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT weighted_stddev(id, id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT weighted_stddev(id, id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT weighted_stddev_freq(id, id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT weighted_stddev_freq(id, id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

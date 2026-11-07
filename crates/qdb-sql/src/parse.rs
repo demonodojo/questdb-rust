@@ -63,6 +63,7 @@ pub enum AggFunc {
     Twap,
     WeightedAvg,
     WeightedStdDev,
+    WeightedStdDevFreq,
     CovarSamp,
     Corr,
     RegrSlope,
@@ -3162,6 +3163,7 @@ impl<'a> Parser<'a> {
                 | "twap"
                 | "weighted_avg"
                 | "weighted_stddev"
+                | "weighted_stddev_freq"
                 | "covar_samp"
                 | "corr"
                 | "regr_slope"
@@ -3236,6 +3238,7 @@ impl<'a> Parser<'a> {
             "twap" => AggFunc::Twap,
             "weighted_avg" => AggFunc::WeightedAvg,
             "weighted_stddev" => AggFunc::WeightedStdDev,
+            "weighted_stddev_freq" => AggFunc::WeightedStdDevFreq,
             "covar_samp" => AggFunc::CovarSamp,
             "corr" => AggFunc::Corr,
             "regr_slope" => AggFunc::RegrSlope,
@@ -3544,6 +3547,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Twap
                 | AggFunc::WeightedAvg
                 | AggFunc::WeightedStdDev
+                | AggFunc::WeightedStdDevFreq
         ) && self.peek() == Some(b',')
         {
             self.pos += 1;
@@ -3560,6 +3564,8 @@ impl<'a> Parser<'a> {
                     "unsupported: weighted_avg expects a column"
                 } else if func == AggFunc::WeightedStdDev {
                     "unsupported: weighted_stddev expects a column"
+                } else if func == AggFunc::WeightedStdDevFreq {
+                    "unsupported: weighted_stddev_freq expects a column"
                 } else {
                     "unsupported: covariance expects a column"
                 };
@@ -3734,6 +3740,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Vwap
                 | AggFunc::WeightedAvg
                 | AggFunc::WeightedStdDev
+                | AggFunc::WeightedStdDevFreq
         ) && column.is_none()
         {
             let fname = name.to_ascii_lowercase();
@@ -3753,6 +3760,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Twap
                 | AggFunc::WeightedAvg
                 | AggFunc::WeightedStdDev
+                | AggFunc::WeightedStdDevFreq
         ) && pair.is_none()
         {
             return Err(Error::new(format!(

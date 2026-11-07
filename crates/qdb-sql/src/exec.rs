@@ -7339,6 +7339,7 @@ enum Accumulator {
         mean: f64,
         s: f64,
         started: bool,
+        frequency: bool,
     },
     Twap {
         samples: Vec<(i64, f64)>,
@@ -7516,12 +7517,13 @@ impl Accumulator {
                 volume: 0.0,
                 started: false,
             },
-            AggFunc::WeightedStdDev => Self::WeightedStdDev {
+            AggFunc::WeightedStdDev | AggFunc::WeightedStdDevFreq => Self::WeightedStdDev {
                 w_sum: 0.0,
                 w_sum2: 0.0,
                 mean: 0.0,
                 s: 0.0,
                 started: false,
+                frequency: func == AggFunc::WeightedStdDevFreq,
             },
             AggFunc::Twap => Self::Twap {
                 samples: Vec::new(),
@@ -7657,8 +7659,12 @@ impl Accumulator {
                 }
             }
             Self::WeightedStdDev {
-                w_sum, w_sum2, s, ..
-            } => weighted_stddev_scalar(*w_sum, *w_sum2, *s),
+                w_sum,
+                w_sum2,
+                s,
+                frequency,
+                ..
+            } => weighted_stddev_scalar(*w_sum, *w_sum2, *s, *frequency),
             Self::Covar {
                 sum_xy,
                 count,
@@ -7923,6 +7929,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             | AggFunc::Vwap
             | AggFunc::WeightedAvg
             | AggFunc::WeightedStdDev
+            | AggFunc::WeightedStdDevFreq
     ) {
         covar_pair(table, tag, aggregate)?
     } else if aggregate.func == AggFunc::Twap {
@@ -8017,6 +8024,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::Vwap
         | AggFunc::WeightedAvg
         | AggFunc::WeightedStdDev
+        | AggFunc::WeightedStdDevFreq
         | AggFunc::Twap
         | AggFunc::CovarSamp
         | AggFunc::Corr
@@ -8118,6 +8126,7 @@ fn contribution(
         | AggFunc::Vwap
         | AggFunc::WeightedAvg
         | AggFunc::WeightedStdDev
+        | AggFunc::WeightedStdDevFreq
         | AggFunc::Twap => Ok(None),
     }
 }
@@ -8215,7 +8224,10 @@ fn feed(
         update_weighted_avg(accumulator, price, weight);
         return Ok(());
     }
-    if input.func == AggFunc::WeightedStdDev {
+    if matches!(
+        input.func,
+        AggFunc::WeightedStdDev | AggFunc::WeightedStdDevFreq
+    ) {
         let price_index = input
             .index
             .ok_or_else(|| Error::new("internal: weighted_stddev column"))?;
@@ -8514,8 +8526,12 @@ fn weighted_avg_value(value: &Scalar, tag: i32) -> Result<Option<f64>, Error> {
     covar_value(value, tag)
 }
 
-fn weighted_stddev_scalar(w_sum: f64, w_sum2: f64, s: f64) -> Scalar {
-    let divisor = w_sum - w_sum2 / w_sum;
+fn weighted_stddev_scalar(w_sum: f64, w_sum2: f64, s: f64, frequency: bool) -> Scalar {
+    let divisor = if frequency {
+        w_sum - 1.0
+    } else {
+        w_sum - w_sum2 / w_sum
+    };
     if divisor <= 0.0 {
         return Scalar::Null;
     }
@@ -8534,6 +8550,7 @@ fn update_weighted_stddev(accumulator: &mut Accumulator, sample: Option<f64>, we
         mean,
         s,
         started,
+        ..
     } = accumulator
     else {
         return;
@@ -25605,6 +25622,235 @@ mod tests {
         assert!(
             err.message
                 .contains("unsupported: weighted_stddev expects a column"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn weighted_stddev_freq_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(reading, flags) FROM sensors",
+                "expected/wf_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE id = 1",
+                "expected/wf_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE id > 100",
+                "expected/wf_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE id = -1",
+                "expected/wf_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(score, flags) FROM sensors",
+                "expected/wf_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(id, flags) FROM sensors",
+                "expected/wf_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(b, flags) FROM sensors",
+                "expected/wf_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(code, flags) FROM sensors",
+                "expected/wf_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(flags, reading) FROM sensors",
+                "expected/wf_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(reading, b) FROM sensors",
+                "expected/wf_neg_w.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(flags, flags) FROM sensors",
+                "expected/wf_self.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(ts, flags) FROM sensors",
+                "expected/wf_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(reading, flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/wf_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(reading, flags) FROM sensors LIMIT 0",
+                "expected/wf_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT WEIGHTED_STDDEV_FREQ(reading, flags) FROM sensors",
+                "expected/wf_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_freq(reading, flags) FROM sensors WHERE flags > 0",
+                "expected/wf_pos.tsv",
+            ),
+            (
+                &days,
+                "SELECT weighted_stddev_freq(id, id) FROM days",
+                "expected/wf_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT weighted_stddev_freq(id, id) FROM days GROUP BY location ORDER BY location",
+                "expected/wf_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT weighted_stddev_freq() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `weighted_stddev_freq` requires arguments: weighted_stddev_freq(DOUBLE, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_freq(reading) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `weighted_stddev_freq`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_freq(reading, flags, id) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `weighted_stddev_freq`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_stddev_freq(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_freq(missing, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_freq(ok, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_freq(reading, location) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: SYMBOL"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_freq(note, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_freq(ch, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_freq(tag, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_freq(ch, flags) FROM sensors WHERE id = 2",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: \0 [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_freq(reading, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("unsupported: weighted_stddev_freq expects a column"),
             "{}",
             err.message
         );
