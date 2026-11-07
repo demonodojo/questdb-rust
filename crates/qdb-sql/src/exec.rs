@@ -5,13 +5,13 @@ use crate::parse::{
     DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, ExpExpr,
     ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr,
     IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
-    Md5Expr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr,
-    PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
-    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr,
-    SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SqrtExpr, StartsWithExpr,
-    StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr,
-    TimestampSequenceExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr,
-    UpperExpr, WeekOfYearExpr, YearExpr,
+    Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr,
+    PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr,
+    RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr,
+    SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SqrtExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
+    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd,
+    TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -281,6 +281,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Typeof { label, .. }
             | ResolvedProj::Not { label, .. }
             | ResolvedProj::Power { label, .. }
+            | ResolvedProj::Mid { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
             | ResolvedProj::Exp { label, .. }
@@ -650,6 +651,11 @@ enum ResolvedProj {
         base: SqrtInput,
         exponent: SqrtInput,
     },
+    Mid {
+        label: String,
+        bid: SqrtInput,
+        ask: SqrtInput,
+    },
     Ln {
         label: String,
         input: SqrtInput,
@@ -821,6 +827,7 @@ impl ResolvedProj {
             | Self::Typeof { label, .. }
             | Self::Not { label, .. }
             | Self::Power { label, .. }
+            | Self::Mid { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
             | Self::Exp { label, .. }
@@ -881,6 +888,7 @@ impl ResolvedProj {
             | Self::Radians { .. }
             | Self::Cot { .. }
             | Self::Power { .. }
+            | Self::Mid { .. }
             | Self::Ln { .. }
             | Self::Log { .. }
             | Self::Exp { .. }
@@ -1004,6 +1012,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Typeof(expr) => resolve_typeof(table, expr),
         Proj::Not(expr) => resolve_not(table, expr),
         Proj::Power(expr) => resolve_power(table, expr),
+        Proj::Mid(expr) => resolve_mid(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
         Proj::Exp(expr) => resolve_exp(table, expr),
@@ -1430,6 +1439,31 @@ fn resolve_power(table: &Table, expr: &PowerExpr) -> Result<ResolvedProj, Error>
         base,
         exponent,
     })
+}
+
+fn resolve_mid(table: &Table, expr: &MidExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `mid`; expected: 2, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::Mid {
+        label: expr.label.clone(),
+        bid: power_input(table, &expr.args[0])?,
+        ask: power_input(table, &expr.args[1])?,
+    })
+}
+
+fn mid_value(table: &Table, row: usize, bid: &SqrtInput, ask: &SqrtInput) -> Scalar {
+    let (Some(bid), Some(ask)) = (sqrt_number(table, row, bid), sqrt_number(table, row, ask))
+    else {
+        return Scalar::Null;
+    };
+    if bid.is_nan() || ask.is_nan() {
+        return Scalar::Null;
+    }
+    Scalar::Double((ask + bid) / 2.0)
 }
 
 fn power_input(table: &Table, arg: &ConcatArg) -> Result<SqrtInput, Error> {
@@ -6630,6 +6664,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Ceil { input, wide, .. } => ceil_value(table, row, input, *wide),
         ResolvedProj::Sign { input, .. } => sign_value(table, row, input),
         ResolvedProj::Power { base, exponent, .. } => power_value(table, row, base, exponent),
+        ResolvedProj::Mid { bid, ask, .. } => mid_value(table, row, bid, ask),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15004,6 +15039,98 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn mid_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT mid(reading, score) FROM sensors",
+                "expected/mp_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mid(reading, score) FROM sensors WHERE id = 1",
+                "expected/mp_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mid(reading, score) FROM sensors WHERE id = 2",
+                "expected/mp_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mid(reading, score) FROM sensors WHERE id > 100",
+                "expected/mp_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mid(flags, id) FROM sensors WHERE id = 1",
+                "expected/mp_int.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT MID(reading, score) FROM sensors WHERE id = 1",
+                "expected/mp_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mid(reading, score) FROM sensors LIMIT 0",
+                "expected/mp_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT mid(id, id) FROM days",
+                "expected/mp_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT mid(id, id) FROM days WHERE id = 1",
+                "expected/mp_days_one.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT mid() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `mid` requires arguments: mid(DOUBLE, DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT mid(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("wrong number of arguments for function `mid`; expected: 2, provided: 1"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT mid(reading, score, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("wrong number of arguments for function `mid`; expected: 2, provided: 3"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT mid(note, score) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: STRING"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT mid(missing, score) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

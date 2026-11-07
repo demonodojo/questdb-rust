@@ -52,7 +52,8 @@
 //! consecutive finite points and returns `DOUBLE`. With no segment the result
 //! is `0.0`. `timestamp_sequence` returns a `TIMESTAMP` that starts at its first
 //! argument and advances by the second. Without `ORDER BY` the advance follows
-//! the rows that `LIMIT` keeps. `strpos` and `position` return the 1-based index of the first
+//! the rows that `LIMIT` keeps. `mid` returns the mean of two numbers as
+//! `DOUBLE`. A null argument makes the result null. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
 //! widest numeric argument and skips nulls. `to_str` formats a timestamp with a
