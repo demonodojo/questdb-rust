@@ -62,6 +62,7 @@ pub enum AggFunc {
     Vwap,
     Twap,
     WeightedAvg,
+    WeightedStdDev,
     CovarSamp,
     Corr,
     RegrSlope,
@@ -3160,6 +3161,7 @@ impl<'a> Parser<'a> {
                 | "vwap"
                 | "twap"
                 | "weighted_avg"
+                | "weighted_stddev"
                 | "covar_samp"
                 | "corr"
                 | "regr_slope"
@@ -3233,6 +3235,7 @@ impl<'a> Parser<'a> {
             "vwap" => AggFunc::Vwap,
             "twap" => AggFunc::Twap,
             "weighted_avg" => AggFunc::WeightedAvg,
+            "weighted_stddev" => AggFunc::WeightedStdDev,
             "covar_samp" => AggFunc::CovarSamp,
             "corr" => AggFunc::Corr,
             "regr_slope" => AggFunc::RegrSlope,
@@ -3540,6 +3543,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Vwap
                 | AggFunc::Twap
                 | AggFunc::WeightedAvg
+                | AggFunc::WeightedStdDev
         ) && self.peek() == Some(b',')
         {
             self.pos += 1;
@@ -3554,6 +3558,8 @@ impl<'a> Parser<'a> {
                     "unsupported: twap expects a column"
                 } else if func == AggFunc::WeightedAvg {
                     "unsupported: weighted_avg expects a column"
+                } else if func == AggFunc::WeightedStdDev {
+                    "unsupported: weighted_stddev expects a column"
                 } else {
                     "unsupported: covariance expects a column"
                 };
@@ -3727,6 +3733,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::RegrR2
                 | AggFunc::Vwap
                 | AggFunc::WeightedAvg
+                | AggFunc::WeightedStdDev
         ) && column.is_none()
         {
             let fname = name.to_ascii_lowercase();
@@ -3745,6 +3752,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Vwap
                 | AggFunc::Twap
                 | AggFunc::WeightedAvg
+                | AggFunc::WeightedStdDev
         ) && pair.is_none()
         {
             return Err(Error::new(format!(

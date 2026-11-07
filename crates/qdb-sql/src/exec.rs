@@ -7333,6 +7333,13 @@ enum Accumulator {
         volume: f64,
         started: bool,
     },
+    WeightedStdDev {
+        w_sum: f64,
+        w_sum2: f64,
+        mean: f64,
+        s: f64,
+        started: bool,
+    },
     Twap {
         samples: Vec<(i64, f64)>,
     },
@@ -7509,6 +7516,13 @@ impl Accumulator {
                 volume: 0.0,
                 started: false,
             },
+            AggFunc::WeightedStdDev => Self::WeightedStdDev {
+                w_sum: 0.0,
+                w_sum2: 0.0,
+                mean: 0.0,
+                s: 0.0,
+                started: false,
+            },
             AggFunc::Twap => Self::Twap {
                 samples: Vec::new(),
             },
@@ -7642,6 +7656,9 @@ impl Accumulator {
                     Scalar::Null
                 }
             }
+            Self::WeightedStdDev {
+                w_sum, w_sum2, s, ..
+            } => weighted_stddev_scalar(*w_sum, *w_sum2, *s),
             Self::Covar {
                 sum_xy,
                 count,
@@ -7905,6 +7922,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             | AggFunc::RegrR2
             | AggFunc::Vwap
             | AggFunc::WeightedAvg
+            | AggFunc::WeightedStdDev
     ) {
         covar_pair(table, tag, aggregate)?
     } else if aggregate.func == AggFunc::Twap {
@@ -7998,6 +8016,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::CovarPop
         | AggFunc::Vwap
         | AggFunc::WeightedAvg
+        | AggFunc::WeightedStdDev
         | AggFunc::Twap
         | AggFunc::CovarSamp
         | AggFunc::Corr
@@ -8098,6 +8117,7 @@ fn contribution(
         | AggFunc::ArgMin
         | AggFunc::Vwap
         | AggFunc::WeightedAvg
+        | AggFunc::WeightedStdDev
         | AggFunc::Twap => Ok(None),
     }
 }
@@ -8193,6 +8213,18 @@ fn feed(
         let price = weighted_avg_value(&columns[price_index][row], input.tag)?;
         let weight = weighted_avg_value(&columns[weight_index][row], input.pair_tag)?;
         update_weighted_avg(accumulator, price, weight);
+        return Ok(());
+    }
+    if input.func == AggFunc::WeightedStdDev {
+        let price_index = input
+            .index
+            .ok_or_else(|| Error::new("internal: weighted_stddev column"))?;
+        let weight_index = input
+            .pair_index
+            .ok_or_else(|| Error::new("internal: weighted_stddev weight"))?;
+        let price = weighted_avg_value(&columns[price_index][row], input.tag)?;
+        let weight = weighted_avg_value(&columns[weight_index][row], input.pair_tag)?;
+        update_weighted_stddev(accumulator, price, weight);
         return Ok(());
     }
     if input.func == AggFunc::Twap {
@@ -8480,6 +8512,79 @@ fn weighted_avg_value(value: &Scalar, tag: i32) -> Result<Option<f64>, Error> {
         return Err(Error::new("inconvertible value: \0 [CHAR -> DOUBLE]"));
     }
     covar_value(value, tag)
+}
+
+fn weighted_stddev_scalar(w_sum: f64, w_sum2: f64, s: f64) -> Scalar {
+    let divisor = w_sum - w_sum2 / w_sum;
+    if divisor <= 0.0 {
+        return Scalar::Null;
+    }
+    let result = (s / divisor).sqrt();
+    if result.is_finite() {
+        Scalar::Double(result)
+    } else {
+        Scalar::Null
+    }
+}
+
+fn update_weighted_stddev(accumulator: &mut Accumulator, sample: Option<f64>, weight: Option<f64>) {
+    let Accumulator::WeightedStdDev {
+        w_sum,
+        w_sum2,
+        mean,
+        s,
+        started,
+    } = accumulator
+    else {
+        return;
+    };
+    let pair = match (sample, weight) {
+        (Some(sample), Some(weight))
+            if sample.is_finite() && weight.is_finite() && weight != 0.0 =>
+        {
+            Some((sample, weight))
+        }
+        _ => None,
+    };
+    if !*started {
+        *started = true;
+        match pair {
+            Some((_, weight)) if weight < 0.0 => {
+                *w_sum = f64::NAN;
+                *w_sum2 = f64::NAN;
+                *mean = f64::NAN;
+                *s = f64::NAN;
+            }
+            Some((sample, weight)) => {
+                *w_sum = weight;
+                *w_sum2 = weight * weight;
+                *mean = sample;
+                *s = 0.0;
+            }
+            None => {
+                *w_sum = 0.0;
+                *w_sum2 = 0.0;
+                *mean = 0.0;
+                *s = 0.0;
+            }
+        }
+        return;
+    }
+    let Some((sample, weight)) = pair else {
+        return;
+    };
+    if weight < 0.0 {
+        *w_sum = f64::NAN;
+        *w_sum2 = f64::NAN;
+        *mean = f64::NAN;
+        *s = f64::NAN;
+        return;
+    }
+    *w_sum += weight;
+    *w_sum2 += weight * weight;
+    let mean_old = *mean;
+    *mean += (weight / *w_sum) * (sample - mean_old);
+    *s += weight * (sample - mean_old) * (sample - *mean);
 }
 
 fn update_weighted_avg(accumulator: &mut Accumulator, price: Option<f64>, weight: Option<f64>) {
@@ -9965,6 +10070,7 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
         | Accumulator::Corr { .. }
         | Accumulator::Vwap { .. }
         | Accumulator::WeightedAvg { .. }
+        | Accumulator::WeightedStdDev { .. }
         | Accumulator::Twap { .. } => {}
         Accumulator::BoolAnd { value, count } => {
             let Scalar::Boolean(bit) = next else {
@@ -25293,6 +25399,212 @@ mod tests {
         assert!(
             err.message
                 .contains("unsupported: weighted_avg expects a column"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn weighted_stddev_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT weighted_stddev(reading, flags) FROM sensors",
+                "expected/wd_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(reading, flags) FROM sensors WHERE id = 1",
+                "expected/wd_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(reading, flags) FROM sensors WHERE id > 100",
+                "expected/wd_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(reading, flags) FROM sensors WHERE id = -1",
+                "expected/wd_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(score, flags) FROM sensors",
+                "expected/wd_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(id, flags) FROM sensors",
+                "expected/wd_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(b, flags) FROM sensors",
+                "expected/wd_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(code, flags) FROM sensors",
+                "expected/wd_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(flags, reading) FROM sensors",
+                "expected/wd_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(reading, b) FROM sensors",
+                "expected/wd_neg_w.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(flags, flags) FROM sensors",
+                "expected/wd_self.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(ts, flags) FROM sensors",
+                "expected/wd_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(reading, flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/wd_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(reading, flags) FROM sensors LIMIT 0",
+                "expected/wd_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT WEIGHTED_STDDEV(reading, flags) FROM sensors",
+                "expected/wd_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev(reading, flags) FROM sensors WHERE flags > 0",
+                "expected/wd_pos.tsv",
+            ),
+            (
+                &days,
+                "SELECT weighted_stddev(id, id) FROM days",
+                "expected/wd_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT weighted_stddev(id, id) FROM days GROUP BY location ORDER BY location",
+                "expected/wd_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT weighted_stddev() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `weighted_stddev` requires arguments: weighted_stddev(DOUBLE, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_stddev(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `weighted_stddev`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev(reading, flags, id) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `weighted_stddev`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_stddev(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev(missing, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_stddev(ok, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev(reading, location) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: SYMBOL"),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT weighted_stddev(note, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_stddev(ch, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_stddev(tag, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev(ch, flags) FROM sensors WHERE id = 2",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: \0 [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_stddev(reading, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("unsupported: weighted_stddev expects a column"),
             "{}",
             err.message
         );
