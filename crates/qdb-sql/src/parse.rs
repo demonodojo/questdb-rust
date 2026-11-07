@@ -66,6 +66,7 @@ pub enum AggFunc {
     BoolAnd,
     BoolOr,
     FirstNotNull,
+    LastNotNull,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3073,6 +3074,7 @@ impl<'a> Parser<'a> {
                 | "bool_and"
                 | "bool_or"
                 | "first_not_null"
+                | "last_not_null"
         ) {
             return false;
         }
@@ -3128,6 +3130,7 @@ impl<'a> Parser<'a> {
             "bool_and" => AggFunc::BoolAnd,
             "bool_or" => AggFunc::BoolOr,
             "first_not_null" => AggFunc::FirstNotNull,
+            "last_not_null" => AggFunc::LastNotNull,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3292,7 +3295,8 @@ impl<'a> Parser<'a> {
                 )));
             }
         }
-        if func == AggFunc::FirstNotNull && self.peek() == Some(b',') {
+        if matches!(func, AggFunc::FirstNotNull | AggFunc::LastNotNull) && self.peek() == Some(b',')
+        {
             self.pos += 1;
             self.skip();
             if self.peek() == Some(b'\'') {
@@ -3321,7 +3325,10 @@ impl<'a> Parser<'a> {
                 };
                 extra = Some(AggregateExtra::Type(kind.to_string()));
             } else {
-                return Err(Error::new("unsupported: first_not_null extra argument"));
+                return Err(Error::new(format!(
+                    "unsupported: {} extra argument",
+                    name.to_ascii_lowercase()
+                )));
             }
             self.skip();
         }

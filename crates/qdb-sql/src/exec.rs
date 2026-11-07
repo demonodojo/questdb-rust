@@ -7346,7 +7346,8 @@ impl Accumulator {
             | AggFunc::Sum
             | AggFunc::First
             | AggFunc::Last
-            | AggFunc::FirstNotNull => Self::Value(None),
+            | AggFunc::FirstNotNull
+            | AggFunc::LastNotNull => Self::Value(None),
             AggFunc::Avg => Self::Average {
                 total: None,
                 count: 0,
@@ -7541,7 +7542,8 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         .column_index(name)
         .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
     let tag = table.meta.columns[index].tag;
-    if aggregate.func == AggFunc::FirstNotNull {
+    if matches!(aggregate.func, AggFunc::FirstNotNull | AggFunc::LastNotNull) {
+        let fname = null_agg_name(aggregate.func);
         if let Some(extra) = &aggregate.extra {
             let second = match extra {
                 AggregateExtra::Type(kind) => kind.clone(),
@@ -7553,14 +7555,14 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
                 }
             };
             return Err(Error::new(format!(
-                "there is no matching function `first_not_null` with the argument types: ({}, {second})",
+                "there is no matching function `{fname}` with the argument types: ({}, {second})",
                 qdb_types::type_name(tag)
             )));
         }
         if tag == qdb_types::TAG_BOOLEAN {
-            return Err(Error::new(
-                "there is no matching function `first_not_null` with the argument types: (BOOLEAN)",
-            ));
+            return Err(Error::new(format!(
+                "there is no matching function `{fname}` with the argument types: (BOOLEAN)"
+            )));
         }
     }
     if matches!(aggregate.func, AggFunc::BoolAnd | AggFunc::BoolOr) && tag != qdb_types::TAG_BOOLEAN
@@ -7672,12 +7674,12 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::RegrIntercept
         | AggFunc::RegrR2 => qdb_types::TAG_DOUBLE,
         AggFunc::BoolAnd | AggFunc::BoolOr => qdb_types::TAG_BOOLEAN,
-        AggFunc::FirstNotNull
+        AggFunc::FirstNotNull | AggFunc::LastNotNull
             if matches!(input.tag, qdb_types::TAG_BYTE | qdb_types::TAG_SHORT) =>
         {
             qdb_types::TAG_INT
         }
-        AggFunc::FirstNotNull => input.tag,
+        AggFunc::FirstNotNull | AggFunc::LastNotNull => input.tag,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
@@ -7697,12 +7699,12 @@ fn contribution(
     match input.func {
         AggFunc::First | AggFunc::Last => Ok(Some(value.clone())),
         _ if skipped => Ok(None),
-        AggFunc::FirstNotNull
+        AggFunc::FirstNotNull | AggFunc::LastNotNull
             if matches!(input.tag, qdb_types::TAG_BYTE | qdb_types::TAG_SHORT) =>
         {
             Ok(Some(Scalar::Int(as_i64(value)? as i32)))
         }
-        AggFunc::FirstNotNull => Ok(Some(value.clone())),
+        AggFunc::FirstNotNull | AggFunc::LastNotNull => Ok(Some(value.clone())),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::CountDistinct => Ok(Some(value.clone())),
         AggFunc::ApproxCountDistinct => approx_distinct_value(value, input),
@@ -8198,6 +8200,13 @@ fn parse_integer_text(text: &str) -> Option<i64> {
     }
 }
 
+fn null_agg_name(func: AggFunc) -> &'static str {
+    match func {
+        AggFunc::LastNotNull => "last_not_null",
+        _ => "first_not_null",
+    }
+}
+
 fn moment_name(func: AggFunc) -> &'static str {
     match func {
         AggFunc::Variance => "variance",
@@ -8308,7 +8317,7 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
                 *current = Some(next);
             }
         }
-        Accumulator::Value(current) if func == AggFunc::Last => {
+        Accumulator::Value(current) if func == AggFunc::Last || func == AggFunc::LastNotNull => {
             *current = Some(next);
         }
         Accumulator::Value(current) if func == AggFunc::Sum => {
@@ -21850,6 +21859,178 @@ mod tests {
         assert!(
             err.message.contains(
                 "there is no matching function `first_not_null` with the argument types: (BOOLEAN)"
+            ),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn last_not_null_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT last_not_null(note) FROM sensors",
+                "expected/lz_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(id) FROM sensors",
+                "expected/lz_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(reading) FROM sensors",
+                "expected/lz_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(score) FROM sensors",
+                "expected/lz_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(flags) FROM sensors",
+                "expected/lz_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(b) FROM sensors",
+                "expected/lz_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(code) FROM sensors",
+                "expected/lz_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(ch) FROM sensors",
+                "expected/lz_ch.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(location) FROM sensors",
+                "expected/lz_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(tag) FROM sensors",
+                "expected/lz_tag.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(day) FROM sensors",
+                "expected/lz_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(ts) FROM sensors",
+                "expected/lz_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(note) FROM sensors WHERE id = NULL",
+                "expected/lz_empty.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(id) FROM sensors WHERE id = NULL",
+                "expected/lz_nullid.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(note) FROM sensors WHERE id > 100",
+                "expected/lz_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(note) FROM sensors WHERE id = -1",
+                "expected/lz_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT LAST_NOT_NULL(note) FROM sensors",
+                "expected/lz_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(note) FROM sensors LIMIT 0",
+                "expected/lz_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(note) FROM sensors GROUP BY location ORDER BY location",
+                "expected/lz_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT last_not_null(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/lz_grp_id.tsv",
+            ),
+            (
+                &days,
+                "SELECT last_not_null(id) FROM days",
+                "expected/lz_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT last_not_null(note) FROM days",
+                "expected/lz_days_note.tsv",
+            ),
+            (
+                &days,
+                "SELECT last_not_null(note) FROM days GROUP BY location ORDER BY location",
+                "expected/lz_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT last_not_null() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `last_not_null` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT last_not_null(note, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `last_not_null` with the argument types: (STRING, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT last_not_null(id, note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `last_not_null` with the argument types: (LONG, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT last_not_null(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT last_not_null(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT last_not_null(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `last_not_null` with the argument types: (BOOLEAN)"
             ),
             "{}",
             err.message

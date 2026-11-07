@@ -1767,7 +1767,27 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   fn_case "SELECT FIRST_NOT_NULL(note) FROM sensors" \
   fn_lim0 "SELECT first_not_null(note) FROM sensors LIMIT 0" \
   fn_grp "SELECT first_not_null(note) FROM sensors GROUP BY location ORDER BY location" \
-  fn_grp_id "SELECT first_not_null(id) FROM sensors GROUP BY location ORDER BY location"
+  fn_grp_id "SELECT first_not_null(id) FROM sensors GROUP BY location ORDER BY location" \
+  lz_note "SELECT last_not_null(note) FROM sensors" \
+  lz_id "SELECT last_not_null(id) FROM sensors" \
+  lz_read "SELECT last_not_null(reading) FROM sensors" \
+  lz_score "SELECT last_not_null(score) FROM sensors" \
+  lz_flags "SELECT last_not_null(flags) FROM sensors" \
+  lz_byte "SELECT last_not_null(b) FROM sensors" \
+  lz_code "SELECT last_not_null(code) FROM sensors" \
+  lz_ch "SELECT last_not_null(ch) FROM sensors" \
+  lz_loc "SELECT last_not_null(location) FROM sensors" \
+  lz_tag "SELECT last_not_null(tag) FROM sensors" \
+  lz_day "SELECT last_not_null(day) FROM sensors" \
+  lz_ts "SELECT last_not_null(ts) FROM sensors" \
+  lz_empty "SELECT last_not_null(note) FROM sensors WHERE id = NULL" \
+  lz_nullid "SELECT last_not_null(id) FROM sensors WHERE id = NULL" \
+  lz_none "SELECT last_not_null(note) FROM sensors WHERE id > 100" \
+  lz_neg "SELECT last_not_null(note) FROM sensors WHERE id = -1" \
+  lz_case "SELECT LAST_NOT_NULL(note) FROM sensors" \
+  lz_lim0 "SELECT last_not_null(note) FROM sensors LIMIT 0" \
+  lz_grp "SELECT last_not_null(note) FROM sensors GROUP BY location ORDER BY location" \
+  lz_grp_id "SELECT last_not_null(id) FROM sensors GROUP BY location ORDER BY location"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1956,7 +1976,10 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   vs_days "SELECT var_samp(id) FROM days" \
   fn_days "SELECT first_not_null(id) FROM days" \
   fn_days_note "SELECT first_not_null(note) FROM days" \
-  fn_days_grp "SELECT first_not_null(note) FROM days GROUP BY location ORDER BY location"
+  fn_days_grp "SELECT first_not_null(note) FROM days GROUP BY location ORDER BY location" \
+  lz_days "SELECT last_not_null(id) FROM days" \
+  lz_days_note "SELECT last_not_null(note) FROM days" \
+  lz_days_grp "SELECT last_not_null(note) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3671,6 +3694,26 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT first_not_null(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT first_not_null(note) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT first_not_null(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(tag) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(note) FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(id) FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(note) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(note) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT LAST_NOT_NULL(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(note) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(note) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT last_not_null(id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3858,6 +3901,9 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT first_not_null(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT first_not_null(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT first_not_null(note) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT last_not_null(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT last_not_null(note) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT last_not_null(note) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
