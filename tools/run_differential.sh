@@ -2586,7 +2586,12 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   lk_one "SELECT note LIKE 'a%' FROM sensors WHERE id = 1" \
   lk_none "SELECT note LIKE 'a%' FROM sensors WHERE id > 100" \
   lk_eta "SELECT note LIKE '%eta' FROM sensors" \
-  lk_loc "SELECT location LIKE 'mad%' FROM sensors"
+  lk_loc "SELECT location LIKE 'mad%' FROM sensors" \
+  nu_all "SELECT note NOT LIKE 'a%' FROM sensors" \
+  nu_one "SELECT note NOT LIKE 'a%' FROM sensors WHERE id = 1" \
+  nu_none "SELECT note NOT LIKE 'a%' FROM sensors WHERE id > 100" \
+  nu_eta "SELECT note NOT LIKE '%eta' FROM sensors" \
+  nu_loc "SELECT location NOT LIKE 'mad%' FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2896,7 +2901,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   nn_days "SELECT id IS NOT NULL FROM days" \
   bi_days "SELECT id BETWEEN 1 AND 2 FROM days" \
   nb_days "SELECT id NOT BETWEEN 1 AND 2 FROM days" \
-  lk_days "SELECT note LIKE 'a%' FROM days"
+  lk_days "SELECT note LIKE 'a%' FROM days" \
+  nu_days "SELECT note NOT LIKE 'a%' FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5430,6 +5436,11 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT note LIKE 'a%' FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT note LIKE '%eta' FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT location LIKE 'mad%' FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT note NOT LIKE 'a%' FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT note NOT LIKE 'a%' FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT note NOT LIKE 'a%' FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT note NOT LIKE '%eta' FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT location NOT LIKE 'mad%' FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -5738,6 +5749,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT id BETWEEN 1 AND 2 FROM days"),
     (os.environ["DIFF_H2"], "SELECT id NOT BETWEEN 1 AND 2 FROM days"),
     (os.environ["DIFF_H2"], "SELECT note LIKE 'a%' FROM days"),
+    (os.environ["DIFF_H2"], "SELECT note NOT LIKE 'a%' FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

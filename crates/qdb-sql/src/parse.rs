@@ -386,6 +386,7 @@ pub struct IlikeExpr {
 pub struct LikeExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
+    pub negated: bool,
 }
 
 /// `switch(key, case, result, ..., [else])` picks a result by key equality.
@@ -1642,6 +1643,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::And)?));
                 } else if self.eat_keyword("or") {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::Or)?));
+                } else if self.starts_not_like() {
+                    pieces.push(SelectPiece::Like(self.parse_not_like(name)?));
                 } else if self.starts_like_infix() {
                     pieces.push(SelectPiece::Like(self.parse_like_op(name)?));
                 } else if self.starts_not_between() {
@@ -3757,6 +3760,25 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn starts_not_like(&self) -> bool {
+        let Some(after_not) = self.keyword_at(self.pos, "not") else {
+            return false;
+        };
+        self.keyword_at(after_not, "like").is_some()
+    }
+
+    fn parse_not_like(&mut self, name: String) -> Result<LikeExpr, Error> {
+        if !self.eat_keyword("not") {
+            return Err(Error::new(
+                "unsupported: expected NOT LIKE after column".to_string(),
+            ));
+        }
+        let mut expr = self.parse_like_op(name)?;
+        expr.label = format!("not({})", expr.label);
+        expr.negated = true;
+        Ok(expr)
+    }
+
     fn starts_like_infix(&self) -> bool {
         self.keyword_at(self.pos, "like").is_some()
     }
@@ -3771,6 +3793,7 @@ impl<'a> Parser<'a> {
         Ok(LikeExpr {
             label: format!("{name} like {pattern_label}"),
             args: vec![ConcatArg::Column(name), pattern],
+            negated: false,
         })
     }
 
@@ -3787,7 +3810,11 @@ impl<'a> Parser<'a> {
         } else {
             format!("like({})", labels.join(", "))
         };
-        Ok(LikeExpr { label, args })
+        Ok(LikeExpr {
+            label,
+            args,
+            negated: false,
+        })
     }
 
     fn parse_ilike(&mut self) -> Result<IlikeExpr, Error> {

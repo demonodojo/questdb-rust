@@ -1,0 +1,5 @@
+not(note like 'a%')
+false
+true
+true
+true
