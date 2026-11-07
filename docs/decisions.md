@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — tan()
+
+`tan(número)` devuelve `DOUBLE` en radianes. Un nulo sigue NULL. `tan(-0.0)` es `-0.0`. Un texto se convierte como en `sin`. `BOOLEAN` y `SYMBOL` no encajan. `tan(7)` difiere en el último dígito del JDK (`0.8714479827243188` aquí, `0.8714479827243187` en 10.1.0), así que `tan(code)` no entra en el TSV. El resto de `sensors` y `days`, incluido `tan(ts)`, coincide. Se contrastó con `/exec`.
+
 ## 2026-11-07 — cos()
 
 `cos(número)` devuelve `DOUBLE` en radianes. Un nulo sigue NULL. `cos(-0.0)` es `1.0`. Un texto se convierte como en `sin`. `BOOLEAN` y `SYMBOL` no encajan. En `2020-01-02T23:00:00.000000Z` el coseno del timestamp difiere en el último dígito del JDK (`-0.775358125427275` aquí, `-0.7753581254272751` en 10.1.0), así que esa fila no entra en el TSV. `cos(ts)` de la primera fila de `sensors` sí coincide. Se contrastó con `/exec` en `sensors` y `days`.

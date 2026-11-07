@@ -7,7 +7,7 @@ use crate::parse::{
     MillisExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query,
     QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
     SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
-    SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TimestampCeilExpr,
+    SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr,
     TimestampFloorExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, UpperExpr,
     WeekOfYearExpr, YearExpr,
 };
@@ -257,6 +257,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Sqrt { label, .. }
             | ResolvedProj::Sin { label, .. }
             | ResolvedProj::Cos { label, .. }
+            | ResolvedProj::Tan { label, .. }
             | ResolvedProj::Power { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
@@ -545,6 +546,10 @@ enum ResolvedProj {
         label: String,
         input: SinInput,
     },
+    Tan {
+        label: String,
+        input: SinInput,
+    },
     Power {
         label: String,
         base: SqrtInput,
@@ -704,6 +709,7 @@ impl ResolvedProj {
             | Self::Sqrt { label, .. }
             | Self::Sin { label, .. }
             | Self::Cos { label, .. }
+            | Self::Tan { label, .. }
             | Self::Power { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
@@ -756,6 +762,7 @@ impl ResolvedProj {
             Self::Sqrt { .. }
             | Self::Sin { .. }
             | Self::Cos { .. }
+            | Self::Tan { .. }
             | Self::Power { .. }
             | Self::Ln { .. }
             | Self::Log { .. }
@@ -857,6 +864,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Sqrt(expr) => resolve_sqrt(table, expr),
         Proj::Sin(expr) => resolve_sin(table, expr),
         Proj::Cos(expr) => resolve_cos(table, expr),
+        Proj::Tan(expr) => resolve_tan(table, expr),
         Proj::Power(expr) => resolve_power(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
@@ -1334,6 +1342,13 @@ fn resolve_cos(table: &Table, expr: &CosExpr) -> Result<ResolvedProj, Error> {
     Ok(ResolvedProj::Cos {
         label: expr.label.clone(),
         input: resolve_real_arg(table, "cos", &expr.args)?,
+    })
+}
+
+fn resolve_tan(table: &Table, expr: &TanExpr) -> Result<ResolvedProj, Error> {
+    Ok(ResolvedProj::Tan {
+        label: expr.label.clone(),
+        input: resolve_real_arg(table, "tan", &expr.args)?,
     })
 }
 
@@ -5379,6 +5394,7 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
     match item {
         ResolvedProj::Sin { input, .. } => sin_scalar(table, row, input),
         ResolvedProj::Cos { input, .. } => cos_scalar(table, row, input),
+        ResolvedProj::Tan { input, .. } => tan_scalar(table, row, input),
         _ => Ok(eval_resolved(table, row, item)),
     }
 }
@@ -5452,6 +5468,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Err(_) => Scalar::Null,
         },
         ResolvedProj::Cos { input, .. } => match cos_scalar(table, row, input) {
+            Ok(value) => value,
+            Err(_) => Scalar::Null,
+        },
+        ResolvedProj::Tan { input, .. } => match tan_scalar(table, row, input) {
             Ok(value) => value,
             Err(_) => Scalar::Null,
         },
@@ -5777,6 +5797,10 @@ fn sin_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar, Err
 
 fn cos_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar, Error> {
     real_apply(table, row, input, f64::cos)
+}
+
+fn tan_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar, Error> {
+    real_apply(table, row, input, f64::tan)
 }
 
 fn real_apply(
@@ -15316,6 +15340,232 @@ mod tests {
             err.message
         );
         let result = execute(&sensors, "SELECT cos(note) FROM sensors LIMIT 0").unwrap();
+        assert_eq!(result.rows.len(), 0);
+    }
+
+    #[test]
+    fn tan_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT tan(0) FROM sensors LIMIT 1",
+                "expected/tn_zero_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(1) FROM sensors LIMIT 1",
+                "expected/tn_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(-1) FROM sensors LIMIT 1",
+                "expected/tn_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(-0.0) FROM sensors LIMIT 1",
+                "expected/tn_neg0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(null) FROM sensors LIMIT 1",
+                "expected/tn_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(id) FROM sensors",
+                "expected/tn_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(reading) FROM sensors",
+                "expected/tn_read.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(score) FROM sensors LIMIT 1",
+                "expected/tn_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(flags) FROM sensors LIMIT 1",
+                "expected/tn_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(b) FROM sensors LIMIT 1",
+                "expected/tn_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(ts) FROM sensors LIMIT 1",
+                "expected/tn_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(day) FROM sensors LIMIT 1",
+                "expected/tn_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan('1.5') FROM sensors LIMIT 1",
+                "expected/tn_text.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(' 1') FROM sensors LIMIT 1",
+                "expected/tn_ws.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan('1.5d') FROM sensors LIMIT 1",
+                "expected/tn_suffix.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan('NaN') FROM sensors LIMIT 1",
+                "expected/tn_nan.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT TAN(0) FROM sensors LIMIT 1",
+                "expected/tn_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(note) FROM sensors WHERE id = 2",
+                "expected/tn_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(id) FROM sensors WHERE id = 1",
+                "expected/tn_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(id) FROM sensors ORDER BY tan(id)",
+                "expected/tn_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(id) FROM sensors LIMIT 0",
+                "expected/tn_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT tan(ch) FROM sensors LIMIT 0",
+                "expected/tn_ch0.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT tan(id) FROM days ORDER BY ts",
+                "expected/tn_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT tan(ts) FROM days ORDER BY ts",
+                "expected/tn_days_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT tan() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `tan` requires arguments: tan(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan(1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("wrong number of arguments for function `tan`; expected: 1, provided: 2"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `tan` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `tan` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan('nope') FROM sensors LIMIT 0").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `nope` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan('') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan('A') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan('inf') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `inf` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan('1e309') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `1e309` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan(note) FROM sensors LIMIT 1").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan(ch) FROM sensors WHERE id = 2").unwrap_err();
+        assert!(
+            err.message.contains("[CHAR -> DOUBLE]") && err.message.contains('\0'),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan(tag) FROM sensors LIMIT 1").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT tan(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let result = execute(&sensors, "SELECT tan(note) FROM sensors LIMIT 0").unwrap();
         assert_eq!(result.rows.len(), 0);
     }
 

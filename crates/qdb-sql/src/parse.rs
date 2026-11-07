@@ -136,6 +136,7 @@ pub enum Proj {
     Sqrt(SqrtExpr),
     Sin(SinExpr),
     Cos(CosExpr),
+    Tan(TanExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -527,6 +528,13 @@ pub struct CosExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `tan(number)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TanExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `power(base, exponent)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerExpr {
@@ -729,6 +737,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_ceil()?.label
             } else if parser.starts_sign_call() {
                 parser.parse_sign()?.label
+            } else if parser.starts_tan_call() {
+                parser.parse_tan()?.label
             } else if parser.starts_cos_call() {
                 parser.parse_cos()?.label
             } else if parser.starts_sin_call() {
@@ -855,6 +865,7 @@ enum SelectPiece {
     Sqrt(SqrtExpr),
     Sin(SinExpr),
     Cos(CosExpr),
+    Tan(TanExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -1058,6 +1069,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Ceil(self.parse_ceil()?));
             } else if self.starts_sign_call() {
                 pieces.push(SelectPiece::Sign(self.parse_sign()?));
+            } else if self.starts_tan_call() {
+                pieces.push(SelectPiece::Tan(self.parse_tan()?));
             } else if self.starts_cos_call() {
                 pieces.push(SelectPiece::Cos(self.parse_cos()?));
             } else if self.starts_sin_call() {
@@ -1147,6 +1160,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Sqrt(_)
                     | SelectPiece::Sin(_)
                     | SelectPiece::Cos(_)
+                    | SelectPiece::Tan(_)
                     | SelectPiece::Power(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
@@ -1224,6 +1238,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Sqrt(expr) => items.push(Proj::Sqrt(expr)),
                     SelectPiece::Sin(expr) => items.push(Proj::Sin(expr)),
                     SelectPiece::Cos(expr) => items.push(Proj::Cos(expr)),
+                    SelectPiece::Tan(expr) => items.push(Proj::Tan(expr)),
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
@@ -1323,6 +1338,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Sqrt(_)
                 | SelectPiece::Sin(_)
                 | SelectPiece::Cos(_)
+                | SelectPiece::Tan(_)
                 | SelectPiece::Power(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
@@ -1490,6 +1506,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(PowerExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_tan_call(&self) -> bool {
+        self.starts_named_call("tan")
+    }
+
+    fn parse_tan(&mut self) -> Result<TanExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `tan` requires arguments: tan(DOUBLE)".to_string(),
+            ));
+        }
+        Ok(TanExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
