@@ -7303,13 +7303,15 @@ impl Accumulator {
                 total: None,
                 count: 0,
             },
-            AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop => Self::StdDev {
-                mean: 0.0,
-                m2: 0.0,
-                count: 0,
-                deviation: func == AggFunc::StdDev,
-                population: func == AggFunc::VarPop,
-            },
+            AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop | AggFunc::StdDevPop => {
+                Self::StdDev {
+                    mean: 0.0,
+                    m2: 0.0,
+                    count: 0,
+                    deviation: matches!(func, AggFunc::StdDev | AggFunc::StdDevPop),
+                    population: matches!(func, AggFunc::VarPop | AggFunc::StdDevPop),
+                }
+            }
             AggFunc::CountDistinct => Self::Distinct(Vec::new()),
         }
     }
@@ -7334,18 +7336,16 @@ impl Accumulator {
                 population,
                 ..
             } => {
-                let result = if *population && *count > 0 {
+                let mut result = if *population && *count > 0 {
                     *m2 / (*count as f64)
                 } else if !*population && *count > 1 {
-                    let value = *m2 / (*count - 1) as f64;
-                    if *deviation {
-                        value.sqrt()
-                    } else {
-                        value
-                    }
+                    *m2 / (*count - 1) as f64
                 } else {
                     return Scalar::Null;
                 };
+                if *deviation {
+                    result = result.sqrt();
+                }
                 if result.is_finite() {
                     Scalar::Double(result)
                 } else {
@@ -7371,7 +7371,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     let tag = table.meta.columns[index].tag;
     if matches!(
         aggregate.func,
-        AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop
+        AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop | AggFunc::StdDevPop
     ) && matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL)
     {
         let fname = moment_name(aggregate.func);
@@ -7416,9 +7416,11 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::Sum if input.tag == qdb_types::TAG_FLOAT => qdb_types::TAG_FLOAT,
         AggFunc::Sum if input.tag == qdb_types::TAG_DOUBLE => qdb_types::TAG_DOUBLE,
         AggFunc::Sum => qdb_types::TAG_LONG,
-        AggFunc::Avg | AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop => {
-            qdb_types::TAG_DOUBLE
-        }
+        AggFunc::Avg
+        | AggFunc::StdDev
+        | AggFunc::Variance
+        | AggFunc::VarPop
+        | AggFunc::StdDevPop => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
@@ -7449,7 +7451,9 @@ fn contribution(
         AggFunc::Min | AggFunc::Max => Ok(Some(value.clone())),
         AggFunc::Sum => sum_addend(value, input),
         AggFunc::Avg => avg_addend(value, input),
-        AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop => stddev_addend(value, input),
+        AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop | AggFunc::StdDevPop => {
+            stddev_addend(value, input)
+        }
     }
 }
 
@@ -7518,6 +7522,7 @@ fn moment_name(func: AggFunc) -> &'static str {
     match func {
         AggFunc::Variance => "variance",
         AggFunc::VarPop => "var_pop",
+        AggFunc::StdDevPop => "stddev_pop",
         _ => "stddev",
     }
 }
@@ -18385,6 +18390,169 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT var_pop(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn stddev_pop_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(reading) FROM sensors",
+                "expected/dp_read.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(id) FROM sensors",
+                "expected/dp_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(score) FROM sensors",
+                "expected/dp_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(b) FROM sensors",
+                "expected/dp_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(code) FROM sensors",
+                "expected/dp_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(flags) FROM sensors",
+                "expected/dp_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(ts) FROM sensors",
+                "expected/dp_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(reading) FROM sensors WHERE id = 1",
+                "expected/dp_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(reading) FROM sensors WHERE id > 100",
+                "expected/dp_none.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(reading) FROM sensors WHERE id = -1",
+                "expected/dp_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT STDDEV_POP(reading) FROM sensors",
+                "expected/dp_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(reading) FROM sensors LIMIT 0",
+                "expected/dp_lim0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/dp_grp.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/dp_grp_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT stddev_pop(reading) FROM sensors WHERE location = 'madrid'",
+                "expected/dp_where.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT stddev_pop(id) FROM days",
+                "expected/dp_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT stddev_pop(id) FROM days GROUP BY location ORDER BY location",
+                "expected/dp_days_grp.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT stddev_pop() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `stddev_pop` requires arguments: stddev_pop(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev_pop(reading, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `stddev_pop`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev_pop(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev_pop(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev_pop(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `stddev_pop` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev_pop(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `stddev_pop` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev_pop(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev_pop(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT stddev_pop(ch) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),

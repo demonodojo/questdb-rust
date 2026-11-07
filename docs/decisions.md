@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — stddev_pop()
+
+`stddev_pop(col)` devuelve la desviación típica poblacional como `DOUBLE`: la raíz cuadrada de `var_pop`. Con un solo valor el resultado es `0.0`. Sin valores es NULL. Un nulo no cuenta. `stddev_pop(reading)` es `0.7071067811865476`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `stddev_pop(day)` imprime `7.472337167301272E11` en 10.1.0 y `747233716730.1272` en Rust. Esa consulta no se captura. Se contrastó el resto con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — var_pop()
 
 `var_pop(col)` devuelve la varianza poblacional como `DOUBLE`: la misma suma de cuadrados que `variance`, dividida por el número de valores finitos. Con un solo valor el resultado es `0.0`. Sin valores es NULL. Un nulo no cuenta. `var_pop(reading)` es `0.5`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `var_pop(code)` imprime `2.013593685E8` en 10.1.0 y `201359368.5` en Rust. `var_pop(ts)` imprime `1.25E12` y `1250000000000.0`. `var_pop(day)` imprime `5.5835822741832004E23` y `5.5835822741832004e+23`. Esas tres consultas no se capturan. Se contrastó el resto con `/exec` en `sensors` y `days`.

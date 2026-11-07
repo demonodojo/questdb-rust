@@ -50,6 +50,7 @@ pub enum AggFunc {
     StdDev,
     Variance,
     VarPop,
+    StdDevPop,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3020,6 +3021,7 @@ impl<'a> Parser<'a> {
                 | "stddev"
                 | "variance"
                 | "var_pop"
+                | "stddev_pop"
         ) {
             return false;
         }
@@ -3059,14 +3061,17 @@ impl<'a> Parser<'a> {
             "stddev" => AggFunc::StdDev,
             "variance" => AggFunc::Variance,
             "var_pop" => AggFunc::VarPop,
+            "stddev_pop" => AggFunc::StdDevPop,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
             return Err(Error::new("too few arguments for '*' [found=0,expected=2]"));
         }
         self.skip();
-        if matches!(func, AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop)
-            && self.peek() != Some(b')')
+        if matches!(
+            func,
+            AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop | AggFunc::StdDevPop
+        ) && self.peek() != Some(b')')
         {
             let mut provided = if column.is_some() { 1 } else { 0 };
             while self.peek().is_some() && self.peek() != Some(b')') {
@@ -3091,7 +3096,10 @@ impl<'a> Parser<'a> {
                 "unsupported: expected ')' after {name}"
             )));
         }
-        if matches!(func, AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop) && column.is_none()
+        if matches!(
+            func,
+            AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop | AggFunc::StdDevPop
+        ) && column.is_none()
         {
             let fname = name.to_ascii_lowercase();
             return Err(Error::new(format!(

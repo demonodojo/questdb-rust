@@ -1536,7 +1536,22 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   vp_lim0 "SELECT var_pop(reading) FROM sensors LIMIT 0" \
   vp_grp "SELECT var_pop(reading) FROM sensors GROUP BY location ORDER BY location" \
   vp_grp_id "SELECT var_pop(id) FROM sensors GROUP BY location ORDER BY location" \
-  vp_where "SELECT var_pop(reading) FROM sensors WHERE location = 'madrid'"
+  vp_where "SELECT var_pop(reading) FROM sensors WHERE location = 'madrid'" \
+  dp_read "SELECT stddev_pop(reading) FROM sensors" \
+  dp_id "SELECT stddev_pop(id) FROM sensors" \
+  dp_score "SELECT stddev_pop(score) FROM sensors" \
+  dp_byte "SELECT stddev_pop(b) FROM sensors" \
+  dp_code "SELECT stddev_pop(code) FROM sensors" \
+  dp_flags "SELECT stddev_pop(flags) FROM sensors" \
+  dp_ts "SELECT stddev_pop(ts) FROM sensors" \
+  dp_one "SELECT stddev_pop(reading) FROM sensors WHERE id = 1" \
+  dp_none "SELECT stddev_pop(reading) FROM sensors WHERE id > 100" \
+  dp_neg "SELECT stddev_pop(reading) FROM sensors WHERE id = -1" \
+  dp_case "SELECT STDDEV_POP(reading) FROM sensors" \
+  dp_lim0 "SELECT stddev_pop(reading) FROM sensors LIMIT 0" \
+  dp_grp "SELECT stddev_pop(reading) FROM sensors GROUP BY location ORDER BY location" \
+  dp_grp_id "SELECT stddev_pop(id) FROM sensors GROUP BY location ORDER BY location" \
+  dp_where "SELECT stddev_pop(reading) FROM sensors WHERE location = 'madrid'"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1702,7 +1717,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   vr_days "SELECT variance(id) FROM days" \
   vr_days_grp "SELECT variance(id) FROM days GROUP BY location ORDER BY location" \
   vp_days "SELECT var_pop(id) FROM days" \
-  vp_days_grp "SELECT var_pop(id) FROM days GROUP BY location ORDER BY location"
+  vp_days_grp "SELECT var_pop(id) FROM days GROUP BY location ORDER BY location" \
+  dp_days "SELECT stddev_pop(id) FROM days" \
+  dp_days_grp "SELECT stddev_pop(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3186,6 +3203,21 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT var_pop(reading) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT var_pop(id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT var_pop(reading) FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(reading) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(reading) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(reading) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT STDDEV_POP(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(reading) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT stddev_pop(reading) FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3350,6 +3382,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT variance(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT var_pop(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT var_pop(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT stddev_pop(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT stddev_pop(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
