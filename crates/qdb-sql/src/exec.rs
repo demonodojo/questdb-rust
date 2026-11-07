@@ -7458,7 +7458,10 @@ impl Accumulator {
                 count: 0,
                 invalid: false,
             },
-            AggFunc::Skewness | AggFunc::SkewnessPop | AggFunc::KurtosisPop => Self::Skewness {
+            AggFunc::Skewness
+            | AggFunc::SkewnessPop
+            | AggFunc::SkewnessSamp
+            | AggFunc::KurtosisPop => Self::Skewness {
                 mean: 0.0,
                 m2: 0.0,
                 m3: 0.0,
@@ -7943,11 +7946,16 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     }
     if matches!(
         aggregate.func,
-        AggFunc::GeoMean | AggFunc::Skewness | AggFunc::SkewnessPop | AggFunc::KurtosisPop
+        AggFunc::GeoMean
+            | AggFunc::Skewness
+            | AggFunc::SkewnessPop
+            | AggFunc::SkewnessSamp
+            | AggFunc::KurtosisPop
     ) && matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL)
     {
         let fname = match aggregate.func {
             AggFunc::Skewness => "skewness",
+            AggFunc::SkewnessSamp => "skewness_samp",
             AggFunc::SkewnessPop => "skewness_pop",
             AggFunc::KurtosisPop => "kurtosis_pop",
             _ => "geomean",
@@ -8099,6 +8107,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::GeoMean
         | AggFunc::Skewness
         | AggFunc::SkewnessPop
+        | AggFunc::SkewnessSamp
         | AggFunc::KurtosisPop => qdb_types::TAG_DOUBLE,
         AggFunc::Sparkline => qdb_types::TAG_VARCHAR,
         AggFunc::Mode => mode_result_tag(input.tag),
@@ -8151,6 +8160,7 @@ fn contribution(
         }
         AggFunc::GeoMean => geomean_addend(value, input, "geomean"),
         AggFunc::Skewness => geomean_addend(value, input, "skewness"),
+        AggFunc::SkewnessSamp => geomean_addend(value, input, "skewness_samp"),
         AggFunc::SkewnessPop => geomean_addend(value, input, "skewness_pop"),
         AggFunc::KurtosisPop => geomean_addend(value, input, "kurtosis_pop"),
         AggFunc::Mode => mode_addend(value, input),
@@ -27966,6 +27976,167 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT skewness(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn skewness_samp_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT skewness_samp(flags) FROM sensors",
+                "expected/sy_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(flags) FROM sensors WHERE id = 1",
+                "expected/sy_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(flags) FROM sensors WHERE id > 100",
+                "expected/sy_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(reading) FROM sensors",
+                "expected/sy_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(score) FROM sensors",
+                "expected/sy_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(b) FROM sensors",
+                "expected/sy_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(code) FROM sensors",
+                "expected/sy_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(id) FROM sensors",
+                "expected/sy_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(id) FROM sensors WHERE id > 0",
+                "expected/sy_idpos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(flags) FROM sensors WHERE flags > 0",
+                "expected/sy_flagpos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/sy_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/sy_read_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(flags) FROM sensors LIMIT 0",
+                "expected/sy_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT SKEWNESS_SAMP(flags) FROM sensors",
+                "expected/sy_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(day) FROM sensors",
+                "expected/sy_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_samp(ts) FROM sensors",
+                "expected/sy_ts.tsv",
+            ),
+            (
+                &days,
+                "SELECT skewness_samp(id) FROM days",
+                "expected/sy_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT skewness_samp(id) FROM days GROUP BY location ORDER BY location",
+                "expected/sy_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT skewness_samp() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `skewness_samp` requires arguments: skewness_samp(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_samp(flags, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `skewness_samp`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_samp(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_samp(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_samp(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `skewness_samp` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_samp(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `skewness_samp` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_samp(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_samp(ch) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),

@@ -83,6 +83,7 @@ pub enum AggFunc {
     GeoMean,
     Skewness,
     SkewnessPop,
+    SkewnessSamp,
     KurtosisPop,
     Sparkline,
     Mode,
@@ -3152,6 +3153,7 @@ impl<'a> Parser<'a> {
                 | "geomean"
                 | "skewness"
                 | "skewness_pop"
+                | "skewness_samp"
                 | "kurtosis_pop"
                 | "sparkline"
                 | "mode"
@@ -3231,6 +3233,7 @@ impl<'a> Parser<'a> {
             "geomean" => AggFunc::GeoMean,
             "skewness" => AggFunc::Skewness,
             "skewness_pop" => AggFunc::SkewnessPop,
+            "skewness_samp" => AggFunc::SkewnessSamp,
             "kurtosis_pop" => AggFunc::KurtosisPop,
             "sparkline" => AggFunc::Sparkline,
             "mode" => AggFunc::Mode,
@@ -3282,6 +3285,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::GeoMean
                 | AggFunc::Skewness
                 | AggFunc::SkewnessPop
+                | AggFunc::SkewnessSamp
                 | AggFunc::KurtosisPop
                 | AggFunc::BoolAnd
                 | AggFunc::BoolOr
@@ -3798,6 +3802,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::GeoMean
                 | AggFunc::Skewness
                 | AggFunc::SkewnessPop
+                | AggFunc::SkewnessSamp
                 | AggFunc::KurtosisPop
         ) && column.is_none()
         {

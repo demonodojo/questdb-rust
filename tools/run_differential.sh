@@ -2199,7 +2199,23 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   pn_grp "SELECT percentile_cont(flags, 0.5) FROM sensors GROUP BY location ORDER BY location" \
   pn_grp_r "SELECT percentile_cont(reading, 0.5) FROM sensors GROUP BY location ORDER BY location" \
   pn_lim0 "SELECT percentile_cont(flags, 0.5) FROM sensors LIMIT 0" \
-  pn_case "SELECT PERCENTILE_CONT(flags, 0.5) FROM sensors"
+  pn_case "SELECT PERCENTILE_CONT(flags, 0.5) FROM sensors" \
+  sy_flags "SELECT skewness_samp(flags) FROM sensors" \
+  sy_one "SELECT skewness_samp(flags) FROM sensors WHERE id = 1" \
+  sy_none "SELECT skewness_samp(flags) FROM sensors WHERE id > 100" \
+  sy_read "SELECT skewness_samp(reading) FROM sensors" \
+  sy_score "SELECT skewness_samp(score) FROM sensors" \
+  sy_byte "SELECT skewness_samp(b) FROM sensors" \
+  sy_code "SELECT skewness_samp(code) FROM sensors" \
+  sy_id "SELECT skewness_samp(id) FROM sensors" \
+  sy_idpos "SELECT skewness_samp(id) FROM sensors WHERE id > 0" \
+  sy_flagpos "SELECT skewness_samp(flags) FROM sensors WHERE flags > 0" \
+  sy_grp "SELECT skewness_samp(flags) FROM sensors GROUP BY location ORDER BY location" \
+  sy_read_grp "SELECT skewness_samp(reading) FROM sensors GROUP BY location ORDER BY location" \
+  sy_lim0 "SELECT skewness_samp(flags) FROM sensors LIMIT 0" \
+  sy_day "SELECT skewness_samp(day) FROM sensors" \
+  sy_ts "SELECT skewness_samp(ts) FROM sensors" \
+  sy_case "SELECT SKEWNESS_SAMP(flags) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2448,7 +2464,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   pd_days "SELECT percentile_disc(id, 0.5) FROM days" \
   pd_days_grp "SELECT percentile_disc(id, 0.5) FROM days GROUP BY location ORDER BY location" \
   pn_days "SELECT percentile_cont(id, 0.5) FROM days" \
-  pn_days_grp "SELECT percentile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location"
+  pn_days_grp "SELECT percentile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location" \
+  sy_days "SELECT skewness_samp(id) FROM days" \
+  sy_days_grp "SELECT skewness_samp(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4595,6 +4613,22 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT percentile_cont(reading, 0.5) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT percentile_cont(flags, 0.5) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT PERCENTILE_CONT(flags, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(id) FROM sensors WHERE id > 0"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_samp(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT SKEWNESS_SAMP(flags) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4842,6 +4876,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT percentile_disc(id, 0.5) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT percentile_cont(id, 0.5) FROM days"),
     (os.environ["DIFF_H2"], "SELECT percentile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT skewness_samp(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT skewness_samp(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
