@@ -53,6 +53,7 @@ pub enum AggFunc {
     StdDevPop,
     KSum,
     NSum,
+    ApproxCountDistinct,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +63,10 @@ pub struct AggregateExpr {
     pub label: String,
     /// `None` for `count()` and `count(*)`. Every other aggregate names a column.
     pub column: Option<String>,
+    /// Optional precision of `approx_count_distinct(col, precision)`.
+    pub precision: Option<Scalar>,
+    /// A third argument was present.
+    pub precision_more: bool,
 }
 
 /// One grouping column plus one aggregate, in select-list order.
@@ -3026,6 +3031,7 @@ impl<'a> Parser<'a> {
                 | "stddev_pop"
                 | "ksum"
                 | "nsum"
+                | "approx_count_distinct"
         ) {
             return false;
         }
@@ -3068,6 +3074,7 @@ impl<'a> Parser<'a> {
             "stddev_pop" => AggFunc::StdDevPop,
             "ksum" => AggFunc::KSum,
             "nsum" => AggFunc::NSum,
+            "approx_count_distinct" => AggFunc::ApproxCountDistinct,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3102,6 +3109,41 @@ impl<'a> Parser<'a> {
                 "wrong number of arguments for function `{fname}`; expected: 1, provided: {provided}"
             )));
         }
+        let mut precision = None;
+        let mut precision_more = false;
+        let mut precision_label = None;
+        if func == AggFunc::ApproxCountDistinct && self.peek() == Some(b',') {
+            self.pos += 1;
+            self.skip();
+            let start = self.pos;
+            if self.peek().is_some_and(|byte| byte.is_ascii_alphabetic()) {
+                let word = self.ident_spelling()?;
+                if word.eq_ignore_ascii_case("null") {
+                    precision = Some(Scalar::Null);
+                    precision_label = Some(word);
+                } else {
+                    return Err(Error::new(format!("Invalid column: {word}")));
+                }
+            } else {
+                precision = Some(self.parse_number()?);
+                precision_label = Some(
+                    std::str::from_utf8(&self.src[start..self.pos])
+                        .unwrap_or("")
+                        .to_string(),
+                );
+            }
+            self.skip();
+            if self.eat(b',') {
+                precision_more = true;
+                self.skip();
+                if self.peek().is_some_and(|byte| byte.is_ascii_alphabetic()) {
+                    let _ = self.ident_spelling()?;
+                } else if self.starts_limit_int() || self.peek() == Some(b'.') {
+                    let _ = self.parse_number()?;
+                }
+                self.skip();
+            }
+        }
         if !self.eat(b')') {
             return Err(Error::new(format!(
                 "unsupported: expected ')' after {name}"
@@ -3128,14 +3170,17 @@ impl<'a> Parser<'a> {
                 name.to_ascii_lowercase()
             )));
         }
-        let label = match &column {
-            Some(column) => format!("{name}({column})"),
-            None => format!("{name}()"),
+        let label = match (&column, &precision_label) {
+            (Some(column), Some(precision)) => format!("{name}({column}, {precision})"),
+            (Some(column), None) => format!("{name}({column})"),
+            (None, _) => format!("{name}()"),
         };
         Ok(AggregateExpr {
             func,
             label,
             column,
+            precision,
+            precision_more,
         })
     }
 

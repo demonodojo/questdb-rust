@@ -7322,7 +7322,7 @@ impl Accumulator {
                     population: matches!(func, AggFunc::VarPop | AggFunc::StdDevPop),
                 }
             }
-            AggFunc::CountDistinct => Self::Distinct(Vec::new()),
+            AggFunc::CountDistinct | AggFunc::ApproxCountDistinct => Self::Distinct(Vec::new()),
             AggFunc::KSum => Self::Kahan {
                 sum: 0.0,
                 compensation: 0.0,
@@ -7426,6 +7426,9 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             qdb_types::type_name(tag)
         )));
     }
+    if aggregate.func == AggFunc::ApproxCountDistinct {
+        reject_approx_count_distinct(tag, aggregate)?;
+    }
     if matches!(aggregate.func, AggFunc::Count | AggFunc::Sum) && tag == qdb_types::TAG_BOOLEAN {
         let name = match aggregate.func {
             AggFunc::Sum => "sum",
@@ -7458,7 +7461,9 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
 
 fn aggregate_order_tag(input: &AggColumn) -> i32 {
     match input.func {
-        AggFunc::Count | AggFunc::CountDistinct => qdb_types::TAG_LONG,
+        AggFunc::Count | AggFunc::CountDistinct | AggFunc::ApproxCountDistinct => {
+            qdb_types::TAG_LONG
+        }
         AggFunc::Sum if input.tag == qdb_types::TAG_FLOAT => qdb_types::TAG_FLOAT,
         AggFunc::Sum if input.tag == qdb_types::TAG_DOUBLE => qdb_types::TAG_DOUBLE,
         AggFunc::Sum => qdb_types::TAG_LONG,
@@ -7490,6 +7495,7 @@ fn contribution(
         _ if skipped => Ok(None),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::CountDistinct => Ok(Some(value.clone())),
+        AggFunc::ApproxCountDistinct => approx_distinct_value(value, input),
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => {
             let Scalar::Boolean(bit) = value else {
                 return Ok(None);
@@ -7566,6 +7572,117 @@ fn scalar_text(value: &Scalar) -> String {
             .map(|unit| unit.to_string())
             .unwrap_or_default(),
         _ => value.to_string(),
+    }
+}
+
+fn reject_approx_count_distinct(tag: i32, aggregate: &AggregateExpr) -> Result<(), Error> {
+    let supported = matches!(
+        tag,
+        qdb_types::TAG_BYTE
+            | qdb_types::TAG_SHORT
+            | qdb_types::TAG_INT
+            | qdb_types::TAG_LONG
+            | qdb_types::TAG_DATE
+            | qdb_types::TAG_TIMESTAMP
+            | qdb_types::TAG_SYMBOL
+            | qdb_types::TAG_STRING
+            | qdb_types::TAG_VARCHAR
+            | qdb_types::TAG_CHAR
+    );
+    if aggregate.precision_more {
+        let second = aggregate
+            .precision
+            .as_ref()
+            .map(precision_type_name)
+            .unwrap_or("INT");
+        return Err(Error::new(format!(
+            "there is no matching function `approx_count_distinct` with the argument types: ({}, {second}, INT)",
+            qdb_types::type_name(tag)
+        )));
+    }
+    if !supported {
+        let message = match &aggregate.precision {
+            Some(precision) => format!(
+                "there is no matching function `approx_count_distinct` with the argument types: ({}, {})",
+                qdb_types::type_name(tag),
+                precision_type_name(precision)
+            ),
+            None => format!(
+                "there is no matching function `approx_count_distinct` with the argument types: ({})",
+                qdb_types::type_name(tag)
+            ),
+        };
+        return Err(Error::new(message));
+    }
+    if let Some(precision) = &aggregate.precision {
+        let in_range = matches!(precision, Scalar::Long(number) if (4..=18).contains(number));
+        if !in_range {
+            if matches!(precision, Scalar::Double(_)) {
+                return Err(Error::new(format!(
+                    "there is no matching function `approx_count_distinct` with the argument types: ({}, DOUBLE)",
+                    qdb_types::type_name(tag)
+                )));
+            }
+            return Err(Error::new("precision must be between 4 and 18"));
+        }
+    }
+    Ok(())
+}
+
+fn precision_type_name(value: &Scalar) -> &'static str {
+    match value {
+        Scalar::Double(_) => "DOUBLE",
+        Scalar::Long(number) if *number > i64::from(i32::MIN) && *number <= i64::from(i32::MAX) => {
+            "INT"
+        }
+        Scalar::Null => "INT",
+        _ => "LONG",
+    }
+}
+
+fn approx_distinct_value(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Error> {
+    match input.tag {
+        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR => {
+            let text = scalar_text(value);
+            let Some(number) = parse_integer_text(&text) else {
+                let kind = qdb_types::type_name(input.tag);
+                return Err(Error::new(format!(
+                    "inconvertible value: `{text}` [{kind} -> LONG]"
+                )));
+            };
+            Ok(Some(Scalar::Long(number)))
+        }
+        qdb_types::TAG_CHAR => {
+            let text = scalar_text(value);
+            let parsed = parse_integer_text(&text).and_then(|number| i32::try_from(number).ok());
+            let Some(number) = parsed else {
+                return Err(Error::new(format!(
+                    "inconvertible value: {text} [CHAR -> INT]"
+                )));
+            };
+            Ok(Some(Scalar::Int(number)))
+        }
+        _ => Ok(Some(value.clone())),
+    }
+}
+
+fn parse_integer_text(text: &str) -> Option<i64> {
+    let mut bytes = text.as_bytes();
+    let mut negative = false;
+    if bytes.first() == Some(&b'+') {
+        bytes = &bytes[1..];
+    } else if bytes.first() == Some(&b'-') {
+        negative = true;
+        bytes = &bytes[1..];
+    }
+    if bytes.is_empty() || bytes.iter().any(|byte| !byte.is_ascii_digit()) {
+        return None;
+    }
+    let magnitude = std::str::from_utf8(bytes).ok()?.parse::<i64>().ok()?;
+    if negative {
+        magnitude.checked_neg()
+    } else {
+        Some(magnitude)
     }
 }
 
@@ -18968,6 +19085,260 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn approx_count_distinct_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(id) FROM sensors",
+                "expected/ap_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(flags) FROM sensors",
+                "expected/ap_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(code) FROM sensors",
+                "expected/ap_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(b) FROM sensors",
+                "expected/ap_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(ts) FROM sensors",
+                "expected/ap_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(day) FROM sensors",
+                "expected/ap_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(location) FROM sensors",
+                "expected/ap_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(id) FROM sensors WHERE id = 1",
+                "expected/ap_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(id) FROM sensors WHERE id > 100",
+                "expected/ap_none.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(id) FROM sensors WHERE id = -1",
+                "expected/ap_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(id) FROM sensors WHERE id = NULL",
+                "expected/ap_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT APPROX_COUNT_DISTINCT(id) FROM sensors",
+                "expected/ap_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(id) FROM sensors LIMIT 0",
+                "expected/ap_lim0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/ap_grp.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(id) FROM sensors WHERE location = 'madrid'",
+                "expected/ap_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(id, 14) FROM sensors",
+                "expected/ap_p14.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT approx_count_distinct(id, 4) FROM sensors",
+                "expected/ap_p4.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT approx_count_distinct(id) FROM days",
+                "expected/ap_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT approx_count_distinct(id) FROM days GROUP BY location ORDER BY location",
+                "expected/ap_days_grp.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT approx_count_distinct(location) FROM days",
+                "expected/ap_days_loc.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT approx_count_distinct(ts) FROM days",
+                "expected/ap_days_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT approx_count_distinct() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `approx_count_distinct` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_count_distinct(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_count_distinct(missing) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_count_distinct(reading) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_count_distinct` with the argument types: (DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT approx_count_distinct(score) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_count_distinct` with the argument types: (FLOAT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_count_distinct(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_count_distinct` with the argument types: (BOOLEAN)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_count_distinct(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_count_distinct(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_count_distinct(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("inconvertible value: A [CHAR -> INT]"),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT approx_count_distinct(id, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("precision must be between 4 and 18"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_count_distinct(id, 19) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("precision must be between 4 and 18"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_count_distinct(id, null) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("precision must be between 4 and 18"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_count_distinct(id, 14.0) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_count_distinct` with the argument types: (LONG, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_count_distinct(reading, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_count_distinct` with the argument types: (DOUBLE, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_count_distinct(id, 14, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_count_distinct` with the argument types: (LONG, INT, INT)"
+            ),
             "{}",
             err.message
         );

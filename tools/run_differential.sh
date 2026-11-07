@@ -1579,7 +1579,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ns_lim0 "SELECT nsum(reading) FROM sensors LIMIT 0" \
   ns_grp "SELECT nsum(reading) FROM sensors GROUP BY location ORDER BY location" \
   ns_grp_id "SELECT nsum(id) FROM sensors GROUP BY location ORDER BY location" \
-  ns_where "SELECT nsum(reading) FROM sensors WHERE location = 'madrid'"
+  ns_where "SELECT nsum(reading) FROM sensors WHERE location = 'madrid'" \
+  ap_id "SELECT approx_count_distinct(id) FROM sensors" \
+  ap_flags "SELECT approx_count_distinct(flags) FROM sensors" \
+  ap_code "SELECT approx_count_distinct(code) FROM sensors" \
+  ap_byte "SELECT approx_count_distinct(b) FROM sensors" \
+  ap_ts "SELECT approx_count_distinct(ts) FROM sensors" \
+  ap_day "SELECT approx_count_distinct(day) FROM sensors" \
+  ap_location "SELECT approx_count_distinct(location) FROM sensors" \
+  ap_one "SELECT approx_count_distinct(id) FROM sensors WHERE id = 1" \
+  ap_none "SELECT approx_count_distinct(id) FROM sensors WHERE id > 100" \
+  ap_neg "SELECT approx_count_distinct(id) FROM sensors WHERE id = -1" \
+  ap_null "SELECT approx_count_distinct(id) FROM sensors WHERE id = NULL" \
+  ap_case "SELECT APPROX_COUNT_DISTINCT(id) FROM sensors" \
+  ap_lim0 "SELECT approx_count_distinct(id) FROM sensors LIMIT 0" \
+  ap_grp "SELECT approx_count_distinct(id) FROM sensors GROUP BY location ORDER BY location" \
+  ap_where "SELECT approx_count_distinct(id) FROM sensors WHERE location = 'madrid'" \
+  ap_p14 "SELECT approx_count_distinct(id, 14) FROM sensors" \
+  ap_p4 "SELECT approx_count_distinct(id, 4) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1751,7 +1768,11 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ks_days "SELECT ksum(id) FROM days" \
   ks_days_grp "SELECT ksum(id) FROM days GROUP BY location ORDER BY location" \
   ns_days "SELECT nsum(id) FROM days" \
-  ns_days_grp "SELECT nsum(id) FROM days GROUP BY location ORDER BY location"
+  ns_days_grp "SELECT nsum(id) FROM days GROUP BY location ORDER BY location" \
+  ap_days "SELECT approx_count_distinct(id) FROM days" \
+  ap_days_grp "SELECT approx_count_distinct(id) FROM days GROUP BY location ORDER BY location" \
+  ap_days_loc "SELECT approx_count_distinct(location) FROM days" \
+  ap_days_ts "SELECT approx_count_distinct(ts) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3278,6 +3299,23 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT nsum(reading) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT nsum(id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT nsum(reading) FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id) FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT APPROX_COUNT_DISTINCT(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id) FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id, 14) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_count_distinct(id, 4) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3448,6 +3486,10 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT ksum(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT nsum(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT nsum(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT approx_count_distinct(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT approx_count_distinct(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT approx_count_distinct(location) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT approx_count_distinct(ts) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
