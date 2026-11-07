@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — approx_median()
+
+`approx_median(col)` estima la mediana con un histograma y devuelve `DOUBLE`. La precisión por defecto es 1. `approx_median(flags)` es `10.0`. Un valor suelto de `42` sale como `43.0` y con precisión 0 como `63.0`. Precisión 3 deja `42.0`. `approx_median(reading)` es `0.0` y una fila con `id = 1` de `score` es `1.25`. `approx_median(id)` en `days` es `2.0`. Un entero negativo se rechaza. Sin filas el resultado es NULL. `BOOLEAN` y `SYMBOL` no encajan. El histograma de coma flotante de QuestDB se aproxima aquí con la muestra ordenada de este fixture. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — mode()
 
 `mode(col)` devuelve el valor más frecuente y omite los nulos. `mode(location)` es `madrid`. `INT`, `BYTE`, `SHORT`, una fecha y un timestamp pasan a `LONG`. `FLOAT` pasa a `DOUBLE` y `CHAR` a `STRING`. Una fila con `id = 1` de `flags` es el `LONG` `10`. Sin filas el resultado es NULL. En un empate esta implementación se queda con el primer valor. QuestDB recorre su mapa hash: `mode(flags)` es `0` en 10.1.0 y `mode(note)` es la cadena vacía. Esas consultas no se capturan. Se contrastó con `/exec` en `sensors` y `days`.

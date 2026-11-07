@@ -73,6 +73,7 @@ pub enum AggFunc {
     GeoMean,
     Skewness,
     Mode,
+    ApproxMedian,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +97,17 @@ pub struct AggregateExpr {
     pub pair: Option<String>,
     /// Extra argument of `first_not_null`. QuestDB 10.1.0 has no two-argument form.
     pub extra: Option<AggregateExtra>,
+    /// Type name of a third `approx_median` argument, when present.
+    pub third_type: Option<String>,
+}
+
+fn median_literal_type(number: &Scalar) -> &'static str {
+    match number {
+        Scalar::Double(_) => "DOUBLE",
+        Scalar::Long(value) if i32::try_from(*value).is_ok() => "INT",
+        Scalar::Long(_) => "LONG",
+        _ => "DOUBLE",
+    }
 }
 
 /// A second argument that `first_not_null` rejects with the QuestDB type list.
@@ -3072,6 +3084,7 @@ impl<'a> Parser<'a> {
                 | "geomean"
                 | "skewness"
                 | "mode"
+                | "approx_median"
                 | "approx_count_distinct"
                 | "string_agg"
                 | "covar_pop"
@@ -3134,6 +3147,7 @@ impl<'a> Parser<'a> {
             "geomean" => AggFunc::GeoMean,
             "skewness" => AggFunc::Skewness,
             "mode" => AggFunc::Mode,
+            "approx_median" => AggFunc::ApproxMedian,
             "approx_count_distinct" => AggFunc::ApproxCountDistinct,
             "string_agg" => AggFunc::StringAgg,
             "covar_pop" => AggFunc::CovarPop,
@@ -3189,6 +3203,7 @@ impl<'a> Parser<'a> {
                 "wrong number of arguments for function `{fname}`; expected: 1, provided: {provided}"
             )));
         }
+        let mut third_type = None;
         let mut precision = None;
         let mut precision_more = false;
         let mut precision_label = None;
@@ -3241,6 +3256,63 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 self.skip();
+            }
+        }
+        if func == AggFunc::ApproxMedian && self.peek() == Some(b',') {
+            self.pos += 1;
+            self.skip();
+            let start = self.pos;
+            if self
+                .peek()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            {
+                let word = self.ident_spelling()?;
+                extra = if word.eq_ignore_ascii_case("null") {
+                    Some(AggregateExtra::Type("NULL".to_string()))
+                } else {
+                    Some(AggregateExtra::Column(word))
+                };
+                precision_label = Some(
+                    std::str::from_utf8(&self.src[start..self.pos])
+                        .unwrap_or("")
+                        .to_string(),
+                );
+            } else {
+                precision = Some(self.parse_number()?);
+                precision_label = Some(
+                    std::str::from_utf8(&self.src[start..self.pos])
+                        .unwrap_or("")
+                        .to_string(),
+                );
+            }
+            self.skip();
+            if self.peek() == Some(b',') {
+                self.pos += 1;
+                self.skip();
+                let third_start = self.pos;
+                if self
+                    .peek()
+                    .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+                {
+                    let word = self.ident_spelling()?;
+                    third_type = if word.eq_ignore_ascii_case("null") {
+                        Some("NULL".to_string())
+                    } else {
+                        Some(word)
+                    };
+                } else if self.starts_limit_int()
+                    || self.peek() == Some(b'.')
+                    || self.peek() == Some(b'-')
+                {
+                    let number = self.parse_number()?;
+                    third_type = Some(median_literal_type(&number).to_string());
+                }
+                if self.pos == third_start {
+                    return Err(Error::new(
+                        "unsupported: approx_median precision must be a literal",
+                    ));
+                }
+                let _ = third_start;
             }
         }
         if func == AggFunc::ApproxCountDistinct && self.peek() == Some(b',') {
@@ -3444,6 +3516,7 @@ impl<'a> Parser<'a> {
             separator_more,
             pair,
             extra,
+            third_type,
         })
     }
 

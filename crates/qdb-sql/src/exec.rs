@@ -7271,6 +7271,8 @@ struct AggColumn {
     delimiter: char,
     pair_index: Option<usize>,
     pair_tag: i32,
+    /// Significant digits for `approx_median`. One when the call omits precision.
+    precision: i32,
 }
 
 enum Accumulator {
@@ -7353,6 +7355,11 @@ enum Accumulator {
     Mode {
         seen: Vec<(Scalar, i64)>,
     },
+    ApproxMedian {
+        floating: bool,
+        histogram: HdrHistogram,
+        samples: Vec<f64>,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -7398,6 +7405,11 @@ impl Accumulator {
                 count: 0,
             },
             AggFunc::Mode => Self::Mode { seen: Vec::new() },
+            AggFunc::ApproxMedian => Self::ApproxMedian {
+                floating: false,
+                histogram: HdrHistogram::new(1),
+                samples: Vec::new(),
+            },
             AggFunc::Avg => Self::Average {
                 total: None,
                 count: 0,
@@ -7567,6 +7579,17 @@ impl Accumulator {
             },
             Self::Skewness { m2, m3, count, .. } => skewness_scalar(*m2, *m3, *count),
             Self::Mode { seen } => mode_scalar(seen),
+            Self::ApproxMedian {
+                floating,
+                histogram,
+                samples,
+            } => {
+                if *floating {
+                    double_median(samples)
+                } else {
+                    histogram.median()
+                }
+            }
             Self::GeoMean {
                 sum_ln,
                 count,
@@ -7602,6 +7625,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             delimiter: '\0',
             pair_index: None,
             pair_tag: qdb_types::TAG_DOUBLE,
+            precision: 1,
         });
     };
     let index = table
@@ -7755,6 +7779,11 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     } else {
         Vec::new()
     };
+    let precision = if aggregate.func == AggFunc::ApproxMedian {
+        median_precision(table, tag, aggregate)?
+    } else {
+        1
+    };
     Ok(AggColumn {
         index: Some(index),
         tag,
@@ -7763,6 +7792,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         delimiter,
         pair_index,
         pair_tag,
+        precision,
     })
 }
 
@@ -7794,6 +7824,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::GeoMean
         | AggFunc::Skewness => qdb_types::TAG_DOUBLE,
         AggFunc::Mode => mode_result_tag(input.tag),
+        AggFunc::ApproxMedian => qdb_types::TAG_DOUBLE,
         AggFunc::BoolAnd | AggFunc::BoolOr => qdb_types::TAG_BOOLEAN,
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
@@ -7833,6 +7864,7 @@ fn contribution(
         AggFunc::GeoMean => geomean_addend(value, input, "geomean"),
         AggFunc::Skewness => geomean_addend(value, input, "skewness"),
         AggFunc::Mode => mode_addend(value, input),
+        AggFunc::ApproxMedian => median_addend(value, input),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::CountDistinct => Ok(Some(value.clone())),
         AggFunc::ApproxCountDistinct => approx_distinct_value(value, input),
@@ -8162,6 +8194,21 @@ fn start_accumulator(aggregate: &AggregateExpr, input: &AggColumn) -> Accumulato
     {
         *tag = bit_and_result_tag(input.tag);
     }
+    if let Accumulator::ApproxMedian {
+        floating,
+        histogram,
+        ..
+    } = &mut accumulator
+    {
+        *floating = matches!(
+            input.tag,
+            qdb_types::TAG_FLOAT
+                | qdb_types::TAG_DOUBLE
+                | qdb_types::TAG_STRING
+                | qdb_types::TAG_VARCHAR
+        );
+        *histogram = HdrHistogram::new(input.precision);
+    }
     accumulator
 }
 
@@ -8490,6 +8537,316 @@ fn stddev_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Er
     }
 }
 
+fn median_precision(table: &Table, tag: i32, aggregate: &AggregateExpr) -> Result<i32, Error> {
+    if let Some(third) = &aggregate.third_type {
+        let second = match &aggregate.extra {
+            Some(AggregateExtra::Type(kind)) => kind.clone(),
+            Some(AggregateExtra::Column(name)) => median_column_type(table, name)?,
+            None => match &aggregate.precision {
+                Some(number) => median_number_type(number).to_string(),
+                None => "UNKNOWN".to_string(),
+            },
+        };
+        let third = third.clone();
+        return Err(Error::new(format!(
+            "there is no matching function `approx_median` with the argument types: ({}, {second}, {third})",
+            qdb_types::type_name(tag)
+        )));
+    }
+    if let Some(extra) = &aggregate.extra {
+        let second = match extra {
+            AggregateExtra::Type(kind) => kind.clone(),
+            AggregateExtra::Column(name) => median_column_type(table, name)?,
+        };
+        return Err(Error::new(format!(
+            "there is no matching function `approx_median` with the argument types: ({}, {second})",
+            qdb_types::type_name(tag)
+        )));
+    }
+    if matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL) {
+        return Err(Error::new(format!(
+            "there is no matching function `approx_median` with the argument types: ({})",
+            qdb_types::type_name(tag)
+        )));
+    }
+    let Some(precision) = &aggregate.precision else {
+        return Ok(1);
+    };
+    let digits = match precision {
+        Scalar::Long(value) => *value,
+        _ => return Err(Error::new("precision must be between 0 and 5")),
+    };
+    if !(0..=5).contains(&digits) {
+        return Err(Error::new("precision must be between 0 and 5"));
+    }
+    Ok(digits as i32)
+}
+
+fn median_column_type(table: &Table, name: &str) -> Result<String, Error> {
+    let other = table
+        .column_index(name)
+        .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+    Ok(qdb_types::type_name(table.meta.columns[other].tag).to_string())
+}
+
+fn median_number_type(number: &Scalar) -> &'static str {
+    match number {
+        Scalar::Double(_) => "DOUBLE",
+        Scalar::Long(value) if i32::try_from(*value).is_ok() => "INT",
+        Scalar::Long(_) => "LONG",
+        _ => "DOUBLE",
+    }
+}
+
+fn median_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Error> {
+    match input.tag {
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT | qdb_types::TAG_LONG => {
+            let number = as_i64(value)?;
+            if number < 0 {
+                return Err(Error::new("Histogram recorded value cannot be negative."));
+            }
+            Ok(Some(Scalar::Long(number)))
+        }
+        qdb_types::TAG_DATE => match value {
+            Scalar::Date(millis) => {
+                if *millis < 0 {
+                    return Err(Error::new("Histogram recorded value cannot be negative."));
+                }
+                Ok(Some(Scalar::Long(*millis)))
+            }
+            _ => Err(Error::new("internal: date column value")),
+        },
+        qdb_types::TAG_TIMESTAMP => match value {
+            Scalar::Timestamp(micros) => {
+                if *micros < 0 {
+                    return Err(Error::new("Histogram recorded value cannot be negative."));
+                }
+                Ok(Some(Scalar::Long(*micros)))
+            }
+            _ => Err(Error::new("internal: timestamp column value")),
+        },
+        qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE => {
+            let number = as_f64(value)?;
+            if number < 0.0 {
+                return Err(Error::new("Negative values cannot be recorded"));
+            }
+            Ok(Some(Scalar::Double(if number == 0.0 {
+                0.0
+            } else {
+                number
+            })))
+        }
+        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR => {
+            let text = scalar_text(value);
+            let parsed = parse_questdb_f64(&text).filter(|number| number.is_finite());
+            let Some(number) = parsed else {
+                let kind = qdb_types::type_name(input.tag);
+                return Err(Error::new(format!(
+                    "inconvertible value: `{text}` [{kind} -> DOUBLE]"
+                )));
+            };
+            if number < 0.0 {
+                return Err(Error::new("Negative values cannot be recorded"));
+            }
+            Ok(Some(Scalar::Double(if number == 0.0 {
+                0.0
+            } else {
+                number
+            })))
+        }
+        qdb_types::TAG_CHAR => {
+            let text = scalar_text(value);
+            let parsed = parse_integer_text(&text);
+            let Some(number) = parsed else {
+                return Err(Error::new(format!(
+                    "inconvertible value: {text} [CHAR -> LONG]"
+                )));
+            };
+            if number < 0 {
+                return Err(Error::new("Histogram recorded value cannot be negative."));
+            }
+            Ok(Some(Scalar::Long(number)))
+        }
+        _ => Err(Error::new(format!(
+            "there is no matching function `approx_median` with the argument types: ({})",
+            qdb_types::type_name(input.tag)
+        ))),
+    }
+}
+
+fn double_median(samples: &[f64]) -> Scalar {
+    if samples.is_empty() {
+        return Scalar::Null;
+    }
+    let mut values = samples.to_vec();
+    values.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    let requested = next_down(50.0).clamp(0.0, 100.0);
+    let count_at = ((requested * values.len() as f64) / 100.0).ceil().max(1.0) as usize;
+    Scalar::Double(values[count_at - 1])
+}
+
+fn next_down(value: f64) -> f64 {
+    if value.is_nan() || value == f64::NEG_INFINITY {
+        return value;
+    }
+    if value == 0.0 {
+        return f64::from_bits(1).copysign(-1.0);
+    }
+    let bits = value.to_bits();
+    if value > 0.0 {
+        f64::from_bits(bits - 1)
+    } else {
+        f64::from_bits(bits + 1)
+    }
+}
+
+struct HdrHistogram {
+    digits: i32,
+    counts: Vec<i64>,
+    highest: i64,
+    total: i64,
+    unit_magnitude: i32,
+    sub_bucket_half_count: i32,
+    sub_bucket_half_count_magnitude: i32,
+    sub_bucket_mask: i64,
+    leading_zero_count_base: i32,
+}
+
+impl HdrHistogram {
+    fn new(digits: i32) -> Self {
+        let mut histogram = Self {
+            digits,
+            counts: Vec::new(),
+            highest: 1000,
+            total: 0,
+            unit_magnitude: 0,
+            sub_bucket_half_count: 1,
+            sub_bucket_half_count_magnitude: 0,
+            sub_bucket_mask: 0,
+            leading_zero_count_base: 0,
+        };
+        histogram.derive();
+        histogram.establish(1000);
+        histogram
+            .counts
+            .resize(histogram.counts.capacity().max(1), 0);
+        let length = histogram.length_for(1000);
+        histogram.counts.resize(length, 0);
+        histogram
+    }
+
+    fn derive(&mut self) {
+        let largest = 2.0 * 10f64.powi(self.digits);
+        self.unit_magnitude = 0;
+        let magnitude = (largest.ln() / 2f64.ln()).ceil() as i32;
+        let half_magnitude = magnitude - 1;
+        let sub_bucket_count = 1i32 << magnitude;
+        self.sub_bucket_half_count = sub_bucket_count / 2;
+        self.sub_bucket_half_count_magnitude = half_magnitude;
+        self.sub_bucket_mask = (i64::from(sub_bucket_count) - 1) << self.unit_magnitude;
+        self.leading_zero_count_base = 64 - self.unit_magnitude - magnitude;
+    }
+
+    fn length_for(&self, highest: i64) -> usize {
+        let sub_bucket_count = self.sub_bucket_half_count * 2;
+        let mut smallest = i64::from(sub_bucket_count);
+        let mut buckets = 1;
+        while smallest <= highest {
+            if smallest > i64::MAX / 2 {
+                buckets += 1;
+                break;
+            }
+            smallest <<= 1;
+            buckets += 1;
+        }
+        ((buckets + 1) * self.sub_bucket_half_count) as usize
+    }
+
+    fn establish(&mut self, highest: i64) {
+        let length = self.length_for(highest);
+        self.highest = highest;
+        if self.counts.len() < length {
+            self.counts.resize(length, 0);
+        }
+    }
+
+    fn record(&mut self, value: i64) -> Result<(), Error> {
+        if value < 0 {
+            return Err(Error::new("Histogram recorded value cannot be negative."));
+        }
+        let mut index = self.counts_index(value);
+        if index < 0 || index >= self.counts.len() as i32 {
+            self.establish(value);
+            index = self.counts_index(value);
+            self.highest =
+                self.highest_equivalent(self.value_from_slot(self.counts.len() as i32 - 1));
+        }
+        if index >= 0 && (index as usize) < self.counts.len() {
+            self.counts[index as usize] += 1;
+            self.total += 1;
+        }
+        Ok(())
+    }
+
+    fn median(&self) -> Scalar {
+        if self.total == 0 {
+            return Scalar::Null;
+        }
+        let requested = next_down(50.0).clamp(0.0, 100.0);
+        let mut count_at = ((requested * self.total as f64) / 100.0).ceil() as i64;
+        if count_at < 1 {
+            count_at = 1;
+        }
+        let mut seen = 0i64;
+        for (index, count) in self.counts.iter().enumerate() {
+            seen += *count;
+            if seen >= count_at {
+                let value = self.highest_equivalent(self.value_from_slot(index as i32));
+                return Scalar::Double(value as f64);
+            }
+        }
+        Scalar::Double(0.0)
+    }
+
+    fn counts_index(&self, value: i64) -> i32 {
+        let bucket = self.bucket_index(value);
+        let sub = self.sub_bucket_index(value, bucket);
+        let base = (bucket + 1) << self.sub_bucket_half_count_magnitude;
+        let offset = sub - self.sub_bucket_half_count;
+        base + offset
+    }
+
+    fn bucket_index(&self, value: i64) -> i32 {
+        self.leading_zero_count_base - (value | self.sub_bucket_mask).leading_zeros() as i32
+    }
+
+    fn sub_bucket_index(&self, value: i64, bucket: i32) -> i32 {
+        (value >> (bucket + self.unit_magnitude)) as i32
+    }
+
+    fn value_from_parts(&self, bucket: i32, sub: i32) -> i64 {
+        i64::from(sub) << (bucket + self.unit_magnitude)
+    }
+
+    fn value_from_slot(&self, index: i32) -> i64 {
+        let mut bucket = (index >> self.sub_bucket_half_count_magnitude) - 1;
+        let mut sub = (index & (self.sub_bucket_half_count - 1)) + self.sub_bucket_half_count;
+        if bucket < 0 {
+            sub -= self.sub_bucket_half_count;
+            bucket = 0;
+        }
+        self.value_from_parts(bucket, sub)
+    }
+
+    fn highest_equivalent(&self, value: i64) -> i64 {
+        let bucket = self.bucket_index(value);
+        let sub = self.sub_bucket_index(value, bucket);
+        let lowest = self.value_from_parts(bucket, sub);
+        let width = 1i64 << (self.unit_magnitude + bucket);
+        lowest + width - 1
+    }
+}
+
 fn mode_result_tag(tag: i32) -> i32 {
     match tag {
         qdb_types::TAG_BYTE
@@ -8805,6 +9162,23 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
                 *count += 1;
             } else {
                 seen.push((next, 1));
+            }
+        }
+        Accumulator::ApproxMedian {
+            floating,
+            histogram,
+            samples,
+        } => {
+            if *floating {
+                let Scalar::Double(value) = next else {
+                    return;
+                };
+                samples.push(value);
+            } else {
+                let Scalar::Long(value) = next else {
+                    return;
+                };
+                let _ = histogram.record(value);
             }
         }
         Accumulator::BoolOr { value, count } => {
@@ -23409,6 +23783,184 @@ mod tests {
         let err = execute(&sensors, "SELECT mode(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn approx_median_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT approx_median(flags) FROM sensors",
+                "expected/am_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(flags) FROM sensors WHERE id = 1",
+                "expected/am_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(flags) FROM sensors WHERE id > 100",
+                "expected/am_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(flags) FROM sensors WHERE flags > 0",
+                "expected/am_pos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(flags) FROM sensors WHERE id = -1",
+                "expected/am_forty.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(flags, 0) FROM sensors WHERE id = -1",
+                "expected/am_prec0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(flags, 3) FROM sensors WHERE id = -1",
+                "expected/am_prec3.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(reading) FROM sensors",
+                "expected/am_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(reading) FROM sensors WHERE id = 1",
+                "expected/am_read1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(score) FROM sensors WHERE id = 1",
+                "expected/am_score1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/am_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/am_read_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_median(flags) FROM sensors LIMIT 0",
+                "expected/am_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT APPROX_MEDIAN(flags) FROM sensors",
+                "expected/am_case.tsv",
+            ),
+            (
+                &days,
+                "SELECT approx_median(id) FROM days",
+                "expected/am_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT approx_median(id) FROM days GROUP BY location ORDER BY location",
+                "expected/am_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT approx_median(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("Histogram recorded value cannot be negative."),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_median() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `approx_median` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_median(flags, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_median` with the argument types: (INT, LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_median(flags, 1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_median` with the argument types: (INT, INT, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_median(flags, 6) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("precision must be between 0 and 5"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_median(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_median(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_median(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_median` with the argument types: (BOOLEAN)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_median(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_median` with the argument types: (SYMBOL)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_median(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_median(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_median(score) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Negative values cannot be recorded"),
             "{}",
             err.message
         );

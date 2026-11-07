@@ -1887,7 +1887,21 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   me_flag1 "SELECT mode(flags) FROM sensors WHERE id = 1" \
   me_id "SELECT mode(id) FROM sensors" \
   me_ok "SELECT mode(ok) FROM sensors" \
-  me_ch "SELECT mode(ch) FROM sensors"
+  me_ch "SELECT mode(ch) FROM sensors" \
+  am_flags "SELECT approx_median(flags) FROM sensors" \
+  am_one "SELECT approx_median(flags) FROM sensors WHERE id = 1" \
+  am_none "SELECT approx_median(flags) FROM sensors WHERE id > 100" \
+  am_pos "SELECT approx_median(flags) FROM sensors WHERE flags > 0" \
+  am_forty "SELECT approx_median(flags) FROM sensors WHERE id = -1" \
+  am_prec0 "SELECT approx_median(flags, 0) FROM sensors WHERE id = -1" \
+  am_prec3 "SELECT approx_median(flags, 3) FROM sensors WHERE id = -1" \
+  am_read "SELECT approx_median(reading) FROM sensors" \
+  am_read1 "SELECT approx_median(reading) FROM sensors WHERE id = 1" \
+  am_score1 "SELECT approx_median(score) FROM sensors WHERE id = 1" \
+  am_grp "SELECT approx_median(flags) FROM sensors GROUP BY location ORDER BY location" \
+  am_read_grp "SELECT approx_median(reading) FROM sensors GROUP BY location ORDER BY location" \
+  am_lim0 "SELECT approx_median(flags) FROM sensors LIMIT 0" \
+  am_case "SELECT APPROX_MEDIAN(flags) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2093,7 +2107,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   me_days_loc "SELECT mode(location) FROM days" \
   me_days_id "SELECT mode(id) FROM days" \
   me_days_grp "SELECT mode(id) FROM days GROUP BY location ORDER BY location" \
-  me_days_loc_grp "SELECT mode(location) FROM days GROUP BY location ORDER BY location"
+  me_days_loc_grp "SELECT mode(location) FROM days GROUP BY location ORDER BY location" \
+  am_days "SELECT approx_median(id) FROM days" \
+  am_days_grp "SELECT approx_median(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3928,6 +3944,20 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT mode(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT mode(ok) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT mode(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(flags) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(flags, 0) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(flags, 3) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(reading) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(score) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT approx_median(flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT APPROX_MEDIAN(flags) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4132,6 +4162,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT mode(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT mode(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT mode(location) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT approx_median(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT approx_median(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
