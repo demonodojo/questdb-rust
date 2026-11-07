@@ -113,6 +113,7 @@ pub enum Proj {
     Minute(MinuteExpr),
     Second(SecondExpr),
     Millis(MillisExpr),
+    Micros(MicrosExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -346,6 +347,13 @@ pub struct MillisExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `micros(timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MicrosExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -534,6 +542,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_second()?.label
             } else if parser.starts_millis_call() {
                 parser.parse_millis()?.label
+            } else if parser.starts_micros_call() {
+                parser.parse_micros()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -641,6 +651,7 @@ enum SelectPiece {
     Minute(MinuteExpr),
     Second(SecondExpr),
     Millis(MillisExpr),
+    Micros(MicrosExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -804,6 +815,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Second(self.parse_second()?));
             } else if self.starts_millis_call() {
                 pieces.push(SelectPiece::Millis(self.parse_millis()?));
+            } else if self.starts_micros_call() {
+                pieces.push(SelectPiece::Micros(self.parse_micros()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -874,6 +887,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Minute(_)
                     | SelectPiece::Second(_)
                     | SelectPiece::Millis(_)
+                    | SelectPiece::Micros(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -930,6 +944,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Minute(expr) => items.push(Proj::Minute(expr)),
                     SelectPiece::Second(expr) => items.push(Proj::Second(expr)),
                     SelectPiece::Millis(expr) => items.push(Proj::Millis(expr)),
+                    SelectPiece::Micros(expr) => items.push(Proj::Micros(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -1010,6 +1025,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Minute(_)
                 | SelectPiece::Second(_)
                 | SelectPiece::Millis(_)
+                | SelectPiece::Micros(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1256,6 +1272,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_micros_call(&self) -> bool {
+        self.starts_named_call("micros")
+    }
+
+    fn parse_micros(&mut self) -> Result<MicrosExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `micros` requires arguments: micros(TIMESTAMP)".to_string(),
+            ));
+        }
+        Ok(MicrosExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
