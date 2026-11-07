@@ -860,6 +860,7 @@ pub enum ArithOp {
     Div,
     Mod,
     BitAnd,
+    BitOr,
 }
 
 impl ArithOp {
@@ -871,6 +872,7 @@ impl ArithOp {
             Self::Div => "/",
             Self::Mod => "%",
             Self::BitAnd => "&",
+            Self::BitOr => "|",
         }
     }
 }
@@ -1671,6 +1673,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::Eq(self.parse_eq(name)?));
                 } else if self.starts_bitand() {
                     pieces.push(SelectPiece::Add(self.parse_bitand(name)?));
+                } else if self.starts_bitor() {
+                    pieces.push(SelectPiece::Add(self.parse_bitor(name)?));
                 } else if self.starts_add() {
                     pieces.push(SelectPiece::Add(self.parse_add(name)?));
                 } else {
@@ -2349,6 +2353,60 @@ impl<'a> Parser<'a> {
         Ok(NegExpr {
             label: format!("-({name})"),
             value: name,
+        })
+    }
+
+    fn starts_bitor(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if self.src.get(pos) != Some(&b'|') || self.src.get(pos + 1) == Some(&b'|') {
+            return false;
+        }
+        pos += 1;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let Some(first) = self.src.get(pos) else {
+            return false;
+        };
+        if !first.is_ascii_alphabetic() && *first != b'_' {
+            return false;
+        }
+        let start = pos;
+        pos += 1;
+        while matches!(
+            self.src.get(pos),
+            Some(byte) if byte.is_ascii_alphanumeric() || *byte == b'_'
+        ) {
+            pos += 1;
+        }
+        let word = std::str::from_utf8(&self.src[start..pos])
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        !matches!(word.as_str(), "null" | "true" | "false")
+    }
+
+    fn parse_bitor(&mut self, name: String) -> Result<AddExpr, Error> {
+        self.skip();
+        if !self.eat(b'|') {
+            return Err(Error::new(
+                "unsupported: expected '|' after column".to_string(),
+            ));
+        }
+        if !self.starts_add_column() {
+            return Err(Error::new(
+                "unsupported: expected a column after '|'".to_string(),
+            ));
+        }
+        let column = self.ident_spelling()?;
+        Ok(AddExpr {
+            label: format!("{name} | {column}"),
+            value: name,
+            literal: Scalar::Null,
+            other: Some(column),
+            op: ArithOp::BitOr,
         })
     }
 
