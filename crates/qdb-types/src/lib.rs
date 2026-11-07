@@ -151,10 +151,25 @@ pub fn format_f64(v: f64) -> String {
         };
     }
     let text = format!("{v}");
+    let body = text.trim_start_matches('-');
+    let wide_integer = !text.contains(['.', 'e', 'E']) && body.len() >= 17;
+    if wide_integer || body.starts_with("0.0000") {
+        return python_scientific(v);
+    }
     if text.contains(['.', 'e', 'E']) {
         text
     } else {
         format!("{text}.0")
+    }
+}
+
+fn python_scientific(value: f64) -> String {
+    let text = format!("{value:e}");
+    match text.split_once('e') {
+        Some((mantissa, exponent)) if !exponent.starts_with('-') => {
+            format!("{mantissa}e+{exponent}")
+        }
+        _ => text,
     }
 }
 

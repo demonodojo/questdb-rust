@@ -105,6 +105,7 @@ pub enum Proj {
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
+    Exp(ExpExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -270,6 +271,13 @@ pub struct LogExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `exp(number)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -367,6 +375,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_ln()?.label
             } else if parser.starts_log_call() {
                 parser.parse_log()?.label
+            } else if parser.starts_exp_call() {
+                parser.parse_exp()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -442,6 +452,7 @@ enum SelectPiece {
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
+    Exp(ExpExpr),
 }
 
 struct Parser<'a> {
@@ -580,6 +591,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Ln(self.parse_ln()?));
             } else if self.starts_log_call() {
                 pieces.push(SelectPiece::Log(self.parse_log()?));
+            } else if self.starts_exp_call() {
+                pieces.push(SelectPiece::Exp(self.parse_exp()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -618,6 +631,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Power(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
+                    | SelectPiece::Exp(_)
             )
         });
         if counts > 0 && projected {
@@ -655,6 +669,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
+                    SelectPiece::Exp(expr) => items.push(Proj::Exp(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -715,7 +730,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Sqrt(_)
                 | SelectPiece::Power(_)
                 | SelectPiece::Ln(_)
-                | SelectPiece::Log(_) => {
+                | SelectPiece::Log(_)
+                | SelectPiece::Exp(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -758,6 +774,24 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_exp_call(&self) -> bool {
+        self.starts_named_call("exp")
+    }
+
+    fn parse_exp(&mut self) -> Result<ExpExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `exp` requires arguments: exp(DOUBLE)".to_string(),
+            ));
+        }
+        Ok(ExpExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_log_call(&self) -> bool {

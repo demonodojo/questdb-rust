@@ -40,7 +40,8 @@
 //! boolean. A null text or prefix is false, and an empty prefix matches any
 //! non-null text. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
-//! null. `log` is the base-10 logarithm and follows the same null and zero rules
+//! null. `exp` returns `DOUBLE`. A huge input overflows to infinity and prints as
+//! NULL. `log` is the base-10 logarithm and follows the same null and zero rules
 //! as `ln`. `ln` returns `DOUBLE`. A negative input is NULL. `ln(0)` is negative
 //! infinity, which sorts before finite values and prints as NULL. `power` returns `DOUBLE`. A non-finite result is NULL, and a null base
 //! raised to `0` is `1.0`. `sqrt` returns `DOUBLE`. A negative value becomes NULL and `-0.0`

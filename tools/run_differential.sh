@@ -676,7 +676,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   lg_reading_order "SELECT log(reading) FROM sensors ORDER BY log(reading)" \
   lg_with_id "SELECT id, log(id) FROM sensors ORDER BY log(id)" \
   lg_where "SELECT log(id) FROM sensors WHERE id = 1" \
-  lg_limit_zero "SELECT log(id) FROM sensors LIMIT 0"
+  lg_limit_zero "SELECT log(id) FROM sensors LIMIT 0" \
+  ex_reading "SELECT exp(reading) FROM sensors" \
+  ex_score "SELECT exp(score) FROM sensors" \
+  ex_id "SELECT exp(id) FROM sensors" \
+  ex_flags "SELECT exp(flags) FROM sensors" \
+  ex_byte "SELECT exp(b) FROM sensors" \
+  ex_one "SELECT exp(1) FROM sensors LIMIT 1" \
+  ex_zero "SELECT exp(0) FROM sensors LIMIT 1" \
+  ex_neg "SELECT exp(-1) FROM sensors LIMIT 1" \
+  ex_negzero "SELECT exp(-0.0) FROM sensors LIMIT 1" \
+  ex_big "SELECT exp(1000) FROM sensors LIMIT 1" \
+  ex_null "SELECT exp(null) FROM sensors LIMIT 1" \
+  ex_case "SELECT EXP(READING) FROM sensors" \
+  ex_order "SELECT exp(id) FROM sensors ORDER BY exp(id)" \
+  ex_reading_order "SELECT exp(reading) FROM sensors ORDER BY exp(reading)" \
+  ex_with_id "SELECT id, exp(id) FROM sensors ORDER BY exp(id)" \
+  ex_where "SELECT exp(id) FROM sensors WHERE id = -1" \
+  ex_limit_zero "SELECT exp(id) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -779,7 +796,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   sq_id "SELECT sqrt(id) FROM days ORDER BY ts" \
   pw_id "SELECT power(id, 2) FROM days ORDER BY ts" \
   ln_id "SELECT ln(id) FROM days ORDER BY ts" \
-  lg_id "SELECT log(id) FROM days ORDER BY ts"
+  lg_id "SELECT log(id) FROM days ORDER BY ts" \
+  ex_id "SELECT exp(id) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1403,6 +1421,23 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, log(id) FROM sensors ORDER BY log(id)"),
     (os.environ["DIFF_H1"], "SELECT log(id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT log(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT exp(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT exp(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT exp(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT exp(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT exp(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT exp(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT exp(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT exp(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT exp(-0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT exp(1000) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT exp(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT EXP(READING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT exp(id) FROM sensors ORDER BY exp(id)"),
+    (os.environ["DIFF_H1"], "SELECT exp(reading) FROM sensors ORDER BY exp(reading)"),
+    (os.environ["DIFF_H1"], "SELECT id, exp(id) FROM sensors ORDER BY exp(id)"),
+    (os.environ["DIFF_H1"], "SELECT exp(id) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT exp(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1504,6 +1539,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT power(id, 2) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT ln(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT log(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT exp(id) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
