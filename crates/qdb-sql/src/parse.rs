@@ -850,6 +850,7 @@ pub struct AddExpr {
     pub label: String,
     pub value: String,
     pub literal: Scalar,
+    pub sub: bool,
 }
 
 /// `value = other` compares a column with one constant.
@@ -2095,21 +2096,27 @@ impl<'a> Parser<'a> {
         while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
             pos += 1;
         }
-        self.src.get(pos) == Some(&b'+')
+        matches!(self.src.get(pos), Some(b'+' | b'-'))
     }
 
     fn parse_add(&mut self, name: String) -> Result<AddExpr, Error> {
         self.skip();
-        if !self.eat(b'+') {
+        let sub = if self.eat(b'-') {
+            true
+        } else if self.eat(b'+') {
+            false
+        } else {
             return Err(Error::new(
-                "unsupported: expected '+' after column".to_string(),
+                "unsupported: expected '+' or '-' after column".to_string(),
             ));
-        }
+        };
+        let spelling = if sub { "-" } else { "+" };
         let literal = self.parse_literal()?;
         Ok(AddExpr {
-            label: format!("{name} + {}", eq_literal_label(&literal)),
+            label: format!("{name} {spelling} {}", eq_literal_label(&literal)),
             value: name,
             literal,
+            sub,
         })
     }
 
