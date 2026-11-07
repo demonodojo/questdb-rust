@@ -872,7 +872,41 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ni_reading_order "SELECT nullif(reading, 1.5) FROM sensors ORDER BY nullif(reading, 1.5)" \
   ni_text_order "SELECT nullif(note, 'alpha') FROM sensors ORDER BY nullif(note, 'alpha')" \
   ni_where "SELECT nullif(note, 'alpha') FROM sensors WHERE id = 1" \
-  ni_limit_zero "SELECT nullif(id, 1) FROM sensors LIMIT 0"
+  ni_limit_zero "SELECT nullif(id, 1) FROM sensors LIMIT 0" \
+  cs_id_int "SELECT cast(id AS INT) FROM sensors" \
+  cs_id_double "SELECT cast(id AS DOUBLE) FROM sensors" \
+  cs_id_short "SELECT cast(id AS SHORT) FROM sensors" \
+  cs_id_byte "SELECT cast(id AS BYTE) FROM sensors" \
+  cs_id_bool "SELECT cast(id AS BOOLEAN) FROM sensors" \
+  cs_id_string "SELECT cast(id AS STRING) FROM sensors" \
+  cs_id_timestamp "SELECT cast(id AS TIMESTAMP) FROM sensors" \
+  cs_id_date "SELECT cast(id AS DATE) FROM sensors" \
+  cs_id_char "SELECT cast(id AS CHAR) FROM sensors" \
+  cs_flags_long "SELECT cast(flags AS LONG) FROM sensors" \
+  cs_flags_bool "SELECT cast(flags AS BOOLEAN) FROM sensors" \
+  cs_reading_long "SELECT cast(reading AS LONG) FROM sensors" \
+  cs_reading_int "SELECT cast(reading AS INT) FROM sensors" \
+  cs_reading_float "SELECT cast(reading AS FLOAT) FROM sensors" \
+  cs_reading_string "SELECT cast(reading AS STRING) FROM sensors" \
+  cs_score_double "SELECT cast(score AS DOUBLE) FROM sensors" \
+  cs_score_string "SELECT cast(score AS STRING) FROM sensors" \
+  cs_code_int "SELECT cast(code AS INT) FROM sensors" \
+  cs_byte_int "SELECT cast(b AS INT) FROM sensors" \
+  cs_ok_int "SELECT cast(ok AS INT) FROM sensors" \
+  cs_ok_string "SELECT cast(ok AS STRING) FROM sensors" \
+  cs_char_string "SELECT cast(ch AS STRING) FROM sensors" \
+  cs_note_varchar "SELECT cast(note AS VARCHAR) FROM sensors" \
+  cs_note_symbol "SELECT cast(note AS SYMBOL) FROM sensors" \
+  cs_note_long "SELECT cast(note AS LONG) FROM sensors" \
+  cs_location_string "SELECT cast(location AS STRING) FROM sensors" \
+  cs_ts_string "SELECT cast(ts AS STRING) FROM sensors" \
+  cs_ts_long "SELECT cast(ts AS LONG) FROM sensors" \
+  cs_ts_date "SELECT cast(ts AS DATE) FROM sensors" \
+  cs_case "SELECT CAST(ID AS INT) FROM sensors" \
+  cs_lower "SELECT cast(id as int) FROM sensors" \
+  cs_order "SELECT cast(id AS INT) FROM sensors ORDER BY cast(id AS INT)" \
+  cs_where "SELECT cast(id AS INT) FROM sensors WHERE id = 1" \
+  cs_limit_zero "SELECT cast(id AS INT) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -986,7 +1020,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ca_note "SELECT coalesce(note, 'x') FROM days ORDER BY ts" \
   ca_id "SELECT coalesce(id, 0) FROM days ORDER BY ts" \
   ni_note "SELECT nullif(note, 'x') FROM days ORDER BY ts" \
-  ni_id "SELECT nullif(id, 2) FROM days ORDER BY ts"
+  ni_id "SELECT nullif(id, 2) FROM days ORDER BY ts" \
+  cs_id_int "SELECT cast(id AS INT) FROM days ORDER BY ts" \
+  cs_note "SELECT cast(note AS STRING) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1806,6 +1842,40 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT nullif(note, 'alpha') FROM sensors ORDER BY nullif(note, 'alpha')"),
     (os.environ["DIFF_H1"], "SELECT nullif(note, 'alpha') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT nullif(id, 1) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS INT) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS DOUBLE) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS SHORT) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS BYTE) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS BOOLEAN) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS STRING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS TIMESTAMP) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS DATE) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS CHAR) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(flags AS LONG) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(flags AS BOOLEAN) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(reading AS LONG) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(reading AS INT) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(reading AS FLOAT) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(reading AS STRING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(score AS DOUBLE) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(score AS STRING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(code AS INT) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(b AS INT) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(ok AS INT) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(ok AS STRING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(ch AS STRING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(note AS VARCHAR) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(note AS SYMBOL) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(note AS LONG) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(location AS STRING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(ts AS STRING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(ts AS LONG) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(ts AS DATE) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT CAST(ID AS INT) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(id as int) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS INT) FROM sensors ORDER BY cast(id AS INT)"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS INT) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT cast(id AS INT) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1918,6 +1988,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT coalesce(id, 0) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT nullif(note, 'x') FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT nullif(id, 2) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT cast(id AS INT) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT cast(note AS STRING) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

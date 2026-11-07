@@ -103,6 +103,7 @@ pub enum Proj {
     RoundHalfEven(RoundHalfEvenExpr),
     Coalesce(CoalesceExpr),
     NullIf(NullIfExpr),
+    Cast(CastExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -263,6 +264,14 @@ pub struct CoalesceExpr {
 pub struct NullIfExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
+}
+
+/// `cast(column AS type)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CastExpr {
+    pub label: String,
+    pub column: String,
+    pub type_name: String,
 }
 
 /// `floor(number)`.
@@ -433,6 +442,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_coalesce()?.label
             } else if parser.starts_nullif_call() {
                 parser.parse_nullif()?.label
+            } else if parser.starts_cast_call() {
+                parser.parse_cast()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -530,6 +541,7 @@ enum SelectPiece {
     RoundHalfEven(RoundHalfEvenExpr),
     Coalesce(CoalesceExpr),
     NullIf(NullIfExpr),
+    Cast(CastExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -673,6 +685,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Coalesce(self.parse_coalesce()?));
             } else if self.starts_nullif_call() {
                 pieces.push(SelectPiece::NullIf(self.parse_nullif()?));
+            } else if self.starts_cast_call() {
+                pieces.push(SelectPiece::Cast(self.parse_cast()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -733,6 +747,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::RoundHalfEven(_)
                     | SelectPiece::Coalesce(_)
                     | SelectPiece::NullIf(_)
+                    | SelectPiece::Cast(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -779,6 +794,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::RoundHalfEven(expr) => items.push(Proj::RoundHalfEven(expr)),
                     SelectPiece::Coalesce(expr) => items.push(Proj::Coalesce(expr)),
                     SelectPiece::NullIf(expr) => items.push(Proj::NullIf(expr)),
+                    SelectPiece::Cast(expr) => items.push(Proj::Cast(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -849,6 +865,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::RoundHalfEven(_)
                 | SelectPiece::Coalesce(_)
                 | SelectPiece::NullIf(_)
+                | SelectPiece::Cast(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1097,6 +1114,47 @@ impl<'a> Parser<'a> {
         Ok(FloorExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
+        })
+    }
+
+    fn starts_cast_call(&self) -> bool {
+        self.starts_named_call("cast")
+    }
+
+    fn parse_cast(&mut self) -> Result<CastExpr, Error> {
+        let _name = self.ident_spelling()?;
+        self.skip();
+        if !self.eat(b'(') {
+            return Err(Error::new(
+                "unsupported: expected '(' after cast".to_string(),
+            ));
+        }
+        self.skip();
+        if self.peek() == Some(b')') {
+            return Err(Error::new("'as' missing".to_string()));
+        }
+        let column = self.ident_spelling()?;
+        self.skip();
+        if self.peek() == Some(b')') {
+            return Err(Error::new("'as' missing".to_string()));
+        }
+        let keyword = self.ident_spelling()?;
+        if !keyword.eq_ignore_ascii_case("as") {
+            return Err(Error::new("dangling literal".to_string()));
+        }
+        self.skip();
+        if self.peek() == Some(b')') || !self.starts_value() {
+            return Err(Error::new("unsupported cast".to_string()));
+        }
+        let type_name = self.ident_spelling()?;
+        self.skip();
+        if !self.eat(b')') {
+            return Err(Error::new("unsupported cast".to_string()));
+        }
+        Ok(CastExpr {
+            label: format!("{column}::{type_name}"),
+            column,
+            type_name,
         })
     }
 

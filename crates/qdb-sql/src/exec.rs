@@ -1,6 +1,6 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
-    CeilExpr, CmpOp, CoalesceExpr, ConcatArg, ExpExpr, Filter, FloorExpr, GreatestExpr,
+    CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, ExpExpr, Filter, FloorExpr, GreatestExpr,
     GroupedSelect, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, NullIfExpr, PadExpr, PiExpr,
     PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
     RoundHalfEvenExpr, RoundUpExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr,
@@ -202,6 +202,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::RoundHalfEven { label, .. }
             | ResolvedProj::Coalesce { label, .. }
             | ResolvedProj::NullIf { label, .. }
+            | ResolvedProj::Cast { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -347,6 +348,11 @@ enum ResolvedProj {
         args: Vec<NullIfArg>,
         result_tag: i32,
     },
+    Cast {
+        label: String,
+        index: usize,
+        type_tag: i32,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -486,6 +492,7 @@ impl ResolvedProj {
             | Self::RoundHalfEven { label, .. }
             | Self::Coalesce { label, .. }
             | Self::NullIf { label, .. }
+            | Self::Cast { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -510,6 +517,7 @@ impl ResolvedProj {
             | Self::RoundUp { .. }
             | Self::RoundHalfEven { .. } => qdb_types::TAG_DOUBLE,
             Self::Coalesce { result_tag, .. } | Self::NullIf { result_tag, .. } => *result_tag,
+            Self::Cast { type_tag, .. } => *type_tag,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -580,6 +588,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::RoundHalfEven(expr) => resolve_round_half_even(table, expr),
         Proj::Coalesce(expr) => resolve_coalesce(table, expr),
         Proj::NullIf(expr) => resolve_nullif(table, expr),
+        Proj::Cast(expr) => resolve_cast(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1227,6 +1236,167 @@ fn floor_input(table: &Table, arg: &ConcatArg) -> Result<(FloorInput, bool), ()>
             }
         }
         ConcatArg::Literal(_) => Err(()),
+    }
+}
+
+fn resolve_cast(table: &Table, expr: &CastExpr) -> Result<ResolvedProj, Error> {
+    let Some(index) = table.column_index(&expr.column) else {
+        return Err(Error::new(format!("Invalid column: {}", expr.column)));
+    };
+    let Some(type_tag) = cast_type_tag(&expr.type_name) else {
+        return Err(Error::new("unsupported cast".to_string()));
+    };
+    Ok(ResolvedProj::Cast {
+        label: expr.label.clone(),
+        index,
+        type_tag,
+    })
+}
+
+fn cast_type_tag(name: &str) -> Option<i32> {
+    Some(match name.to_ascii_lowercase().as_str() {
+        "boolean" => qdb_types::TAG_BOOLEAN,
+        "byte" => qdb_types::TAG_BYTE,
+        "short" => qdb_types::TAG_SHORT,
+        "char" => qdb_types::TAG_CHAR,
+        "int" => qdb_types::TAG_INT,
+        "long" => qdb_types::TAG_LONG,
+        "float" => qdb_types::TAG_FLOAT,
+        "double" => qdb_types::TAG_DOUBLE,
+        "string" => qdb_types::TAG_STRING,
+        "symbol" => qdb_types::TAG_SYMBOL,
+        "varchar" => qdb_types::TAG_VARCHAR,
+        "date" => qdb_types::TAG_DATE,
+        "timestamp" => qdb_types::TAG_TIMESTAMP,
+        _ => return None,
+    })
+}
+
+fn cast_scalar(value: &Scalar, tag: i32) -> Scalar {
+    match tag {
+        qdb_types::TAG_BOOLEAN => {
+            Scalar::Boolean(cast_i64(value).is_some_and(|number| number != 0))
+        }
+        qdb_types::TAG_BYTE => Scalar::Byte(cast_i64(value).unwrap_or(0) as i8),
+        qdb_types::TAG_SHORT => Scalar::Short(cast_i64(value).unwrap_or(0) as i16),
+        qdb_types::TAG_CHAR => Scalar::Char(cast_i64(value).unwrap_or(0) as u16),
+        qdb_types::TAG_INT => match cast_i64(value).map(|number| number as i32) {
+            Some(number) if number != i32::MIN => Scalar::Int(number),
+            _ => Scalar::Null,
+        },
+        qdb_types::TAG_LONG => match cast_i64(value) {
+            Some(number) if number != i64::MIN => Scalar::Long(number),
+            _ => Scalar::Null,
+        },
+        qdb_types::TAG_FLOAT => match cast_f64(value) {
+            Some(number) => Scalar::Float(number as f32),
+            None => Scalar::Null,
+        },
+        qdb_types::TAG_DOUBLE => match cast_f64(value) {
+            Some(number) => Scalar::Double(number),
+            None => Scalar::Null,
+        },
+        qdb_types::TAG_DATE => match cast_millis(value) {
+            Some(number) if number != i64::MIN => Scalar::Date(number),
+            _ => Scalar::Null,
+        },
+        qdb_types::TAG_TIMESTAMP => match cast_micros(value) {
+            Some(number) if number != i64::MIN => Scalar::Timestamp(number),
+            _ => Scalar::Null,
+        },
+        qdb_types::TAG_STRING | qdb_types::TAG_SYMBOL | qdb_types::TAG_VARCHAR => cast_text(value),
+        _ => Scalar::Null,
+    }
+}
+
+fn cast_i64(value: &Scalar) -> Option<i64> {
+    match value {
+        Scalar::Null => None,
+        Scalar::Boolean(true) => Some(1),
+        Scalar::Boolean(false) => Some(0),
+        Scalar::Byte(number) => Some(i64::from(*number)),
+        Scalar::Short(number) => Some(i64::from(*number)),
+        Scalar::Char(number) => Some(i64::from(*number)),
+        Scalar::Int(number) => Some(i64::from(*number)),
+        Scalar::Long(number) => Some(*number),
+        Scalar::Float(number) => cast_finite_i64(f64::from(*number)),
+        Scalar::Double(number) => cast_finite_i64(*number),
+        Scalar::Date(number) | Scalar::Timestamp(number) => Some(*number),
+        Scalar::Text(text) => text.parse::<i64>().ok(),
+    }
+}
+
+fn cast_finite_i64(number: f64) -> Option<i64> {
+    if number.is_finite() {
+        Some(number as i64)
+    } else {
+        None
+    }
+}
+
+fn cast_f64(value: &Scalar) -> Option<f64> {
+    match value {
+        Scalar::Null => None,
+        Scalar::Boolean(true) => Some(1.0),
+        Scalar::Boolean(false) => Some(0.0),
+        Scalar::Byte(number) => Some(f64::from(*number)),
+        Scalar::Short(number) => Some(f64::from(*number)),
+        Scalar::Char(number) => Some(f64::from(*number)),
+        Scalar::Int(number) => Some(f64::from(*number)),
+        Scalar::Long(number) => Some(*number as f64),
+        Scalar::Float(number) => Some(f64::from(*number)),
+        Scalar::Double(number) => Some(*number),
+        Scalar::Date(number) | Scalar::Timestamp(number) => Some(*number as f64),
+        Scalar::Text(text) => text.parse::<f64>().ok().filter(|number| number.is_finite()),
+    }
+}
+
+fn cast_millis(value: &Scalar) -> Option<i64> {
+    match value {
+        Scalar::Timestamp(number) => Some(number / 1_000),
+        Scalar::Date(number) => Some(*number),
+        _ => cast_i64(value),
+    }
+}
+
+fn cast_micros(value: &Scalar) -> Option<i64> {
+    match value {
+        Scalar::Timestamp(number) => Some(*number),
+        Scalar::Date(number) => number.checked_mul(1_000),
+        _ => cast_i64(value),
+    }
+}
+
+fn cast_text(value: &Scalar) -> Scalar {
+    match value {
+        Scalar::Null | Scalar::Char(0) => Scalar::Null,
+        Scalar::Char(unit) => char::from_u32(u32::from(*unit))
+            .map(|ch| Scalar::Text(ch.to_string()))
+            .unwrap_or(Scalar::Null),
+        Scalar::Boolean(flag) => Scalar::Text(if *flag { "true" } else { "false" }.to_string()),
+        Scalar::Byte(number) => Scalar::Text(number.to_string()),
+        Scalar::Short(number) => Scalar::Text(number.to_string()),
+        Scalar::Int(number) => Scalar::Text(number.to_string()),
+        Scalar::Long(number) => Scalar::Text(number.to_string()),
+        Scalar::Float(number) => {
+            let text = qdb_types::format_f32(*number);
+            if text == "NULL" {
+                Scalar::Null
+            } else {
+                Scalar::Text(text)
+            }
+        }
+        Scalar::Double(number) => {
+            let text = qdb_types::format_f64(*number);
+            if text == "NULL" {
+                Scalar::Null
+            } else {
+                Scalar::Text(text)
+            }
+        }
+        Scalar::Date(number) => Scalar::Text(qdb_types::format_date_millis(*number)),
+        Scalar::Timestamp(number) => Scalar::Text(qdb_types::format_timestamp_micros(*number)),
+        Scalar::Text(text) => Scalar::Text(text.clone()),
     }
 }
 
@@ -2686,6 +2856,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::NullIf {
             args, result_tag, ..
         } => nullif_value(table, row, args, *result_tag),
+        ResolvedProj::Cast {
+            index, type_tag, ..
+        } => cast_scalar(&table.columns[*index][row], *type_tag),
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
         ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
             Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
@@ -11031,6 +11204,213 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT nullif(missing, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn cast_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT cast(id AS INT) FROM sensors",
+                "expected/cs_id_int.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id AS DOUBLE) FROM sensors",
+                "expected/cs_id_double.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id AS SHORT) FROM sensors",
+                "expected/cs_id_short.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id AS BYTE) FROM sensors",
+                "expected/cs_id_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id AS BOOLEAN) FROM sensors",
+                "expected/cs_id_bool.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id AS STRING) FROM sensors",
+                "expected/cs_id_string.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id AS TIMESTAMP) FROM sensors",
+                "expected/cs_id_timestamp.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id AS DATE) FROM sensors",
+                "expected/cs_id_date.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id AS CHAR) FROM sensors",
+                "expected/cs_id_char.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(flags AS LONG) FROM sensors",
+                "expected/cs_flags_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(flags AS BOOLEAN) FROM sensors",
+                "expected/cs_flags_bool.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(reading AS LONG) FROM sensors",
+                "expected/cs_reading_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(reading AS INT) FROM sensors",
+                "expected/cs_reading_int.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(reading AS FLOAT) FROM sensors",
+                "expected/cs_reading_float.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(reading AS STRING) FROM sensors",
+                "expected/cs_reading_string.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(score AS DOUBLE) FROM sensors",
+                "expected/cs_score_double.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(score AS STRING) FROM sensors",
+                "expected/cs_score_string.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(code AS INT) FROM sensors",
+                "expected/cs_code_int.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(b AS INT) FROM sensors",
+                "expected/cs_byte_int.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(ok AS INT) FROM sensors",
+                "expected/cs_ok_int.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(ok AS STRING) FROM sensors",
+                "expected/cs_ok_string.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(ch AS STRING) FROM sensors",
+                "expected/cs_char_string.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(note AS VARCHAR) FROM sensors",
+                "expected/cs_note_varchar.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(note AS SYMBOL) FROM sensors",
+                "expected/cs_note_symbol.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(note AS LONG) FROM sensors",
+                "expected/cs_note_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(location AS STRING) FROM sensors",
+                "expected/cs_location_string.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(ts AS STRING) FROM sensors",
+                "expected/cs_ts_string.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(ts AS LONG) FROM sensors",
+                "expected/cs_ts_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(ts AS DATE) FROM sensors",
+                "expected/cs_ts_date.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT CAST(ID AS INT) FROM sensors",
+                "expected/cs_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id as int) FROM sensors",
+                "expected/cs_lower.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id AS INT) FROM sensors ORDER BY cast(id AS INT)",
+                "expected/cs_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id AS INT) FROM sensors WHERE id = 1",
+                "expected/cs_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cast(id AS INT) FROM sensors LIMIT 0",
+                "expected/cs_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT cast(id AS INT) FROM days ORDER BY ts",
+                "expected/cs_id_int.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT cast(note AS STRING) FROM days ORDER BY ts",
+                "expected/cs_note.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT cast() FROM sensors").unwrap_err();
+        assert!(err.message.contains("'as' missing"), "{}", err.message);
+        let err = execute(&sensors, "SELECT cast(id) FROM sensors").unwrap_err();
+        assert!(err.message.contains("'as' missing"), "{}", err.message);
+        let err = execute(&sensors, "SELECT cast(id INT) FROM sensors").unwrap_err();
+        assert!(err.message.contains("dangling literal"), "{}", err.message);
+        let err = execute(&sensors, "SELECT cast(id AS GEOHASH) FROM sensors").unwrap_err();
+        assert!(err.message.contains("unsupported cast"), "{}", err.message);
+        let err = execute(&sensors, "SELECT cast(missing AS INT) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
