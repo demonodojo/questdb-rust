@@ -7328,6 +7328,11 @@ enum Accumulator {
         notional: f64,
         volume: f64,
     },
+    WeightedAvg {
+        notional: f64,
+        volume: f64,
+        started: bool,
+    },
     Twap {
         samples: Vec<(i64, f64)>,
     },
@@ -7499,6 +7504,11 @@ impl Accumulator {
                 notional: 0.0,
                 volume: 0.0,
             },
+            AggFunc::WeightedAvg => Self::WeightedAvg {
+                notional: 0.0,
+                volume: 0.0,
+                started: false,
+            },
             AggFunc::Twap => Self::Twap {
                 samples: Vec::new(),
             },
@@ -7618,6 +7628,16 @@ impl Accumulator {
                     } else {
                         Scalar::Null
                     }
+                } else {
+                    Scalar::Null
+                }
+            }
+            Self::WeightedAvg {
+                notional, volume, ..
+            } => {
+                let result = *notional / *volume;
+                if result.is_finite() {
+                    Scalar::Double(result)
                 } else {
                     Scalar::Null
                 }
@@ -7884,6 +7904,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             | AggFunc::RegrIntercept
             | AggFunc::RegrR2
             | AggFunc::Vwap
+            | AggFunc::WeightedAvg
     ) {
         covar_pair(table, tag, aggregate)?
     } else if aggregate.func == AggFunc::Twap {
@@ -7976,6 +7997,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::NSum
         | AggFunc::CovarPop
         | AggFunc::Vwap
+        | AggFunc::WeightedAvg
         | AggFunc::Twap
         | AggFunc::CovarSamp
         | AggFunc::Corr
@@ -8075,6 +8097,7 @@ fn contribution(
         | AggFunc::ArgMax
         | AggFunc::ArgMin
         | AggFunc::Vwap
+        | AggFunc::WeightedAvg
         | AggFunc::Twap => Ok(None),
     }
 }
@@ -8158,6 +8181,18 @@ fn feed(
         if let (Some(price), Some(weight)) = (price, weight) {
             update_vwap(accumulator, price, weight);
         }
+        return Ok(());
+    }
+    if input.func == AggFunc::WeightedAvg {
+        let price_index = input
+            .index
+            .ok_or_else(|| Error::new("internal: weighted_avg column"))?;
+        let weight_index = input
+            .pair_index
+            .ok_or_else(|| Error::new("internal: weighted_avg weight"))?;
+        let price = weighted_avg_value(&columns[price_index][row], input.tag)?;
+        let weight = weighted_avg_value(&columns[weight_index][row], input.pair_tag)?;
+        update_weighted_avg(accumulator, price, weight);
         return Ok(());
     }
     if input.func == AggFunc::Twap {
@@ -8437,6 +8472,43 @@ fn twap_scalar(samples: &[(i64, f64)]) -> Scalar {
         Scalar::Double(result)
     } else {
         Scalar::Null
+    }
+}
+
+fn weighted_avg_value(value: &Scalar, tag: i32) -> Result<Option<f64>, Error> {
+    if tag == qdb_types::TAG_CHAR && matches!(value, Scalar::Char(0)) {
+        return Err(Error::new("inconvertible value: \0 [CHAR -> DOUBLE]"));
+    }
+    covar_value(value, tag)
+}
+
+fn update_weighted_avg(accumulator: &mut Accumulator, price: Option<f64>, weight: Option<f64>) {
+    let Accumulator::WeightedAvg {
+        notional,
+        volume,
+        started,
+    } = accumulator
+    else {
+        return;
+    };
+    let product = match (price, weight) {
+        (Some(price), Some(weight)) if price.is_finite() && weight.is_finite() && weight != 0.0 => {
+            Some((price * weight, weight))
+        }
+        _ => None,
+    };
+    if !*started {
+        *started = true;
+        if let Some((product, weight)) = product {
+            *notional = product;
+            *volume = weight;
+        } else {
+            *notional = 0.0;
+            *volume = 0.0;
+        }
+    } else if let Some((product, weight)) = product {
+        *notional += product;
+        *volume += weight;
     }
 }
 
@@ -9892,6 +9964,7 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
         Accumulator::Covar { .. }
         | Accumulator::Corr { .. }
         | Accumulator::Vwap { .. }
+        | Accumulator::WeightedAvg { .. }
         | Accumulator::Twap { .. } => {}
         Accumulator::BoolAnd { value, count } => {
             let Scalar::Boolean(bit) = next else {
@@ -25001,6 +25074,228 @@ mod tests {
         )
         .unwrap();
         assert_eq!(render_tsv(&result), "sparkline(flags, 0, 42, 0)\nNULL\n");
+    }
+
+    #[test]
+    fn weighted_avg_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT weighted_avg(reading, flags) FROM sensors",
+                "expected/wa_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(reading, flags) FROM sensors WHERE id = 1",
+                "expected/wa_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(reading, flags) FROM sensors WHERE id > 100",
+                "expected/wa_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(reading, flags) FROM sensors WHERE id = -1",
+                "expected/wa_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(score, flags) FROM sensors",
+                "expected/wa_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(id, flags) FROM sensors",
+                "expected/wa_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(b, flags) FROM sensors",
+                "expected/wa_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(code, flags) FROM sensors",
+                "expected/wa_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(flags, reading) FROM sensors",
+                "expected/wa_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(reading, b) FROM sensors",
+                "expected/wa_read_b.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(flags, b) FROM sensors",
+                "expected/wa_flags_b.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(score, b) FROM sensors",
+                "expected/wa_score_b.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(reading, id) FROM sensors",
+                "expected/wa_cancel.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(reading, flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/wa_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(reading, flags) FROM sensors LIMIT 0",
+                "expected/wa_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT WEIGHTED_AVG(reading, flags) FROM sensors",
+                "expected/wa_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(reading, flags) FROM sensors WHERE flags > 0",
+                "expected/wa_pos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_avg(reading, flags) FROM sensors WHERE flags = 0",
+                "expected/wa_zero.tsv",
+            ),
+            (
+                &days,
+                "SELECT weighted_avg(id, id) FROM days",
+                "expected/wa_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT weighted_avg(id, id) FROM days GROUP BY location ORDER BY location",
+                "expected/wa_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT weighted_avg() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `weighted_avg` requires arguments: weighted_avg(DOUBLE, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_avg(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `weighted_avg`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_avg(reading, flags, id) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `weighted_avg`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_avg(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT weighted_avg(missing, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_avg(reading, missing) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_avg(ok, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_avg(reading, location) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: SYMBOL"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_avg(note, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_avg(ch, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_avg(tag, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_avg(ch, flags) FROM sensors WHERE id = 2",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: \0 [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_avg(reading, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("unsupported: weighted_avg expects a column"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

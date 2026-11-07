@@ -2080,7 +2080,25 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sl_read_w "SELECT sparkline(reading, 0, 1.5, 2) FROM sensors" \
   sl_full "SELECT sparkline(flags, 0, 42, 10) FROM sensors" \
   sl_auto "SELECT sparkline(flags, null, null, 3) FROM sensors" \
-  sl_neg "SELECT sparkline(flags) FROM sensors WHERE id = -1"
+  sl_neg "SELECT sparkline(flags) FROM sensors WHERE id = -1" \
+  wa_read "SELECT weighted_avg(reading, flags) FROM sensors" \
+  wa_one "SELECT weighted_avg(reading, flags) FROM sensors WHERE id = 1" \
+  wa_none "SELECT weighted_avg(reading, flags) FROM sensors WHERE id > 100" \
+  wa_neg "SELECT weighted_avg(reading, flags) FROM sensors WHERE id = -1" \
+  wa_score "SELECT weighted_avg(score, flags) FROM sensors" \
+  wa_id "SELECT weighted_avg(id, flags) FROM sensors" \
+  wa_byte "SELECT weighted_avg(b, flags) FROM sensors" \
+  wa_code "SELECT weighted_avg(code, flags) FROM sensors" \
+  wa_flags "SELECT weighted_avg(flags, reading) FROM sensors" \
+  wa_read_b "SELECT weighted_avg(reading, b) FROM sensors" \
+  wa_flags_b "SELECT weighted_avg(flags, b) FROM sensors" \
+  wa_score_b "SELECT weighted_avg(score, b) FROM sensors" \
+  wa_cancel "SELECT weighted_avg(reading, id) FROM sensors" \
+  wa_grp "SELECT weighted_avg(reading, flags) FROM sensors GROUP BY location ORDER BY location" \
+  wa_lim0 "SELECT weighted_avg(reading, flags) FROM sensors LIMIT 0" \
+  wa_case "SELECT WEIGHTED_AVG(reading, flags) FROM sensors" \
+  wa_pos "SELECT weighted_avg(reading, flags) FROM sensors WHERE flags > 0" \
+  wa_zero "SELECT weighted_avg(reading, flags) FROM sensors WHERE flags = 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2314,7 +2332,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   tw_days "SELECT twap(id, ts) FROM days" \
   tw_days_grp "SELECT twap(id, ts) FROM days GROUP BY location ORDER BY location" \
   sl_days "SELECT sparkline(id) FROM days" \
-  sl_days_grp "SELECT sparkline(id) FROM days GROUP BY location ORDER BY location"
+  sl_days_grp "SELECT sparkline(id) FROM days GROUP BY location ORDER BY location" \
+  wa_days "SELECT weighted_avg(id, id) FROM days" \
+  wa_days_grp "SELECT weighted_avg(id, id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4342,6 +4362,24 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT sparkline(flags, 0, 42, 10) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT sparkline(flags, null, null, 3) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT sparkline(flags) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(reading, flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(reading, flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(reading, flags) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(score, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(b, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(code, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(flags, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(reading, b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(flags, b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(score, b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(reading, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(reading, flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(reading, flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT WEIGHTED_AVG(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(reading, flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT weighted_avg(reading, flags) FROM sensors WHERE flags = 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4574,6 +4612,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT twap(id, ts) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT sparkline(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT sparkline(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT weighted_avg(id, id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT weighted_avg(id, id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

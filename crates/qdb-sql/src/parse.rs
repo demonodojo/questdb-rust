@@ -61,6 +61,7 @@ pub enum AggFunc {
     CovarPop,
     Vwap,
     Twap,
+    WeightedAvg,
     CovarSamp,
     Corr,
     RegrSlope,
@@ -3158,6 +3159,7 @@ impl<'a> Parser<'a> {
                 | "covar_pop"
                 | "vwap"
                 | "twap"
+                | "weighted_avg"
                 | "covar_samp"
                 | "corr"
                 | "regr_slope"
@@ -3230,6 +3232,7 @@ impl<'a> Parser<'a> {
             "covar_pop" => AggFunc::CovarPop,
             "vwap" => AggFunc::Vwap,
             "twap" => AggFunc::Twap,
+            "weighted_avg" => AggFunc::WeightedAvg,
             "covar_samp" => AggFunc::CovarSamp,
             "corr" => AggFunc::Corr,
             "regr_slope" => AggFunc::RegrSlope,
@@ -3536,6 +3539,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::RegrR2
                 | AggFunc::Vwap
                 | AggFunc::Twap
+                | AggFunc::WeightedAvg
         ) && self.peek() == Some(b',')
         {
             self.pos += 1;
@@ -3548,6 +3552,8 @@ impl<'a> Parser<'a> {
                     "unsupported: vwap expects a column"
                 } else if func == AggFunc::Twap {
                     "unsupported: twap expects a column"
+                } else if func == AggFunc::WeightedAvg {
+                    "unsupported: weighted_avg expects a column"
                 } else {
                     "unsupported: covariance expects a column"
                 };
@@ -3720,6 +3726,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::RegrIntercept
                 | AggFunc::RegrR2
                 | AggFunc::Vwap
+                | AggFunc::WeightedAvg
         ) && column.is_none()
         {
             let fname = name.to_ascii_lowercase();
@@ -3737,6 +3744,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::RegrR2
                 | AggFunc::Vwap
                 | AggFunc::Twap
+                | AggFunc::WeightedAvg
         ) && pair.is_none()
         {
             return Err(Error::new(format!(

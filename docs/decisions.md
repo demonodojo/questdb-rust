@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — weighted_avg()
+
+`weighted_avg(value, weight)` devuelve la media ponderada como `DOUBLE` y suma cualquier peso finito distinto de cero. `weighted_avg(reading, flags)` es `0.28846153846153844`. Una fila con `id = 1` es `1.5`. Sin filas el resultado es NULL. Un único `-0.0` se conserva. Si los pesos suman cero, el resultado es NULL. `weighted_avg(day, flags)`, `weighted_avg(ts, flags)` y `weighted_avg(reading, code)` salen en notación científica con `E` mayúscula y quedan fuera del TSV capturado. `weighted_avg(reading, 1)` es `0.5` en 10.1.0; este paso solo acepta una columna como peso. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — sparkline()
 
 `sparkline(col)` dibuja la serie numérica como `VARCHAR` con los bloques `▁▂▃▄▅▆▇█`. Los nulos se omiten y un solo valor finito es `█`. `sparkline(flags)` es `▂▁█`. Una fila con `id = 1` es `█`. Sin filas el resultado es NULL. `sparkline(value, min, max, width)` acepta constantes: un ancho menor que el número de valores promedia cubos, y un ancho mayor o igual pinta cada valor. `min` o `max` nulos se calculan con los datos. Un ancho nulo o menor que 1 se rechaza cuando hay valores. El tope de bytes del resultado no entra en este paso. Se contrastó con `/exec` en `sensors` y `days`.
