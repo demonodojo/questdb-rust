@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — resta de dos columnas
+
+`value - other` también resta dos columnas. Un nulo hace nulo el resultado. El tipo se conserva si las dos columnas lo comparten. `LONG` con `INT` ensancha a `LONG`. `-0.0 - -0.0` es `0.0`. `id - id` es `0`, `0`, NULL y `0`. En `days` es `0`, `0`, `0` y NULL. `reading - reading` es `0.0`, NULL, `0.0` y `0.0`. `flags - flags` es `0`, NULL, `0` y `0`. `id - flags` es `-9`, NULL, NULL y `-43`. `flags - id` es `9`, NULL, NULL y `43`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — suma de dos columnas
 
 `value + other` también suma dos columnas. Un nulo hace nulo el resultado. El tipo se conserva si las dos columnas lo comparten. `LONG` con `INT` ensancha a `LONG`. `-0.0 + -0.0` es `-0.0`. `id + id` es `2`, `4`, NULL y `-2`. En `days` es `2`, `4`, `6` y NULL. `reading + reading` es `3.0`, NULL, `0.0` y `-0.0`. `flags + flags` es `20`, NULL, `0` y `84`. `id + flags` es `11`, NULL, NULL y `41`. Una columna que no existe se rechaza. Se contrastó con `/exec` en `sensors` y `days`.

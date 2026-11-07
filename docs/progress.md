@@ -24,15 +24,15 @@ Tests que pasaron:
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
 | qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
-| qdb-sql | 165 ok, incluido `cc_matches_captured_exec` |
+| qdb-sql | 166 ok, incluido `ms_matches_captured_exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
-captured-oracle: 2455 queries match tests/fixtures/h1/expected
-captured-oracle: 298 queries match tests/fixtures/h2/expected
-live-reference: 2753 queries matched row counts against http://127.0.0.1:19011/exec
+captured-oracle: 2463 queries match tests/fixtures/h1/expected
+captured-oracle: 299 queries match tests/fixtures/h2/expected
+live-reference: 2762 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
 Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
@@ -51,4 +51,4 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 
 ## Próxima tarea
 
-Añadir `value - other` entre dos columnas y comprobarlo contra `/exec` en `sensors` y `days`. Es un operador de fila. Un nulo hace nulo el resultado. El encabezado es `id - id`. `id - id` devuelve `0`, `0`, NULL y `0`, con tipo `LONG`. Con `id = 1` devuelve `0`. Con `id = -1` devuelve `0`. Sin filas no devuelve ninguna. En `days`, `id - id` devuelve `0`, `0`, `0` y NULL. `reading - reading` devuelve `0.0`, NULL, `0.0` y `0.0`. `flags - flags` devuelve `0`, NULL, `0` y `0`. `id - flags` ensancha a `LONG` y devuelve `-9`, NULL, NULL y `-43`. `flags - id` ensancha a `LONG` y devuelve `9`, NULL, NULL y `43`. No abrir WAL en ese paso.
+Añadir `value * other` entre dos columnas y comprobarlo contra `/exec` en `sensors` y `days`. Es un operador de fila. Un nulo hace nulo el resultado. El encabezado es `id * id`. `id * id` devuelve `1`, `4`, NULL y `1`, con tipo `LONG`. Con `id = 1` devuelve `1`. Con `id = -1` devuelve `1`. Sin filas no devuelve ninguna. En `days`, `id * id` devuelve `1`, `4`, `9` y NULL. `reading * reading` devuelve `2.25`, NULL, `0.0` y `0.0`. `flags * flags` devuelve `100`, NULL, `0` y `1764`. `id * flags` ensancha a `LONG` y devuelve `10`, NULL, NULL y `-42`. `flags * id` ensancha a `LONG` y devuelve `10`, NULL, NULL y `-42`. No abrir WAL en ese paso.
