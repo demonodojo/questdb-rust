@@ -9,7 +9,8 @@ use crate::parse::{
     RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr,
     Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
     StartsWithExpr, StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr,
-    ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
+    WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -265,6 +266,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Degrees { label, .. }
             | ResolvedProj::Radians { label, .. }
             | ResolvedProj::Cot { label, .. }
+            | ResolvedProj::Typeof { label, .. }
             | ResolvedProj::Power { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
@@ -586,6 +588,11 @@ enum ResolvedProj {
         label: String,
         input: SinInput,
     },
+    Typeof {
+        label: String,
+        name: String,
+        result_tag: i32,
+    },
     Power {
         label: String,
         base: SqrtInput,
@@ -753,6 +760,7 @@ impl ResolvedProj {
             | Self::Degrees { label, .. }
             | Self::Radians { label, .. }
             | Self::Cot { label, .. }
+            | Self::Typeof { label, .. }
             | Self::Power { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
@@ -801,7 +809,7 @@ impl ResolvedProj {
                 ExtractPart::Epoch => qdb_types::TAG_LONG,
                 _ => qdb_types::TAG_INT,
             },
-            Self::Sign { result_tag, .. } => *result_tag,
+            Self::Sign { result_tag, .. } | Self::Typeof { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Sin { .. }
             | Self::Cos { .. }
@@ -922,6 +930,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Degrees(expr) => resolve_degrees(table, expr),
         Proj::Radians(expr) => resolve_radians(table, expr),
         Proj::Cot(expr) => resolve_cot(table, expr),
+        Proj::Typeof(expr) => resolve_typeof(table, expr),
         Proj::Power(expr) => resolve_power(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
@@ -1449,6 +1458,56 @@ fn resolve_cot(table: &Table, expr: &CotExpr) -> Result<ResolvedProj, Error> {
         label: expr.label.clone(),
         input: resolve_real_arg(table, "cot", &expr.args)?,
     })
+}
+
+fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new("exactly one argument expected"));
+    }
+    let (name, result_tag) = typeof_binding(table, &expr.args[0])?;
+    Ok(ResolvedProj::Typeof {
+        label: expr.label.clone(),
+        name: name.to_string(),
+        result_tag,
+    })
+}
+
+fn typeof_binding(table: &Table, arg: &ConcatArg) -> Result<(&'static str, i32), Error> {
+    let string = qdb_types::TAG_STRING;
+    match arg {
+        ConcatArg::Column(column) => {
+            let Some(index) = table.column_index(column) else {
+                return Err(Error::new(format!("Invalid column: {column}")));
+            };
+            let tag = table.meta.columns[index].tag;
+            let result_tag = if tag == qdb_types::TAG_VARCHAR {
+                qdb_types::TAG_VARCHAR
+            } else {
+                string
+            };
+            Ok((qdb_types::type_name(tag), result_tag))
+        }
+        ConcatArg::Literal(Scalar::Null) => Ok(("NULL", string)),
+        ConcatArg::Literal(Scalar::Boolean(_)) => Ok(("BOOLEAN", string)),
+        ConcatArg::Literal(Scalar::Byte(_)) => Ok(("BYTE", string)),
+        ConcatArg::Literal(Scalar::Short(_)) => Ok(("SHORT", string)),
+        ConcatArg::Literal(Scalar::Char(_)) => Ok(("CHAR", string)),
+        ConcatArg::Literal(Scalar::Text(text)) if text.chars().count() == 1 => Ok(("CHAR", string)),
+        ConcatArg::Literal(Scalar::Text(_)) => Ok(("STRING", string)),
+        ConcatArg::Literal(Scalar::Int(_)) => Ok(("INT", string)),
+        ConcatArg::Literal(Scalar::Long(number)) => {
+            let name = if *number > i64::from(i32::MIN) && *number <= i64::from(i32::MAX) {
+                "INT"
+            } else {
+                "LONG"
+            };
+            Ok((name, string))
+        }
+        ConcatArg::Literal(Scalar::Float(_)) => Ok(("FLOAT", string)),
+        ConcatArg::Literal(Scalar::Double(_)) => Ok(("DOUBLE", string)),
+        ConcatArg::Literal(Scalar::Date(_)) => Ok(("DATE", string)),
+        ConcatArg::Literal(Scalar::Timestamp(_)) => Ok(("TIMESTAMP", string)),
+    }
 }
 
 fn resolve_atan2(table: &Table, expr: &Atan2Expr) -> Result<ResolvedProj, Error> {
@@ -5673,6 +5732,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Ok(value) => value,
             Err(_) => Scalar::Null,
         },
+        ResolvedProj::Typeof { name, .. } => Scalar::Text(name.clone()),
         ResolvedProj::Sqrt { input, .. } => match sqrt_number(table, row, input) {
             Some(value) => {
                 let result = value.sqrt();
@@ -17322,6 +17382,187 @@ mod tests {
         );
         let result = execute(&sensors, "SELECT cot(note) FROM sensors LIMIT 0").unwrap();
         assert_eq!(result.rows.len(), 0);
+    }
+
+    #[test]
+    fn typeof_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT typeof(1) FROM sensors LIMIT 1",
+                "expected/ty_int.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(2147483647) FROM sensors LIMIT 1",
+                "expected/ty_imax.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(2147483648) FROM sensors LIMIT 1",
+                "expected/ty_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(-2147483648) FROM sensors LIMIT 1",
+                "expected/ty_min.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(-2147483647) FROM sensors LIMIT 1",
+                "expected/ty_imin.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(1.5) FROM sensors LIMIT 1",
+                "expected/ty_dbl.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(null) FROM sensors LIMIT 1",
+                "expected/ty_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof('A') FROM sensors LIMIT 1",
+                "expected/ty_char.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof('ab') FROM sensors LIMIT 1",
+                "expected/ty_str.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof('') FROM sensors LIMIT 1",
+                "expected/ty_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(id) FROM sensors",
+                "expected/ty_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(reading) FROM sensors",
+                "expected/ty_read.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(score) FROM sensors",
+                "expected/ty_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(b) FROM sensors",
+                "expected/ty_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(code) FROM sensors",
+                "expected/ty_short.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(flags) FROM sensors",
+                "expected/ty_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(ts) FROM sensors",
+                "expected/ty_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(day) FROM sensors",
+                "expected/ty_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(ok) FROM sensors",
+                "expected/ty_ok.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(note) FROM sensors",
+                "expected/ty_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(location) FROM sensors",
+                "expected/ty_loc.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(tag) FROM sensors",
+                "expected/ty_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(ch) FROM sensors",
+                "expected/ty_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT TYPEOF(1) FROM sensors LIMIT 1",
+                "expected/ty_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(id) FROM sensors WHERE id = 1",
+                "expected/ty_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(id) FROM sensors ORDER BY typeof(id)",
+                "expected/ty_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(id) FROM sensors LIMIT 0",
+                "expected/ty_lim0.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT typeof(id) FROM days ORDER BY ts",
+                "expected/ty_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT typeof(note) FROM days ORDER BY ts",
+                "expected/ty_days_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT typeof(location) FROM days ORDER BY ts",
+                "expected/ty_days_loc.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT typeof() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("exactly one argument expected"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT typeof(1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("exactly one argument expected"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT typeof(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

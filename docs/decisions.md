@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — typeof()
+
+`typeof(valor)` devuelve el nombre del tipo. El resultado es `STRING`, salvo si el argumento es una columna `VARCHAR`: entonces el resultado es `VARCHAR` y el texto sigue siendo `VARCHAR`. Un literal nulo imprime `NULL`. Un nulo guardado en una columna conserva el tipo de la columna. Un entero que cabe en `INT` es `INT`, excepto `-2147483648`, que es `LONG`, igual que `2147483648`. Un texto de un carácter es `CHAR`; la cadena vacía y un texto más largo son `STRING`. Cero argumentos o más de uno responden `exactly one argument expected`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — cot()
 
 `cot(número)` devuelve `DOUBLE`. Es el recíproco de la tangente; si el resultado no es finito se imprime NULL. `cot(1)` es `0.6420926159343306`. `cot(0)` y `cot(-0.0)` se imprimen NULL. Un nulo sigue NULL. Un texto se convierte como en `sin`. `BOOLEAN` y `SYMBOL` no encajan. `cot(1.5707963267948966)` imprime `6.123233995736766E-17` en 10.1.0 y `6.123233995736766e-17` en Rust, así que esa consulta no se captura. Se contrastó el resto con `/exec` en `sensors` y `days`.

@@ -1458,7 +1458,34 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ct_where "SELECT cot(id) FROM sensors WHERE id = 1" \
   ct_order "SELECT cot(id) FROM sensors ORDER BY cot(id)" \
   ct_lim0 "SELECT cot(id) FROM sensors LIMIT 0" \
-  ct_ch0 "SELECT cot(ch) FROM sensors LIMIT 0"
+  ct_ch0 "SELECT cot(ch) FROM sensors LIMIT 0" \
+  ty_int "SELECT typeof(1) FROM sensors LIMIT 1" \
+  ty_imax "SELECT typeof(2147483647) FROM sensors LIMIT 1" \
+  ty_long "SELECT typeof(2147483648) FROM sensors LIMIT 1" \
+  ty_min "SELECT typeof(-2147483648) FROM sensors LIMIT 1" \
+  ty_imin "SELECT typeof(-2147483647) FROM sensors LIMIT 1" \
+  ty_dbl "SELECT typeof(1.5) FROM sensors LIMIT 1" \
+  ty_null "SELECT typeof(null) FROM sensors LIMIT 1" \
+  ty_char "SELECT typeof('A') FROM sensors LIMIT 1" \
+  ty_str "SELECT typeof('ab') FROM sensors LIMIT 1" \
+  ty_empty "SELECT typeof('') FROM sensors LIMIT 1" \
+  ty_id "SELECT typeof(id) FROM sensors" \
+  ty_read "SELECT typeof(reading) FROM sensors" \
+  ty_score "SELECT typeof(score) FROM sensors" \
+  ty_byte "SELECT typeof(b) FROM sensors" \
+  ty_short "SELECT typeof(code) FROM sensors" \
+  ty_flags "SELECT typeof(flags) FROM sensors" \
+  ty_ts "SELECT typeof(ts) FROM sensors" \
+  ty_day "SELECT typeof(day) FROM sensors" \
+  ty_ok "SELECT typeof(ok) FROM sensors" \
+  ty_note "SELECT typeof(note) FROM sensors" \
+  ty_loc "SELECT typeof(location) FROM sensors" \
+  ty_tag "SELECT typeof(tag) FROM sensors" \
+  ty_ch "SELECT typeof(ch) FROM sensors" \
+  ty_case "SELECT TYPEOF(1) FROM sensors LIMIT 1" \
+  ty_where "SELECT typeof(id) FROM sensors WHERE id = 1" \
+  ty_order "SELECT typeof(id) FROM sensors ORDER BY typeof(id)" \
+  ty_lim0 "SELECT typeof(id) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1614,7 +1641,10 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   dg_days "SELECT degrees(id) FROM days ORDER BY ts" \
   ra_days "SELECT radians(id) FROM days ORDER BY ts" \
   ct_days "SELECT cot(id) FROM days ORDER BY ts" \
-  ct_days_ts "SELECT cot(ts) FROM days ORDER BY ts"
+  ct_days_ts "SELECT cot(ts) FROM days ORDER BY ts" \
+  ty_days "SELECT typeof(id) FROM days ORDER BY ts" \
+  ty_days_note "SELECT typeof(note) FROM days ORDER BY ts" \
+  ty_days_loc "SELECT typeof(location) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3020,6 +3050,33 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT cot(id) FROM sensors ORDER BY cot(id)"),
     (os.environ["DIFF_H1"], "SELECT cot(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT cot(ch) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT typeof(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(2147483647) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(2147483648) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(-2147483648) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(-2147483647) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(1.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof('A') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof('ab') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof('') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(ok) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(tag) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT TYPEOF(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(id) FROM sensors ORDER BY typeof(id)"),
+    (os.environ["DIFF_H1"], "SELECT typeof(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3174,6 +3231,9 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT radians(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT cot(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT cot(ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT typeof(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT typeof(note) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT typeof(location) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
