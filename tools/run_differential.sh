@@ -1924,7 +1924,41 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   pc_grp "SELECT approx_percentile(flags, 0.5) FROM sensors GROUP BY location ORDER BY location" \
   pc_read_grp "SELECT approx_percentile(reading, 0.5) FROM sensors GROUP BY location ORDER BY location" \
   pc_lim0 "SELECT approx_percentile(flags, 0.5) FROM sensors LIMIT 0" \
-  pc_case "SELECT APPROX_PERCENTILE(flags, 0.5) FROM sensors"
+  pc_case "SELECT APPROX_PERCENTILE(flags, 0.5) FROM sensors" \
+  ax_note "SELECT arg_max(note, flags) FROM sensors" \
+  ax_one "SELECT arg_max(note, flags) FROM sensors WHERE id = 1" \
+  ax_none "SELECT arg_max(note, flags) FROM sensors WHERE id > 100" \
+  ax_pos "SELECT arg_max(note, flags) FROM sensors WHERE flags > 0" \
+  ax_loc "SELECT arg_max(location, flags) FROM sensors" \
+  ax_tag "SELECT arg_max(tag, flags) FROM sensors" \
+  ax_ch "SELECT arg_max(ch, flags) FROM sensors" \
+  ax_id "SELECT arg_max(id, flags) FROM sensors" \
+  ax_byte "SELECT arg_max(b, flags) FROM sensors" \
+  ax_code "SELECT arg_max(code, flags) FROM sensors" \
+  ax_score "SELECT arg_max(score, flags) FROM sensors" \
+  ax_read "SELECT arg_max(reading, flags) FROM sensors" \
+  ax_day "SELECT arg_max(day, flags) FROM sensors" \
+  ax_ts "SELECT arg_max(ts, flags) FROM sensors" \
+  ax_flags_id "SELECT arg_max(flags, id) FROM sensors" \
+  ax_note_id "SELECT arg_max(note, id) FROM sensors" \
+  ax_note_read "SELECT arg_max(note, reading) FROM sensors" \
+  ax_note_score "SELECT arg_max(note, score) FROM sensors" \
+  ax_note_ts "SELECT arg_max(note, ts) FROM sensors" \
+  ax_note_day "SELECT arg_max(note, day) FROM sensors" \
+  ax_note_b "SELECT arg_max(note, b) FROM sensors" \
+  ax_note_loc "SELECT arg_max(note, location) FROM sensors" \
+  ax_grp "SELECT arg_max(note, flags) FROM sensors GROUP BY location ORDER BY location" \
+  ax_lim0 "SELECT arg_max(note, flags) FROM sensors LIMIT 0" \
+  ax_case "SELECT ARG_MAX(note, flags) FROM sensors" \
+  ax_notecode "SELECT arg_max(note, code) FROM sensors" \
+  ax_readmax "SELECT arg_max(reading, reading) FROM sensors" \
+  ax_low "SELECT arg_max(note, reading) FROM sensors WHERE reading <= 0" \
+  ax_locloc "SELECT arg_max(location, location) FROM sensors" \
+  ax_same "SELECT arg_max(id, id) FROM sensors WHERE id = 1" \
+  ax_flags_ts "SELECT arg_max(flags, ts) FROM sensors" \
+  ax_flags_read "SELECT arg_max(flags, reading) FROM sensors" \
+  ax_byte_ts "SELECT arg_max(b, ts) FROM sensors" \
+  ax_ch_id "SELECT arg_max(ch, id) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2136,7 +2170,11 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   pc_days "SELECT approx_percentile(id, 0.5) FROM days" \
   pc_days0 "SELECT approx_percentile(id, 0) FROM days" \
   pc_days1 "SELECT approx_percentile(id, 1) FROM days" \
-  pc_days_grp "SELECT approx_percentile(id, 0.5) FROM days GROUP BY location ORDER BY location"
+  pc_days_grp "SELECT approx_percentile(id, 0.5) FROM days GROUP BY location ORDER BY location" \
+  ax_days "SELECT arg_max(note, id) FROM days" \
+  ax_days_loc "SELECT arg_max(location, id) FROM days" \
+  ax_days_grp "SELECT arg_max(note, id) FROM days GROUP BY location ORDER BY location" \
+  ax_days_ts "SELECT arg_max(ts, id) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4008,6 +4046,40 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT approx_percentile(reading, 0.5) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.5) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT APPROX_PERCENTILE(flags, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(location, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(tag, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(ch, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(b, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(code, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(score, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(day, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(ts, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(flags, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT ARG_MAX(note, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(reading, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(note, reading) FROM sensors WHERE reading <= 0"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(location, location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(id, id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(flags, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(flags, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(b, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_max(ch, id) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4218,6 +4290,10 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT approx_percentile(id, 0) FROM days"),
     (os.environ["DIFF_H2"], "SELECT approx_percentile(id, 1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT approx_percentile(id, 0.5) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT arg_max(note, id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT arg_max(location, id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT arg_max(note, id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT arg_max(ts, id) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -75,6 +75,7 @@ pub enum AggFunc {
     Mode,
     ApproxMedian,
     ApproxPercentile,
+    ArgMax,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3091,6 +3092,7 @@ impl<'a> Parser<'a> {
                 | "mode"
                 | "approx_median"
                 | "approx_percentile"
+                | "arg_max"
                 | "approx_count_distinct"
                 | "string_agg"
                 | "covar_pop"
@@ -3155,6 +3157,7 @@ impl<'a> Parser<'a> {
             "mode" => AggFunc::Mode,
             "approx_median" => AggFunc::ApproxMedian,
             "approx_percentile" => AggFunc::ApproxPercentile,
+            "arg_max" => AggFunc::ArgMax,
             "approx_count_distinct" => AggFunc::ApproxCountDistinct,
             "string_agg" => AggFunc::StringAgg,
             "covar_pop" => AggFunc::CovarPop,
@@ -3485,6 +3488,44 @@ impl<'a> Parser<'a> {
                     "wrong number of arguments for function `{}`; expected: 2, provided: {provided}",
                     name.to_ascii_lowercase()
                 )));
+            }
+        }
+        if func == AggFunc::ArgMax && self.peek() == Some(b',') {
+            self.pos += 1;
+            self.skip();
+            if self
+                .peek()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            {
+                pair = Some(self.ident_spelling()?);
+            } else {
+                return Err(Error::new("unsupported: arg_max expects a column"));
+            }
+            self.skip();
+            if self.peek() == Some(b',') {
+                self.pos += 1;
+                self.skip();
+                let third_start = self.pos;
+                if self
+                    .peek()
+                    .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+                {
+                    let word = self.ident_spelling()?;
+                    third_type = if word.eq_ignore_ascii_case("null") {
+                        Some("NULL".to_string())
+                    } else {
+                        Some(word)
+                    };
+                } else if self.starts_limit_int()
+                    || self.peek() == Some(b'.')
+                    || self.peek() == Some(b'-')
+                {
+                    let number = self.parse_number()?;
+                    third_type = Some(median_literal_type(&number).to_string());
+                }
+                if self.pos == third_start {
+                    return Err(Error::new("unsupported: arg_max expects a column"));
+                }
             }
         }
         if matches!(

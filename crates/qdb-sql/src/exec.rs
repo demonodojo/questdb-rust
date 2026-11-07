@@ -7363,6 +7363,15 @@ enum Accumulator {
         samples: Vec<f64>,
         percentile: f64,
     },
+    ArgMax {
+        value: Scalar,
+        key: Option<ArgKey>,
+    },
+}
+
+enum ArgKey {
+    Long(i64),
+    Double(f64),
 }
 
 #[derive(Clone, Copy)]
@@ -7413,6 +7422,10 @@ impl Accumulator {
                 histogram: HdrHistogram::new(1),
                 samples: Vec::new(),
                 percentile: 0.5,
+            },
+            AggFunc::ArgMax => Self::ArgMax {
+                value: Scalar::Null,
+                key: None,
             },
             AggFunc::Avg => Self::Average {
                 total: None,
@@ -7596,6 +7609,13 @@ impl Accumulator {
                     histogram.value_at(point)
                 }
             }
+            Self::ArgMax { value, key } => {
+                if key.is_none() {
+                    Scalar::Null
+                } else {
+                    value.clone()
+                }
+            }
             Self::GeoMean {
                 sum_ln,
                 count,
@@ -7758,6 +7778,8 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             | AggFunc::RegrR2
     ) {
         covar_pair(table, tag, aggregate)?
+    } else if aggregate.func == AggFunc::ArgMax {
+        arg_max_pair(table, tag, aggregate)?
     } else {
         (None, qdb_types::TAG_DOUBLE)
     };
@@ -7781,6 +7803,23 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
                 continue;
             }
             keys.push(value.clone());
+        }
+        keys
+    } else if aggregate.func == AggFunc::ArgMax
+        && pair_tag == qdb_types::TAG_SYMBOL
+        && matches!(
+            tag,
+            qdb_types::TAG_STRING | qdb_types::TAG_SYMBOL | qdb_types::TAG_VARCHAR
+        )
+    {
+        let mut keys = Vec::new();
+        if let Some(pair_index) = pair_index {
+            for value in &table.columns[pair_index] {
+                if value.is_null() || keys.contains(value) {
+                    continue;
+                }
+                keys.push(value.clone());
+            }
         }
         keys
     } else {
@@ -7833,6 +7872,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::Skewness => qdb_types::TAG_DOUBLE,
         AggFunc::Mode => mode_result_tag(input.tag),
         AggFunc::ApproxMedian | AggFunc::ApproxPercentile => qdb_types::TAG_DOUBLE,
+        AggFunc::ArgMax => arg_max_result_tag(input.tag, input.pair_tag),
         AggFunc::BoolAnd | AggFunc::BoolOr => qdb_types::TAG_BOOLEAN,
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
@@ -7903,7 +7943,8 @@ fn contribution(
         | AggFunc::Corr
         | AggFunc::RegrSlope
         | AggFunc::RegrIntercept
-        | AggFunc::RegrR2 => Ok(None),
+        | AggFunc::RegrR2
+        | AggFunc::ArgMax => Ok(None),
     }
 }
 
@@ -8001,6 +8042,10 @@ fn feed(
                 update_covar(accumulator, y, x);
             }
         }
+        return Ok(());
+    }
+    if input.func == AggFunc::ArgMax {
+        update_arg_max(accumulator, columns, row, input)?;
         return Ok(());
     }
     absorb(accumulator, contribution(columns, row, input)?, input.func);
@@ -8544,6 +8589,208 @@ fn stddev_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Er
         Ok(Some(Scalar::Double(number)))
     } else {
         Ok(None)
+    }
+}
+
+fn arg_max_pair(
+    table: &Table,
+    tag: i32,
+    aggregate: &AggregateExpr,
+) -> Result<(Option<usize>, i32), Error> {
+    let first = qdb_types::type_name(tag).to_string();
+    if let Some(kind) = &aggregate.third_type {
+        let second = match &aggregate.pair {
+            Some(name) => median_column_type(table, name)?,
+            None => "UNKNOWN".to_string(),
+        };
+        let third = percentile_shown_type(table, kind)?;
+        return Err(arg_max_types(&[first, second, third]));
+    }
+    let Some(name) = &aggregate.pair else {
+        return Err(arg_max_types(&[first]));
+    };
+    let other = table
+        .column_index(name)
+        .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+    let key_tag = table.meta.columns[other].tag;
+    if matches!(tag, qdb_types::TAG_BOOLEAN) || matches!(key_tag, qdb_types::TAG_BOOLEAN) {
+        return Err(arg_max_types(&[
+            first,
+            qdb_types::type_name(key_tag).to_string(),
+        ]));
+    }
+    Ok((Some(other), key_tag))
+}
+
+fn arg_max_types(parts: &[String]) -> Error {
+    Error::new(format!(
+        "there is no matching function `arg_max` with the argument types: ({})",
+        parts.join(", ")
+    ))
+}
+
+fn arg_max_result_tag(value: i32, key: i32) -> i32 {
+    if matches!(
+        value,
+        qdb_types::TAG_STRING | qdb_types::TAG_SYMBOL | qdb_types::TAG_VARCHAR
+    ) {
+        return qdb_types::TAG_VARCHAR;
+    }
+    if value == qdb_types::TAG_CHAR {
+        return qdb_types::TAG_CHAR;
+    }
+    if matches!(value, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP) {
+        return qdb_types::TAG_TIMESTAMP;
+    }
+    let value_float = matches!(value, qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE);
+    if matches!(key, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP) {
+        return if value_float {
+            qdb_types::TAG_DOUBLE
+        } else {
+            qdb_types::TAG_LONG
+        };
+    }
+    if matches!(
+        key,
+        qdb_types::TAG_FLOAT
+            | qdb_types::TAG_DOUBLE
+            | qdb_types::TAG_STRING
+            | qdb_types::TAG_VARCHAR
+    ) {
+        return if value_float {
+            qdb_types::TAG_DOUBLE
+        } else {
+            qdb_types::TAG_LONG
+        };
+    }
+    if key == qdb_types::TAG_LONG {
+        return qdb_types::TAG_DOUBLE;
+    }
+    if value == qdb_types::TAG_LONG {
+        qdb_types::TAG_LONG
+    } else {
+        qdb_types::TAG_DOUBLE
+    }
+}
+
+fn update_arg_max(
+    accumulator: &mut Accumulator,
+    columns: &[Vec<Scalar>],
+    row: usize,
+    input: &AggColumn,
+) -> Result<(), Error> {
+    let Accumulator::ArgMax { value, key } = accumulator else {
+        return Ok(());
+    };
+    let value_index = input
+        .index
+        .ok_or_else(|| Error::new("internal: arg_max column"))?;
+    let key_index = input
+        .pair_index
+        .ok_or_else(|| Error::new("internal: arg_max key"))?;
+    let Some(next_key) = arg_key(&columns[key_index][row], input)? else {
+        return Ok(());
+    };
+    if key
+        .as_ref()
+        .is_none_or(|best| arg_key_beats(&next_key, best))
+    {
+        *value = arg_value(&columns[value_index][row], input);
+        *key = Some(next_key);
+    }
+    Ok(())
+}
+
+fn arg_key_beats(next: &ArgKey, best: &ArgKey) -> bool {
+    match (next, best) {
+        (ArgKey::Long(left), ArgKey::Long(right)) => left > right,
+        (ArgKey::Double(left), ArgKey::Double(right)) => left > right,
+        _ => false,
+    }
+}
+
+fn arg_key(value: &Scalar, input: &AggColumn) -> Result<Option<ArgKey>, Error> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    match input.pair_tag {
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT | qdb_types::TAG_LONG => {
+            Ok(Some(ArgKey::Long(as_i64(value)?)))
+        }
+        qdb_types::TAG_DATE => match value {
+            Scalar::Date(millis) => Ok(Some(ArgKey::Long(*millis))),
+            _ => Err(Error::new("internal: date column value")),
+        },
+        qdb_types::TAG_TIMESTAMP => match value {
+            Scalar::Timestamp(micros) => Ok(Some(ArgKey::Long(*micros))),
+            _ => Err(Error::new("internal: timestamp column value")),
+        },
+        qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE => Ok(Some(ArgKey::Double(as_f64(value)?))),
+        qdb_types::TAG_SYMBOL => {
+            if input.symbol_keys.is_empty() {
+                return Err(Error::new(format!(
+                    "inconvertible value: `{}` [SYMBOL -> TIMESTAMP_NS]",
+                    scalar_text(value)
+                )));
+            }
+            let index = input
+                .symbol_keys
+                .iter()
+                .position(|found| found == value)
+                .ok_or_else(|| Error::new("internal: symbol key"))?;
+            Ok(Some(ArgKey::Long(i64::try_from(index).unwrap_or(i64::MAX))))
+        }
+        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR => {
+            let text = scalar_text(value);
+            let kind = qdb_types::type_name(input.pair_tag);
+            let Some(number) = parse_questdb_f64(&text).filter(|number| number.is_finite()) else {
+                return Err(Error::new(format!(
+                    "inconvertible value: `{text}` [{kind} -> DOUBLE]"
+                )));
+            };
+            Ok(Some(ArgKey::Double(number)))
+        }
+        qdb_types::TAG_CHAR => {
+            let text = scalar_text(value);
+            let Some(number) = parse_integer_text(&text) else {
+                return Err(Error::new(format!(
+                    "inconvertible value: {text} [CHAR -> INT]"
+                )));
+            };
+            Ok(Some(ArgKey::Long(number)))
+        }
+        _ => Err(arg_max_types(&[
+            qdb_types::type_name(input.tag).to_string(),
+            qdb_types::type_name(input.pair_tag).to_string(),
+        ])),
+    }
+}
+
+fn arg_value(value: &Scalar, input: &AggColumn) -> Scalar {
+    if value.is_null() {
+        return Scalar::Null;
+    }
+    let result = arg_max_result_tag(input.tag, input.pair_tag);
+    match result {
+        qdb_types::TAG_VARCHAR => Scalar::Text(scalar_text(value)),
+        qdb_types::TAG_CHAR => value.clone(),
+        qdb_types::TAG_TIMESTAMP => match value {
+            Scalar::Timestamp(micros) => Scalar::Timestamp(*micros),
+            Scalar::Date(millis) => Scalar::Timestamp(millis.saturating_mul(1000)),
+            _ => Scalar::Null,
+        },
+        qdb_types::TAG_LONG => match input.tag {
+            qdb_types::TAG_DATE => match value {
+                Scalar::Date(millis) => Scalar::Long(*millis),
+                _ => Scalar::Null,
+            },
+            qdb_types::TAG_TIMESTAMP => match value {
+                Scalar::Timestamp(micros) => Scalar::Long(*micros),
+                _ => Scalar::Null,
+            },
+            _ => as_i64(value).map(Scalar::Long).unwrap_or(Scalar::Null),
+        },
+        _ => as_f64(value).map(Scalar::Double).unwrap_or(Scalar::Null),
     }
 }
 
@@ -9303,6 +9550,7 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
                 }
             }
         },
+        Accumulator::ArgMax { .. } => {}
     }
 }
 
@@ -23884,6 +24132,294 @@ mod tests {
         let err = execute(&sensors, "SELECT mode(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn arg_max_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT arg_max(note, flags) FROM sensors",
+                "expected/ax_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, flags) FROM sensors WHERE id = 1",
+                "expected/ax_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, flags) FROM sensors WHERE id > 100",
+                "expected/ax_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, flags) FROM sensors WHERE flags > 0",
+                "expected/ax_pos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(location, flags) FROM sensors",
+                "expected/ax_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(tag, flags) FROM sensors",
+                "expected/ax_tag.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(ch, flags) FROM sensors",
+                "expected/ax_ch.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(id, flags) FROM sensors",
+                "expected/ax_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(b, flags) FROM sensors",
+                "expected/ax_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(code, flags) FROM sensors",
+                "expected/ax_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(score, flags) FROM sensors",
+                "expected/ax_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(reading, flags) FROM sensors",
+                "expected/ax_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(day, flags) FROM sensors",
+                "expected/ax_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(ts, flags) FROM sensors",
+                "expected/ax_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(flags, id) FROM sensors",
+                "expected/ax_flags_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, id) FROM sensors",
+                "expected/ax_note_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, reading) FROM sensors",
+                "expected/ax_note_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, score) FROM sensors",
+                "expected/ax_note_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, ts) FROM sensors",
+                "expected/ax_note_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, day) FROM sensors",
+                "expected/ax_note_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, b) FROM sensors",
+                "expected/ax_note_b.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, location) FROM sensors",
+                "expected/ax_note_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/ax_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, flags) FROM sensors LIMIT 0",
+                "expected/ax_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ARG_MAX(note, flags) FROM sensors",
+                "expected/ax_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, code) FROM sensors",
+                "expected/ax_notecode.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(reading, reading) FROM sensors",
+                "expected/ax_readmax.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(note, reading) FROM sensors WHERE reading <= 0",
+                "expected/ax_low.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(location, location) FROM sensors",
+                "expected/ax_locloc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(id, id) FROM sensors WHERE id = 1",
+                "expected/ax_same.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(flags, ts) FROM sensors",
+                "expected/ax_flags_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(flags, reading) FROM sensors",
+                "expected/ax_flags_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(b, ts) FROM sensors",
+                "expected/ax_byte_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_max(ch, id) FROM sensors",
+                "expected/ax_ch_id.tsv",
+            ),
+            (
+                &days,
+                "SELECT arg_max(note, id) FROM days",
+                "expected/ax_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT arg_max(location, id) FROM days",
+                "expected/ax_days_loc.tsv",
+            ),
+            (
+                &days,
+                "SELECT arg_max(note, id) FROM days GROUP BY location ORDER BY location",
+                "expected/ax_days_grp.tsv",
+            ),
+            (
+                &days,
+                "SELECT arg_max(ts, id) FROM days",
+                "expected/ax_days_ts.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT arg_max() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `arg_max` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_max(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `arg_max` with the argument types: (STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_max(note, flags, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `arg_max` with the argument types: (STRING, INT, LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_max(ok, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `arg_max` with the argument types: (BOOLEAN, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_max(note, ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `arg_max` with the argument types: (STRING, BOOLEAN)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_max(note, ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("inconvertible value: A [CHAR -> INT]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_max(flags, note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_max(flags, tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_max(flags, location) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `madrid` [SYMBOL -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_max(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_max(missing, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&days, "SELECT arg_max(note, flags) FROM days").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: flags"),
             "{}",
             err.message
         );

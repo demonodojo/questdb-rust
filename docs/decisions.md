@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — arg_max()
+
+`arg_max(value, key)` devuelve el valor de la fila con la clave mayor y omite las claves nulas. Un empate se queda con la primera fila. `arg_max(note, flags)` es el `VARCHAR` `βeta`. Una fila con `id = 1` es `alpha`. Sin filas el resultado es NULL. `STRING`, `SYMBOL` y `VARCHAR` salen como `VARCHAR`. `CHAR` se queda en `CHAR`. Una fecha pasa a `TIMESTAMP`. `LONG` con clave `INT` sigue en `LONG`, y con clave `LONG` pasa a `DOUBLE`. `BYTE`, `SHORT`, `INT`, `FLOAT` y `DOUBLE` con clave `INT` salen como `DOUBLE`. Un texto que no es número se rechaza cuando la clave no encaja. `BOOLEAN` no tiene función. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — approx_percentile()
 
 `approx_percentile(col, percentile)` estima un percentil entre `0.0` y `1.0` y devuelve `DOUBLE`. La precisión por defecto es 1 y el tercer argumento la cambia entre 0 y 5. `approx_percentile(flags, 0.5)` es `10.0`. El percentil `0` de `flags` es `0.0` y el `1` es `43.0`. Un `42` suelto en el percentil `0.5` sale como `43.0`, con precisión 0 como `63.0` y con precisión 3 como `42.0`. `approx_percentile(id, 0.5)` en `days` es `2.0`, el percentil `0` es `1.0` y el `1` es `3.0`. El percentil tiene que ser constante. Un entero negativo se rechaza. Sin filas el resultado es NULL. `BOOLEAN` y `SYMBOL` no encajan. El histograma de coma flotante de QuestDB se aproxima aquí con la muestra ordenada de este fixture. `approx_percentile(score, 0.5)` en la columna entera imprime en 10.1.0 el rango cubierto `[1.0, 2048.0)` y aquí solo `Negative values cannot be recorded`. Esa consulta no se captura. Se contrastó con `/exec` en `sensors` y `days`.
