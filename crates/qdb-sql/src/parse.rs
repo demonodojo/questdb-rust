@@ -137,6 +137,7 @@ pub enum Proj {
     Sin(SinExpr),
     Cos(CosExpr),
     Tan(TanExpr),
+    Asin(AsinExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -535,6 +536,13 @@ pub struct TanExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `asin(number)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsinExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `power(base, exponent)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerExpr {
@@ -737,6 +745,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_ceil()?.label
             } else if parser.starts_sign_call() {
                 parser.parse_sign()?.label
+            } else if parser.starts_asin_call() {
+                parser.parse_asin()?.label
             } else if parser.starts_tan_call() {
                 parser.parse_tan()?.label
             } else if parser.starts_cos_call() {
@@ -866,6 +876,7 @@ enum SelectPiece {
     Sin(SinExpr),
     Cos(CosExpr),
     Tan(TanExpr),
+    Asin(AsinExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -1069,6 +1080,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Ceil(self.parse_ceil()?));
             } else if self.starts_sign_call() {
                 pieces.push(SelectPiece::Sign(self.parse_sign()?));
+            } else if self.starts_asin_call() {
+                pieces.push(SelectPiece::Asin(self.parse_asin()?));
             } else if self.starts_tan_call() {
                 pieces.push(SelectPiece::Tan(self.parse_tan()?));
             } else if self.starts_cos_call() {
@@ -1161,6 +1174,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Sin(_)
                     | SelectPiece::Cos(_)
                     | SelectPiece::Tan(_)
+                    | SelectPiece::Asin(_)
                     | SelectPiece::Power(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
@@ -1239,6 +1253,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Sin(expr) => items.push(Proj::Sin(expr)),
                     SelectPiece::Cos(expr) => items.push(Proj::Cos(expr)),
                     SelectPiece::Tan(expr) => items.push(Proj::Tan(expr)),
+                    SelectPiece::Asin(expr) => items.push(Proj::Asin(expr)),
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
@@ -1339,6 +1354,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Sin(_)
                 | SelectPiece::Cos(_)
                 | SelectPiece::Tan(_)
+                | SelectPiece::Asin(_)
                 | SelectPiece::Power(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
@@ -1506,6 +1522,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(PowerExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_asin_call(&self) -> bool {
+        self.starts_named_call("asin")
+    }
+
+    fn parse_asin(&mut self) -> Result<AsinExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `asin` requires arguments: asin(DOUBLE)".to_string(),
+            ));
+        }
+        Ok(AsinExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

@@ -1297,7 +1297,28 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tn_where "SELECT tan(id) FROM sensors WHERE id = 1" \
   tn_order "SELECT tan(id) FROM sensors ORDER BY tan(id)" \
   tn_zero "SELECT tan(id) FROM sensors LIMIT 0" \
-  tn_ch0 "SELECT tan(ch) FROM sensors LIMIT 0"
+  tn_ch0 "SELECT tan(ch) FROM sensors LIMIT 0" \
+  an_zero_lit "SELECT asin(0) FROM sensors LIMIT 1" \
+  an_one "SELECT asin(1) FROM sensors LIMIT 1" \
+  an_neg "SELECT asin(-1) FROM sensors LIMIT 1" \
+  an_half "SELECT asin(0.5) FROM sensors LIMIT 1" \
+  an_neg0 "SELECT asin(-0.0) FROM sensors LIMIT 1" \
+  an_two "SELECT asin(2) FROM sensors LIMIT 1" \
+  an_null "SELECT asin(null) FROM sensors LIMIT 1" \
+  an_id "SELECT asin(id) FROM sensors" \
+  an_read "SELECT asin(reading) FROM sensors" \
+  an_byte "SELECT asin(b) FROM sensors" \
+  an_ts "SELECT asin(ts) FROM sensors LIMIT 1" \
+  an_text "SELECT asin('0.5') FROM sensors LIMIT 1" \
+  an_suffix "SELECT asin('1.5d') FROM sensors LIMIT 1" \
+  an_ws "SELECT asin(' 1') FROM sensors LIMIT 1" \
+  an_nan "SELECT asin('NaN') FROM sensors LIMIT 1" \
+  an_case "SELECT ASIN(0) FROM sensors LIMIT 1" \
+  an_note "SELECT asin(note) FROM sensors WHERE id = 2" \
+  an_where "SELECT asin(id) FROM sensors WHERE id = 1" \
+  an_order "SELECT asin(id) FROM sensors ORDER BY asin(id)" \
+  an_zero "SELECT asin(id) FROM sensors LIMIT 0" \
+  an_ch0 "SELECT asin(ch) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1445,7 +1466,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   sn_days_ts "SELECT sin(ts) FROM days ORDER BY ts" \
   co_days "SELECT cos(id) FROM days ORDER BY ts" \
   tn_days "SELECT tan(id) FROM days ORDER BY ts" \
-  tn_days_ts "SELECT tan(ts) FROM days ORDER BY ts"
+  tn_days_ts "SELECT tan(ts) FROM days ORDER BY ts" \
+  an_days "SELECT asin(id) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2690,6 +2712,27 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT tan(id) FROM sensors ORDER BY tan(id)"),
     (os.environ["DIFF_H1"], "SELECT tan(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT tan(ch) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT asin(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin(0.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin(-0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin(2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT asin(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT asin(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT asin(ts) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin('0.5') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin('1.5d') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin(' 1') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin('NaN') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT ASIN(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT asin(note) FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT asin(id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT asin(id) FROM sensors ORDER BY asin(id)"),
+    (os.environ["DIFF_H1"], "SELECT asin(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT asin(ch) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2836,6 +2879,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT cos(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT tan(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT tan(ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT asin(id) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
