@@ -95,6 +95,7 @@ pub enum Proj {
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
     QuoteIdent(QuoteIdentExpr),
+    SizePretty(SizePrettyExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,6 +191,13 @@ pub struct QuoteIdentExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `size_pretty(bytes)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SizePrettyExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -267,6 +275,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_pad()?.label
             } else if parser.starts_quote_ident_call() {
                 parser.parse_quote_ident()?.label
+            } else if parser.starts_size_pretty_call() {
+                parser.parse_size_pretty()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -332,6 +342,7 @@ enum SelectPiece {
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
     QuoteIdent(QuoteIdentExpr),
+    SizePretty(SizePrettyExpr),
 }
 
 struct Parser<'a> {
@@ -450,6 +461,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Pad(self.parse_pad()?));
             } else if self.starts_quote_ident_call() {
                 pieces.push(SelectPiece::QuoteIdent(self.parse_quote_ident()?));
+            } else if self.starts_size_pretty_call() {
+                pieces.push(SelectPiece::SizePretty(self.parse_size_pretty()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -478,6 +491,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::SplitPart(_)
                     | SelectPiece::Pad(_)
                     | SelectPiece::QuoteIdent(_)
+                    | SelectPiece::SizePretty(_)
             )
         });
         if counts > 0 && projected {
@@ -505,6 +519,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::SplitPart(expr) => items.push(Proj::SplitPart(expr)),
                     SelectPiece::Pad(expr) => items.push(Proj::Pad(expr)),
                     SelectPiece::QuoteIdent(expr) => items.push(Proj::QuoteIdent(expr)),
+                    SelectPiece::SizePretty(expr) => items.push(Proj::SizePretty(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -555,7 +570,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::StrPos(_)
                 | SelectPiece::SplitPart(_)
                 | SelectPiece::Pad(_)
-                | SelectPiece::QuoteIdent(_) => {
+                | SelectPiece::QuoteIdent(_)
+                | SelectPiece::SizePretty(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -598,6 +614,24 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_size_pretty_call(&self) -> bool {
+        self.starts_named_call("size_pretty")
+    }
+
+    fn parse_size_pretty(&mut self) -> Result<SizePrettyExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `size_pretty` requires arguments: size_pretty(LONG)".to_string(),
+            ));
+        }
+        Ok(SizePrettyExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_quote_ident_call(&self) -> bool {

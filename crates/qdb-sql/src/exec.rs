@@ -1,8 +1,8 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
     ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, PadExpr, Proj, Query, QuoteIdentExpr,
-    ReplaceExpr, SelectList, SideExpr, SplitPartExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
-    TrimEnd, TrimExpr, UpperExpr,
+    ReplaceExpr, SelectList, SideExpr, SizePrettyExpr, SplitPartExpr, StartsWithExpr, StrPosExpr,
+    SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -191,7 +191,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::StrPos { label, .. }
             | ResolvedProj::SplitPart { label, .. }
             | ResolvedProj::Pad { label, .. }
-            | ResolvedProj::QuoteIdent { label, .. } => label.clone(),
+            | ResolvedProj::QuoteIdent { label, .. }
+            | ResolvedProj::SizePretty { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -287,6 +288,10 @@ enum ResolvedProj {
         label: String,
         arg: ResolvedArg,
     },
+    SizePretty {
+        label: String,
+        size: CountArg,
+    },
 }
 
 enum ReplaceMode {
@@ -325,7 +330,8 @@ impl ResolvedProj {
             | Self::StrPos { label, .. }
             | Self::SplitPart { label, .. }
             | Self::Pad { label, .. }
-            | Self::QuoteIdent { label, .. } => Some(label),
+            | Self::QuoteIdent { label, .. }
+            | Self::SizePretty { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -380,7 +386,30 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::SplitPart(expr) => resolve_split_part(table, expr),
         Proj::Pad(expr) => resolve_pad(table, expr),
         Proj::QuoteIdent(expr) => resolve_quote_ident(table, expr),
+        Proj::SizePretty(expr) => resolve_size_pretty(table, expr),
     }
+}
+
+fn resolve_size_pretty(table: &Table, expr: &SizePrettyExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `size_pretty`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let size = match resolve_count(table, &expr.args[0]) {
+        Ok(CountArg::ColumnSymbol { .. }) | Err(()) => {
+            let actual = concat_arg_type(table, &expr.args[0])?;
+            return Err(Error::new(format!(
+                "argument type mismatch for function `size_pretty` at #1 expected: LONG, actual: {actual}"
+            )));
+        }
+        Ok(size) => size,
+    };
+    Ok(ResolvedProj::SizePretty {
+        label: expr.label.clone(),
+        size,
+    })
 }
 
 fn resolve_quote_ident(table: &Table, expr: &QuoteIdentExpr) -> Result<ResolvedProj, Error> {
@@ -925,6 +954,14 @@ fn concat_arg_type(table: &Table, arg: &ConcatArg) -> Result<String, Error> {
         ConcatArg::Literal(Scalar::Text(text)) if text.encode_utf16().count() == 1 => {
             Ok("CHAR".to_string())
         }
+        ConcatArg::Literal(Scalar::Long(number)) => {
+            if i32::try_from(*number).is_ok() {
+                Ok("INT".to_string())
+            } else {
+                Ok("LONG".to_string())
+            }
+        }
+        ConcatArg::Literal(Scalar::Double(_)) => Ok("DOUBLE".to_string()),
         ConcatArg::Literal(_) => Ok("STRING".to_string()),
         ConcatArg::Column(name) => {
             let index = table
@@ -1000,6 +1037,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                     _ => Scalar::Null,
                 }
             }
+        },
+        ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
+            Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
+            _ => Scalar::Null,
         },
         ResolvedProj::QuoteIdent { arg, .. } => match text_of(table, row, arg) {
             Some(text) => Scalar::Text(quote_ident(&text)),
@@ -1095,6 +1136,64 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             None => Scalar::Null,
         },
     }
+}
+
+fn size_pretty(size: i64) -> String {
+    const SCALE: [char; 8] = ['B', 'K', 'M', 'G', 'T', 'P', 'E', 'Z'];
+    let mut band = (63 - size.leading_zeros() as i32) / 10;
+    if band < 0 {
+        band = 0;
+    }
+    let scale = 1i64 << (band * 10);
+    let value = (size as f32) / (scale as f32);
+    let mut text = append_scaled_f32(value, 1);
+    text.push(' ');
+    text.push(SCALE[band as usize]);
+    if band > 0 {
+        text.push_str("iB");
+    }
+    text
+}
+
+fn append_scaled_f32(value: f32, scale: i32) -> String {
+    if value.is_infinite() && value.is_sign_positive() {
+        return "Infinity".to_string();
+    }
+    if value.is_infinite() {
+        return "-Infinity".to_string();
+    }
+    if value.is_nan() {
+        return "NaN".to_string();
+    }
+    let mut out = String::new();
+    let mut magnitude = value;
+    if magnitude.is_sign_negative() {
+        out.push('-');
+        magnitude = -magnitude;
+    }
+    let mut factor = 10i32.pow(scale as u32);
+    let scaled = (magnitude * factor as f32 + 0.5) as i32;
+    let mut target = scale + 1;
+    while target < 11 {
+        let Some(next) = factor.checked_mul(10) else {
+            break;
+        };
+        if next > scaled {
+            break;
+        }
+        factor = next;
+        target += 1;
+    }
+    while target > 0 {
+        if target == scale {
+            out.push('.');
+        }
+        target -= 1;
+        let digit = scaled / factor % 10;
+        out.push(char::from(b'0' + digit as u8));
+        factor /= 10;
+    }
+    out
 }
 
 fn quote_ident(text: &str) -> String {
@@ -6035,6 +6134,146 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT length_bytes(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn size_pretty_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT size_pretty(id) FROM sensors",
+                "expected/sz_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(0) FROM sensors LIMIT 1",
+                "expected/sz_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(1024) FROM sensors LIMIT 1",
+                "expected/sz_kib.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(1500) FROM sensors LIMIT 1",
+                "expected/sz_round.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(1048576) FROM sensors LIMIT 1",
+                "expected/sz_mib.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(1023) FROM sensors LIMIT 1",
+                "expected/sz_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(-1024) FROM sensors LIMIT 1",
+                "expected/sz_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(9223372036854775807) FROM sensors LIMIT 1",
+                "expected/sz_max.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(null) FROM sensors LIMIT 1",
+                "expected/sz_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(flags) FROM sensors",
+                "expected/sz_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(b) FROM sensors",
+                "expected/sz_byte_col.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(code) FROM sensors",
+                "expected/sz_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT SIZE_PRETTY(ID) FROM sensors",
+                "expected/sz_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(id) FROM sensors ORDER BY size_pretty(id)",
+                "expected/sz_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, size_pretty(id) FROM sensors ORDER BY size_pretty(id)",
+                "expected/sz_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(id) FROM sensors WHERE id = 1",
+                "expected/sz_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT size_pretty(id) FROM sensors LIMIT 0",
+                "expected/sz_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT size_pretty(id) FROM days ORDER BY ts",
+                "expected/sz_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT size_pretty() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `size_pretty` requires arguments: size_pretty(LONG)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT size_pretty(id, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `size_pretty`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT size_pretty(1.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `size_pretty` at #1 expected: LONG, actual: DOUBLE"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT size_pretty(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `size_pretty` at #1 expected: LONG, actual: STRING"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT size_pretty(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

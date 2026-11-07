@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — size_pretty()
+
+Acepta `BYTE`, `SHORT`, `INT` y `LONG`. Elige la unidad por el bit más alto y divide en `float` de 32 bits. El número lleva un decimal. `0` es `0.0 B` y `1024` es `1.0 KiB`. Un valor negativo cae en la banda de `EiB` y se imprime como `-0.0 EiB`. NULL queda NULL. Un texto en 10.1.0 rompe la respuesta HTTP; aquí se rechaza como `LONG` esperado. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — length_bytes()
 
 Cuenta bytes UTF-8 y devuelve `INT`. Un texto NULL, incluido un `CHAR` 0, vale `-1`, no NULL. La cadena vacía vale `0`. Acepta `STRING`, `VARCHAR` y `CHAR`. Un `SYMBOL` en 10.1.0 responde un error interno del servidor; aquí se rechaza como `VARCHAR` esperado y `SYMBOL` recibido. Se contrastó con `/exec` en `sensors` y `days`.
