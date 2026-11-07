@@ -589,7 +589,26 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ce_reading_order "SELECT ceil(reading) FROM sensors ORDER BY ceil(reading)" \
   ce_with_id "SELECT id, ceil(id) FROM sensors ORDER BY ceil(id)" \
   ce_where "SELECT ceil(id) FROM sensors WHERE id = -1" \
-  ce_limit_zero "SELECT ceil(id) FROM sensors LIMIT 0"
+  ce_limit_zero "SELECT ceil(id) FROM sensors LIMIT 0" \
+  sg_reading "SELECT sign(reading) FROM sensors" \
+  sg_score "SELECT sign(score) FROM sensors" \
+  sg_id "SELECT sign(id) FROM sensors" \
+  sg_flags "SELECT sign(flags) FROM sensors" \
+  sg_byte "SELECT sign(b) FROM sensors" \
+  sg_code "SELECT sign(code) FROM sensors" \
+  sg_neg "SELECT sign(-1.5) FROM sensors LIMIT 1" \
+  sg_negzero "SELECT sign(-0.0) FROM sensors LIMIT 1" \
+  sg_zero "SELECT sign(0) FROM sensors LIMIT 1" \
+  sg_one "SELECT sign(1) FROM sensors LIMIT 1" \
+  sg_long "SELECT sign(3000000000) FROM sensors LIMIT 1" \
+  sg_null "SELECT sign(null) FROM sensors LIMIT 1" \
+  sg_case "SELECT SIGN(READING) FROM sensors" \
+  sg_order "SELECT sign(id) FROM sensors ORDER BY sign(id)" \
+  sg_score_order "SELECT sign(score) FROM sensors ORDER BY sign(score)" \
+  sg_reading_order "SELECT sign(reading) FROM sensors ORDER BY sign(reading)" \
+  sg_with_id "SELECT id, sign(id) FROM sensors ORDER BY sign(id)" \
+  sg_where "SELECT sign(id) FROM sensors WHERE id = -1" \
+  sg_limit_zero "SELECT sign(id) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -687,7 +706,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   abs_id "SELECT abs(id) FROM days ORDER BY ts" \
   rd_id "SELECT round(id) FROM days ORDER BY ts" \
   fl_id "SELECT floor(id) FROM days ORDER BY ts" \
-  ce_id "SELECT ceil(id) FROM days ORDER BY ts"
+  ce_id "SELECT ceil(id) FROM days ORDER BY ts" \
+  sg_id "SELECT sign(id) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1224,6 +1244,25 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, ceil(id) FROM sensors ORDER BY ceil(id)"),
     (os.environ["DIFF_H1"], "SELECT ceil(id) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT ceil(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT sign(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sign(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sign(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sign(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sign(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sign(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sign(-1.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sign(-0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sign(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sign(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sign(3000000000) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sign(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT SIGN(READING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sign(id) FROM sensors ORDER BY sign(id)"),
+    (os.environ["DIFF_H1"], "SELECT sign(score) FROM sensors ORDER BY sign(score)"),
+    (os.environ["DIFF_H1"], "SELECT sign(reading) FROM sensors ORDER BY sign(reading)"),
+    (os.environ["DIFF_H1"], "SELECT id, sign(id) FROM sensors ORDER BY sign(id)"),
+    (os.environ["DIFF_H1"], "SELECT sign(id) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT sign(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1320,6 +1359,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT round(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT floor(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT ceil(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT sign(id) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

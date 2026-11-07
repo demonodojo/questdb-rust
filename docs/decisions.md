@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — sign()
+
+Conserva `BYTE`, `SHORT`, `INT`, `LONG`, `FLOAT` y `DOUBLE`. El mínimo de `BYTE` y de `SHORT` sale como `-1`. Un `DOUBLE` de `-0.0` pasa a `0.0`; un `FLOAT` de `-0.0` conservaría el signo. Un literal NULL se resuelve como `BYTE` y, como el nulo de un byte es `0`, el resultado es `0`. `signum` no existe en 10.1.0. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — ceil()
 
 Usa los mismos tipos que `floor`. `ceiling` es el mismo cálculo y conserva el nombre escrito. `ceil(1.5)` es `2.0` y `ceil(-1.5)` es `-1.0`. `-0.0` sigue siendo `-0.0`. La forma `ceil(entero, escala)` es decimal y se rechaza. Se contrastó con `/exec` en `sensors` y `days`.

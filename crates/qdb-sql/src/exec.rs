@@ -1,8 +1,9 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CeilExpr, CmpOp, ConcatArg, Filter, FloorExpr, GroupedSelect, LengthExpr, LowerExpr, PadExpr,
-    Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SizePrettyExpr,
-    SplitPartExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SignExpr,
+    SizePrettyExpr, SplitPartExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr,
+    UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -196,7 +197,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Abs { label, .. }
             | ResolvedProj::Round { label, .. }
             | ResolvedProj::Floor { label, .. }
-            | ResolvedProj::Ceil { label, .. } => label.clone(),
+            | ResolvedProj::Ceil { label, .. }
+            | ResolvedProj::Sign { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -316,6 +318,19 @@ enum ResolvedProj {
         input: FloorInput,
         wide: bool,
     },
+    Sign {
+        label: String,
+        input: SignInput,
+        result_tag: i32,
+    },
+}
+
+enum SignInput {
+    Byte(i8),
+    Int(i32),
+    Long(i64),
+    Double(f64),
+    Column { index: usize },
 }
 
 enum FloorInput {
@@ -387,7 +402,8 @@ impl ResolvedProj {
             | Self::Abs { label, .. }
             | Self::Round { label, .. }
             | Self::Floor { label, .. }
-            | Self::Ceil { label, .. } => Some(label),
+            | Self::Ceil { label, .. }
+            | Self::Sign { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -397,6 +413,7 @@ impl ResolvedProj {
             Self::Length { .. } | Self::StrPos { .. } => qdb_types::TAG_INT,
             Self::Abs { result_tag, .. } => *result_tag,
             Self::Round { .. } => qdb_types::TAG_DOUBLE,
+            Self::Sign { result_tag, .. } => *result_tag,
             Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
                 if *wide {
                     qdb_types::TAG_DOUBLE
@@ -456,6 +473,54 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Round(expr) => resolve_round(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
+        Proj::Sign(expr) => resolve_sign(table, expr),
+    }
+}
+
+fn resolve_sign(table: &Table, expr: &SignExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(named_type_error(table, "sign", &expr.args));
+    }
+    let (input, result_tag) = sign_input(table, &expr.args[0])
+        .map_err(|_| named_type_error(table, "sign", &expr.args))?;
+    Ok(ResolvedProj::Sign {
+        label: expr.label.clone(),
+        input,
+        result_tag,
+    })
+}
+
+fn sign_input(table: &Table, arg: &ConcatArg) -> Result<(SignInput, i32), ()> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok((SignInput::Byte(0), qdb_types::TAG_BYTE)),
+        ConcatArg::Literal(Scalar::Long(number)) => {
+            if let Ok(number) = i32::try_from(*number) {
+                Ok((SignInput::Int(number), qdb_types::TAG_INT))
+            } else {
+                Ok((SignInput::Long(*number), qdb_types::TAG_LONG))
+            }
+        }
+        ConcatArg::Literal(Scalar::Double(number)) => {
+            Ok((SignInput::Double(*number), qdb_types::TAG_DOUBLE))
+        }
+        ConcatArg::Column(name) => {
+            let index = table.column_index(name).ok_or(())?;
+            let tag = table.meta.columns[index].tag;
+            if matches!(
+                tag,
+                qdb_types::TAG_BYTE
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_LONG
+                    | qdb_types::TAG_FLOAT
+                    | qdb_types::TAG_DOUBLE
+            ) {
+                Ok((SignInput::Column { index }, tag))
+            } else {
+                Err(())
+            }
+        }
+        ConcatArg::Literal(_) => Err(()),
     }
 }
 
@@ -1320,6 +1385,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::Floor { input, wide, .. } => floor_value(table, row, input, *wide),
         ResolvedProj::Ceil { input, wide, .. } => ceil_value(table, row, input, *wide),
+        ResolvedProj::Sign { input, .. } => sign_value(table, row, input),
         ResolvedProj::Round { input, scale, .. } => match round_row(table, row, input, scale) {
             Some(value) => Scalar::Double(value),
             None => Scalar::Null,
@@ -1422,6 +1488,45 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Some(text) => Scalar::Text(trim_ascii_space(&text, *end)),
             None => Scalar::Null,
         },
+    }
+}
+
+fn sign_value(table: &Table, row: usize, input: &SignInput) -> Scalar {
+    match input {
+        SignInput::Byte(number) => Scalar::Byte(number.signum()),
+        SignInput::Int(number) => Scalar::Int(number.signum()),
+        SignInput::Long(number) => Scalar::Long(number.signum()),
+        SignInput::Double(number) => Scalar::Double(sign_f64(*number)),
+        SignInput::Column { index } => match &table.columns[*index][row] {
+            Scalar::Null => Scalar::Null,
+            Scalar::Byte(number) => Scalar::Byte(number.signum()),
+            Scalar::Short(number) => Scalar::Short(number.signum()),
+            Scalar::Int(number) => Scalar::Int(number.signum()),
+            Scalar::Long(number) => Scalar::Long(number.signum()),
+            Scalar::Float(number) => Scalar::Float(sign_f32(*number)),
+            Scalar::Double(number) => Scalar::Double(sign_f64(*number)),
+            _ => Scalar::Null,
+        },
+    }
+}
+
+fn sign_f64(value: f64) -> f64 {
+    if value == 0.0 || value.is_nan() {
+        0.0
+    } else if value.is_sign_negative() {
+        -1.0
+    } else {
+        1.0
+    }
+}
+
+fn sign_f32(value: f32) -> f32 {
+    if value.is_nan() || value == 0.0 {
+        value
+    } else if value.is_sign_negative() {
+        -1.0
+    } else {
+        1.0
     }
 }
 
@@ -7331,6 +7436,154 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT ceil(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn sign_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT sign(reading) FROM sensors",
+                "expected/sg_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(score) FROM sensors",
+                "expected/sg_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(id) FROM sensors",
+                "expected/sg_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(flags) FROM sensors",
+                "expected/sg_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(b) FROM sensors",
+                "expected/sg_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(code) FROM sensors",
+                "expected/sg_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(-1.5) FROM sensors LIMIT 1",
+                "expected/sg_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(-0.0) FROM sensors LIMIT 1",
+                "expected/sg_negzero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(0) FROM sensors LIMIT 1",
+                "expected/sg_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(1) FROM sensors LIMIT 1",
+                "expected/sg_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(3000000000) FROM sensors LIMIT 1",
+                "expected/sg_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(null) FROM sensors LIMIT 1",
+                "expected/sg_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT SIGN(READING) FROM sensors",
+                "expected/sg_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(id) FROM sensors ORDER BY sign(id)",
+                "expected/sg_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(score) FROM sensors ORDER BY sign(score)",
+                "expected/sg_score_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(reading) FROM sensors ORDER BY sign(reading)",
+                "expected/sg_reading_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, sign(id) FROM sensors ORDER BY sign(id)",
+                "expected/sg_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(id) FROM sensors WHERE id = -1",
+                "expected/sg_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sign(id) FROM sensors LIMIT 0",
+                "expected/sg_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT sign(id) FROM days ORDER BY ts",
+                "expected/sg_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT sign() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("function `sign` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sign(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `sign` with the argument types: (STRING)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sign(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `sign` with the argument types: (BOOLEAN)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sign(id, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `sign` with the argument types: (LONG, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sign(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

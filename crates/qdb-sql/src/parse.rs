@@ -100,6 +100,7 @@ pub enum Proj {
     Round(RoundExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
+    Sign(SignExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,6 +231,13 @@ pub struct CeilExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `sign(number)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -317,6 +325,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_floor()?.label
             } else if parser.starts_ceil_call() {
                 parser.parse_ceil()?.label
+            } else if parser.starts_sign_call() {
+                parser.parse_sign()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -387,6 +397,7 @@ enum SelectPiece {
     Round(RoundExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
+    Sign(SignExpr),
 }
 
 struct Parser<'a> {
@@ -515,6 +526,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Floor(self.parse_floor()?));
             } else if self.starts_ceil_call() {
                 pieces.push(SelectPiece::Ceil(self.parse_ceil()?));
+            } else if self.starts_sign_call() {
+                pieces.push(SelectPiece::Sign(self.parse_sign()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -548,6 +561,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Round(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
+                    | SelectPiece::Sign(_)
             )
         });
         if counts > 0 && projected {
@@ -580,6 +594,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Round(expr) => items.push(Proj::Round(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
+                    SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -635,7 +650,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Abs(_)
                 | SelectPiece::Round(_)
                 | SelectPiece::Floor(_)
-                | SelectPiece::Ceil(_) => {
+                | SelectPiece::Ceil(_)
+                | SelectPiece::Sign(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -678,6 +694,25 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_sign_call(&self) -> bool {
+        self.starts_named_call("sign")
+    }
+
+    fn parse_sign(&mut self) -> Result<SignExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(SignExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_ceil_call(&self) -> bool {
