@@ -1,0 +1,5 @@
+round_half_even(reading, 1)
+1.5
+NULL
+-0.0
+-0.0

@@ -100,6 +100,7 @@ pub enum Proj {
     Round(RoundExpr),
     RoundDown(RoundDownExpr),
     RoundUp(RoundUpExpr),
+    RoundHalfEven(RoundHalfEvenExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -237,6 +238,13 @@ pub struct RoundDownExpr {
 /// `round_up(number, scale)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoundUpExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `round_half_even(number, scale)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoundHalfEvenExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -403,6 +411,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_round_down()?.label
             } else if parser.starts_round_up_call() {
                 parser.parse_round_up()?.label
+            } else if parser.starts_round_half_even_call() {
+                parser.parse_round_half_even()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -497,6 +507,7 @@ enum SelectPiece {
     Round(RoundExpr),
     RoundDown(RoundDownExpr),
     RoundUp(RoundUpExpr),
+    RoundHalfEven(RoundHalfEvenExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -634,6 +645,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::RoundDown(self.parse_round_down()?));
             } else if self.starts_round_up_call() {
                 pieces.push(SelectPiece::RoundUp(self.parse_round_up()?));
+            } else if self.starts_round_half_even_call() {
+                pieces.push(SelectPiece::RoundHalfEven(self.parse_round_half_even()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -691,6 +704,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Round(_)
                     | SelectPiece::RoundDown(_)
                     | SelectPiece::RoundUp(_)
+                    | SelectPiece::RoundHalfEven(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -734,6 +748,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Round(expr) => items.push(Proj::Round(expr)),
                     SelectPiece::RoundDown(expr) => items.push(Proj::RoundDown(expr)),
                     SelectPiece::RoundUp(expr) => items.push(Proj::RoundUp(expr)),
+                    SelectPiece::RoundHalfEven(expr) => items.push(Proj::RoundHalfEven(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -801,6 +816,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Round(_)
                 | SelectPiece::RoundDown(_)
                 | SelectPiece::RoundUp(_)
+                | SelectPiece::RoundHalfEven(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1047,6 +1063,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_round_half_even_call(&self) -> bool {
+        self.starts_named_call("round_half_even")
+    }
+
+    fn parse_round_half_even(&mut self) -> Result<RoundHalfEvenExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `round_half_even` requires arguments".to_string(),
+            ));
+        }
+        Ok(RoundHalfEvenExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

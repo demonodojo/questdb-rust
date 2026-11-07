@@ -790,7 +790,32 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rup_flags "SELECT round_up(reading, flags) FROM sensors" \
   rup_order "SELECT round_up(reading, 1) FROM sensors ORDER BY round_up(reading, 1)" \
   rup_where "SELECT round_up(id, 0) FROM sensors WHERE id = -1" \
-  rup_limit_zero "SELECT round_up(id, 0) FROM sensors LIMIT 0"
+  rup_limit_zero "SELECT round_up(id, 0) FROM sensors LIMIT 0" \
+  rhe_reading "SELECT round_half_even(reading, 0) FROM sensors" \
+  rhe_reading_scale "SELECT round_half_even(reading, 1) FROM sensors" \
+  rhe_score "SELECT round_half_even(score, 0) FROM sensors" \
+  rhe_score_scale "SELECT round_half_even(score, 1) FROM sensors" \
+  rhe_half "SELECT round_half_even(1.5, 0) FROM sensors LIMIT 1" \
+  rhe_even "SELECT round_half_even(2.5, 0) FROM sensors LIMIT 1" \
+  rhe_neg_half "SELECT round_half_even(-1.5, 0) FROM sensors LIMIT 1" \
+  rhe_neg_even "SELECT round_half_even(-2.5, 0) FROM sensors LIMIT 1" \
+  rhe_zero "SELECT round_half_even(0.0, 0) FROM sensors LIMIT 1" \
+  rhe_negzero "SELECT round_half_even(-0.0, 1) FROM sensors LIMIT 1" \
+  rhe_down "SELECT round_half_even(1.25, 1) FROM sensors LIMIT 1" \
+  rhe_up "SELECT round_half_even(1.35, 1) FROM sensors LIMIT 1" \
+  rhe_tens "SELECT round_half_even(15, -1) FROM sensors LIMIT 1" \
+  rhe_neg_tens "SELECT round_half_even(-15, -1) FROM sensors LIMIT 1" \
+  rhe_scale16 "SELECT round_half_even(1.25, 16) FROM sensors LIMIT 1" \
+  rhe_null_scale "SELECT round_half_even(reading, null) FROM sensors" \
+  rhe_scale_out "SELECT round_half_even(reading, 20) FROM sensors" \
+  rhe_null "SELECT round_half_even(null, 1) FROM sensors LIMIT 1" \
+  rhe_id "SELECT round_half_even(id, 0) FROM sensors" \
+  rhe_code "SELECT round_half_even(code, 0) FROM sensors" \
+  rhe_case "SELECT ROUND_HALF_EVEN(READING, 0) FROM sensors" \
+  rhe_flags "SELECT round_half_even(reading, flags) FROM sensors" \
+  rhe_order "SELECT round_half_even(reading, 0) FROM sensors ORDER BY round_half_even(reading, 0)" \
+  rhe_where "SELECT round_half_even(id, 0) FROM sensors WHERE id = -1" \
+  rhe_limit_zero "SELECT round_half_even(id, 0) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -899,7 +924,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   gt_id "SELECT greatest(id, 2) FROM days ORDER BY ts" \
   ls_id "SELECT least(id, 2) FROM days ORDER BY ts" \
   rdn_id "SELECT round_down(id, 0) FROM days ORDER BY ts" \
-  rup_id "SELECT round_up(id, 0) FROM days ORDER BY ts"
+  rup_id "SELECT round_up(id, 0) FROM days ORDER BY ts" \
+  rhe_id "SELECT round_half_even(id, 0) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1637,6 +1663,31 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT round_up(reading, 1) FROM sensors ORDER BY round_up(reading, 1)"),
     (os.environ["DIFF_H1"], "SELECT round_up(id, 0) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT round_up(id, 0) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(reading, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(reading, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(score, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(score, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(1.5, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(2.5, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(-1.5, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(-2.5, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(0.0, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(-0.0, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(1.25, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(1.35, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(15, -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(-15, -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(1.25, 16) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(reading, null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(reading, 20) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(null, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(id, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(code, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ROUND_HALF_EVEN(READING, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(reading, 0) FROM sensors ORDER BY round_half_even(reading, 0)"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(id, 0) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT round_half_even(id, 0) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1744,6 +1795,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT least(id, 2) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT round_down(id, 0) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT round_up(id, 0) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT round_half_even(id, 0) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
