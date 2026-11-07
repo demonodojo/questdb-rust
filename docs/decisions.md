@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — not()
+
+`not` devuelve `BOOLEAN` y niega el último argumento. Los anteriores no se evalúan: `not(1, ok)` es `not(ok)` y `not(missing, ok)` también. `not(ok)` invierte la columna. `not(null)` es `true`. El encabezado se escribe `not` en minúsculas y el último argumento. Cero argumentos responden `too few arguments for 'not' [found=0,expected=1]`. Si el último argumento no es `BOOLEAN`, el error es `argument type mismatch` en `#1` con su tipo. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — typeof()
 
 `typeof(valor)` devuelve el nombre del tipo. El resultado es `STRING`, salvo si el argumento es una columna `VARCHAR`: entonces el resultado es `VARCHAR` y el texto sigue siendo `VARCHAR`. Un literal nulo imprime `NULL`. Un nulo guardado en una columna conserva el tipo de la columna. Un entero que cabe en `INT` es `INT`, excepto `-2147483648`, que es `LONG`, igual que `2147483648`. Un texto de un carácter es `CHAR`; la cadena vacía y un texto más largo son `STRING`. Cero argumentos o más de uno responden `exactly one argument expected`. Se contrastó con `/exec` en `sensors` y `days`.

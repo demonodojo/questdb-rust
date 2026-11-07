@@ -145,6 +145,7 @@ pub enum Proj {
     Radians(RadiansExpr),
     Cot(CotExpr),
     Typeof(TypeofExpr),
+    Not(NotExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -599,6 +600,13 @@ pub struct TypeofExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `not(value)`. Extra arguments are ignored; the last one is negated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `power(base, exponent)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerExpr {
@@ -801,6 +809,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_ceil()?.label
             } else if parser.starts_sign_call() {
                 parser.parse_sign()?.label
+            } else if parser.starts_not_call() {
+                parser.parse_not()?.label
             } else if parser.starts_typeof_call() {
                 parser.parse_typeof()?.label
             } else if parser.starts_cot_call() {
@@ -954,6 +964,7 @@ enum SelectPiece {
     Radians(RadiansExpr),
     Cot(CotExpr),
     Typeof(TypeofExpr),
+    Not(NotExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -1157,6 +1168,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Ceil(self.parse_ceil()?));
             } else if self.starts_sign_call() {
                 pieces.push(SelectPiece::Sign(self.parse_sign()?));
+            } else if self.starts_not_call() {
+                pieces.push(SelectPiece::Not(self.parse_not()?));
             } else if self.starts_typeof_call() {
                 pieces.push(SelectPiece::Typeof(self.parse_typeof()?));
             } else if self.starts_cot_call() {
@@ -1273,6 +1286,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Radians(_)
                     | SelectPiece::Cot(_)
                     | SelectPiece::Typeof(_)
+                    | SelectPiece::Not(_)
                     | SelectPiece::Power(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
@@ -1359,6 +1373,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Radians(expr) => items.push(Proj::Radians(expr)),
                     SelectPiece::Cot(expr) => items.push(Proj::Cot(expr)),
                     SelectPiece::Typeof(expr) => items.push(Proj::Typeof(expr)),
+                    SelectPiece::Not(expr) => items.push(Proj::Not(expr)),
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
@@ -1467,6 +1482,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Radians(_)
                 | SelectPiece::Cot(_)
                 | SelectPiece::Typeof(_)
+                | SelectPiece::Not(_)
                 | SelectPiece::Power(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
@@ -1635,6 +1651,25 @@ impl<'a> Parser<'a> {
         }
         Ok(PowerExpr {
             label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_not_call(&self) -> bool {
+        self.starts_named_call("not")
+    }
+
+    fn parse_not(&mut self) -> Result<NotExpr, Error> {
+        let _name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args("not", true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "too few arguments for 'not' [found=0,expected=1]",
+            ));
+        }
+        let last = labels.last().map(String::as_str).unwrap_or("");
+        Ok(NotExpr {
+            label: format!("not({last})"),
             args,
         })
     }

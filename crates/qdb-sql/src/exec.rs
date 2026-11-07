@@ -5,9 +5,9 @@ use crate::parse::{
     DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, ExpExpr, ExtractExpr, Filter,
     FloorExpr, GreatestExpr, GroupedSelect, HourExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr,
     LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr,
-    NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr,
-    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr,
-    Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
+    NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
+    ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
+    Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
     StartsWithExpr, StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr,
     ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
     WeekOfYearExpr, YearExpr,
@@ -267,6 +267,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Radians { label, .. }
             | ResolvedProj::Cot { label, .. }
             | ResolvedProj::Typeof { label, .. }
+            | ResolvedProj::Not { label, .. }
             | ResolvedProj::Power { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
@@ -593,6 +594,10 @@ enum ResolvedProj {
         name: String,
         result_tag: i32,
     },
+    Not {
+        label: String,
+        input: NotInput,
+    },
     Power {
         label: String,
         base: SqrtInput,
@@ -761,6 +766,7 @@ impl ResolvedProj {
             | Self::Radians { label, .. }
             | Self::Cot { label, .. }
             | Self::Typeof { label, .. }
+            | Self::Not { label, .. }
             | Self::Power { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
@@ -800,7 +806,7 @@ impl ResolvedProj {
             Self::IsLeapYear { .. } => qdb_types::TAG_BOOLEAN,
             Self::DaysInMonth { .. } => qdb_types::TAG_INT,
             Self::ToStr { .. } => qdb_types::TAG_STRING,
-            Self::IsEndOfMonth { .. } => qdb_types::TAG_BOOLEAN,
+            Self::IsEndOfMonth { .. } | Self::Not { .. } => qdb_types::TAG_BOOLEAN,
             Self::DayOfWeekSundayFirst { .. } => qdb_types::TAG_INT,
             Self::ToTimestamp { .. } => qdb_types::TAG_TIMESTAMP,
             Self::ToDate { .. } => qdb_types::TAG_DATE,
@@ -931,6 +937,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Radians(expr) => resolve_radians(table, expr),
         Proj::Cot(expr) => resolve_cot(table, expr),
         Proj::Typeof(expr) => resolve_typeof(table, expr),
+        Proj::Not(expr) => resolve_not(table, expr),
         Proj::Power(expr) => resolve_power(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
@@ -1458,6 +1465,48 @@ fn resolve_cot(table: &Table, expr: &CotExpr) -> Result<ResolvedProj, Error> {
         label: expr.label.clone(),
         input: resolve_real_arg(table, "cot", &expr.args)?,
     })
+}
+
+enum NotInput {
+    Const(bool),
+    Column(usize),
+}
+
+fn resolve_not(table: &Table, expr: &NotExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.is_empty() {
+        return Err(Error::new(
+            "too few arguments for 'not' [found=0,expected=1]",
+        ));
+    }
+    let input = not_input(table, expr.args.last().expect("checked"))?;
+    Ok(ResolvedProj::Not {
+        label: expr.label.clone(),
+        input,
+    })
+}
+
+fn not_input(table: &Table, arg: &ConcatArg) -> Result<NotInput, Error> {
+    match arg {
+        ConcatArg::Column(column) => {
+            let Some(index) = table.column_index(column) else {
+                return Err(Error::new(format!("Invalid column: {column}")));
+            };
+            let tag = table.meta.columns[index].tag;
+            if tag != qdb_types::TAG_BOOLEAN {
+                return Err(Error::new(format!(
+                    "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: {}",
+                    qdb_types::type_name(tag)
+                )));
+            }
+            Ok(NotInput::Column(index))
+        }
+        ConcatArg::Literal(Scalar::Null) => Ok(NotInput::Const(true)),
+        ConcatArg::Literal(Scalar::Boolean(value)) => Ok(NotInput::Const(!value)),
+        _ => Err(Error::new(format!(
+            "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: {}",
+            atan2_reported_type(table, arg)?
+        ))),
+    }
 }
 
 fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Error> {
@@ -5733,6 +5782,13 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Err(_) => Scalar::Null,
         },
         ResolvedProj::Typeof { name, .. } => Scalar::Text(name.clone()),
+        ResolvedProj::Not { input, .. } => match input {
+            NotInput::Const(value) => Scalar::Boolean(*value),
+            NotInput::Column(index) => match &table.columns[*index][row] {
+                Scalar::Boolean(value) => Scalar::Boolean(!value),
+                _ => Scalar::Boolean(true),
+            },
+        },
         ResolvedProj::Sqrt { input, .. } => match sqrt_number(table, row, input) {
             Some(value) => {
                 let result = value.sqrt();
@@ -17558,6 +17614,177 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT typeof(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn not_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT not(ok) FROM sensors",
+                "expected/nt_ok.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT not(null) FROM sensors LIMIT 1",
+                "expected/nt_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT NOT(ok) FROM sensors LIMIT 1",
+                "expected/nt_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT not(ok) FROM sensors WHERE id = 1",
+                "expected/nt_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT not(ok) FROM sensors ORDER BY not(ok)",
+                "expected/nt_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT not(ok) FROM sensors ORDER BY not(ok) DESC",
+                "expected/nt_desc.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT not(ok) FROM sensors LIMIT 0",
+                "expected/nt_lim0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT not(1, ok) FROM sensors",
+                "expected/nt_last.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT not(missing, ok) FROM sensors",
+                "expected/nt_ignore.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT not(ok, null) FROM sensors",
+                "expected/nt_const.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT not(note, ok) FROM sensors",
+                "expected/nt_ok.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT not(null, null) FROM sensors LIMIT 1",
+                "expected/nt_null.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT not(null) FROM days ORDER BY ts",
+                "expected/nt_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT not() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for 'not' [found=0,expected=1]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT not(1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: INT"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT not(1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: INT"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT not(missing, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: INT"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT not(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: LONG"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT not(-2147483648) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: LONG"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT not(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: STRING"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT not('a') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: CHAR"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT not('') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: STRING"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT not(1.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: DOUBLE"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT not(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT not(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
