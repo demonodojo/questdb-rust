@@ -294,6 +294,7 @@ pub enum Proj {
     Add(AddExpr),
     Neg(NegExpr),
     BitNot(BitNotExpr),
+    And(AndExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -868,6 +869,21 @@ impl ArithOp {
     }
 }
 
+/// The right side of `value and other`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AndRight {
+    Literal(Scalar),
+    Column(String),
+}
+
+/// `value and other` is the boolean conjunction of a column and a column or literal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AndExpr {
+    pub label: String,
+    pub left: String,
+    pub right: AndRight,
+}
+
 /// `~value` is the bitwise complement of one column. The header is `~(value)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BitNotExpr {
@@ -1322,6 +1338,7 @@ enum SelectPiece {
     Add(AddExpr),
     Neg(NegExpr),
     BitNot(BitNotExpr),
+    And(AndExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -1597,6 +1614,8 @@ impl<'a> Parser<'a> {
                 self.skip();
                 if self.eat_keyword("in") {
                     pieces.push(SelectPiece::InList(self.parse_in_list(name)?));
+                } else if self.eat_keyword("and") {
+                    pieces.push(SelectPiece::And(self.parse_and(name)?));
                 } else if self.starts_eq_or_ne() {
                     pieces.push(SelectPiece::Eq(self.parse_eq(name)?));
                 } else if self.starts_add() {
@@ -1698,6 +1717,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Add(_)
                     | SelectPiece::Neg(_)
                     | SelectPiece::BitNot(_)
+                    | SelectPiece::And(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
                     | SelectPiece::Exp(_)
@@ -1803,6 +1823,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Add(expr) => items.push(Proj::Add(expr)),
                     SelectPiece::Neg(expr) => items.push(Proj::Neg(expr)),
                     SelectPiece::BitNot(expr) => items.push(Proj::BitNot(expr)),
+                    SelectPiece::And(expr) => items.push(Proj::And(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
                     SelectPiece::Exp(expr) => items.push(Proj::Exp(expr)),
@@ -1928,6 +1949,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Add(_)
                 | SelectPiece::Neg(_)
                 | SelectPiece::BitNot(_)
+                | SelectPiece::And(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
                 | SelectPiece::Exp(_)
@@ -2138,6 +2160,38 @@ impl<'a> Parser<'a> {
             label: format!("{name} in ({})", labels.join(", ")),
             value: name,
             args,
+        })
+    }
+
+    fn parse_and(&mut self, left: String) -> Result<AndExpr, Error> {
+        self.skip();
+        let ident = matches!(
+            self.peek(),
+            Some(byte) if byte.is_ascii_alphabetic() || byte == b'_'
+        );
+        if !ident {
+            return Err(Error::new(
+                "unsupported: expected boolean after and".to_string(),
+            ));
+        }
+        let spelling = self.ident_spelling()?;
+        let right = match spelling.to_ascii_lowercase().as_str() {
+            "null" => AndRight::Literal(Scalar::Null),
+            "true" => AndRight::Literal(Scalar::Boolean(true)),
+            "false" => AndRight::Literal(Scalar::Boolean(false)),
+            _ => AndRight::Column(spelling),
+        };
+        let right_label = match &right {
+            AndRight::Literal(Scalar::Null) => "null".to_string(),
+            AndRight::Literal(Scalar::Boolean(true)) => "true".to_string(),
+            AndRight::Literal(Scalar::Boolean(false)) => "false".to_string(),
+            AndRight::Column(name) => name.clone(),
+            AndRight::Literal(_) => "null".to_string(),
+        };
+        Ok(AndExpr {
+            label: format!("{left} and {right_label}"),
+            left,
+            right,
         })
     }
 

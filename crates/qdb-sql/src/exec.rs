@@ -1,18 +1,18 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AddExpr, AggFunc,
-    AggregateExpr, AggregateExtra, ArithOp, AsinExpr, Atan2Expr, AtanExpr, BarExpr, BetweenExpr,
-    BitNotExpr, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr,
-    DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr,
-    DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr,
-    GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr,
-    LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr,
-    MinuteExpr, MonthExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query,
-    QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
-    RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
-    SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
-    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd,
-    TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr, YearExpr,
+    AggregateExpr, AggregateExtra, AndExpr, AndRight, ArithOp, AsinExpr, Atan2Expr, AtanExpr,
+    BarExpr, BetweenExpr, BitNotExpr, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr,
+    CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr,
+    DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter,
+    FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr,
+    IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
+    Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NegExpr, NotExpr, NullIfExpr,
+    PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr,
+    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr,
+    Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr,
+    SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr,
+    TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr,
+    ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -292,6 +292,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Add { label, .. }
             | ResolvedProj::Neg { label, .. }
             | ResolvedProj::BitNot { label, .. }
+            | ResolvedProj::And { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
             | ResolvedProj::Exp { label, .. }
@@ -717,6 +718,11 @@ enum ResolvedProj {
         index: usize,
         result_tag: i32,
     },
+    And {
+        label: String,
+        left: usize,
+        right: ResolvedAnd,
+    },
     Ln {
         label: String,
         input: SqrtInput,
@@ -898,6 +904,7 @@ impl ResolvedProj {
             | Self::Add { label, .. }
             | Self::Neg { label, .. }
             | Self::BitNot { label, .. }
+            | Self::And { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
             | Self::Exp { label, .. }
@@ -940,7 +947,8 @@ impl ResolvedProj {
             | Self::Not { .. }
             | Self::Between { .. }
             | Self::InList { .. }
-            | Self::Eq { .. } => qdb_types::TAG_BOOLEAN,
+            | Self::Eq { .. }
+            | Self::And { .. } => qdb_types::TAG_BOOLEAN,
             Self::DayOfWeekSundayFirst { .. } => qdb_types::TAG_INT,
             Self::ToTimestamp { .. } => qdb_types::TAG_TIMESTAMP,
             Self::ToDate { .. } => qdb_types::TAG_DATE,
@@ -1103,6 +1111,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Add(expr) => resolve_add(table, expr),
         Proj::Neg(expr) => resolve_neg(table, expr),
         Proj::BitNot(expr) => resolve_bit_not(table, expr),
+        Proj::And(expr) => resolve_and(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
         Proj::Exp(expr) => resolve_exp(table, expr),
@@ -1741,6 +1750,59 @@ fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
         literal: expr.literal.clone(),
         op: expr.op,
     })
+}
+
+enum ResolvedAnd {
+    Literal(Scalar),
+    Column(usize),
+}
+
+fn resolve_and(table: &Table, expr: &AndExpr) -> Result<ResolvedProj, Error> {
+    let Some(left) = table.column_index(&expr.left) else {
+        return Err(Error::new(format!("Invalid column: {}", expr.left)));
+    };
+    if table.meta.columns[left].tag != qdb_types::TAG_BOOLEAN {
+        return Err(Error::new(format!(
+            "there is no matching operator `and` with the argument type: {}",
+            qdb_types::type_name(table.meta.columns[left].tag)
+        )));
+    }
+    let right = match &expr.right {
+        AndRight::Literal(value @ (Scalar::Null | Scalar::Boolean(_))) => {
+            ResolvedAnd::Literal(value.clone())
+        }
+        AndRight::Literal(_) => {
+            return Err(Error::new(
+                "there is no matching operator `and` with the argument type: STRING".to_string(),
+            ));
+        }
+        AndRight::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            if table.meta.columns[index].tag != qdb_types::TAG_BOOLEAN {
+                return Err(Error::new(format!(
+                    "there is no matching operator `and` with the argument type: {}",
+                    qdb_types::type_name(table.meta.columns[index].tag)
+                )));
+            }
+            ResolvedAnd::Column(index)
+        }
+    };
+    Ok(ResolvedProj::And {
+        label: expr.label.clone(),
+        left,
+        right,
+    })
+}
+
+fn and_value(table: &Table, row: usize, left: usize, right: &ResolvedAnd) -> Scalar {
+    let left_true = matches!(table.columns[left][row], Scalar::Boolean(true));
+    let right_true = match right {
+        ResolvedAnd::Literal(value) => matches!(value, Scalar::Boolean(true)),
+        ResolvedAnd::Column(index) => matches!(table.columns[*index][row], Scalar::Boolean(true)),
+    };
+    Scalar::Boolean(left_true && right_true)
 }
 
 fn resolve_bit_not(table: &Table, expr: &BitNotExpr) -> Result<ResolvedProj, Error> {
@@ -7374,6 +7436,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::BitNot { index, .. } => {
             bit_not_value(table, row, *index).unwrap_or(Scalar::Null)
         }
+        ResolvedProj::And { left, right, .. } => and_value(table, row, *left, right),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15751,6 +15814,55 @@ mod tests {
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn nd_and_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT ok and ok FROM sensors",
+                "expected/nd_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok and ok FROM sensors WHERE id = 1",
+                "expected/nd_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok and ok FROM sensors WHERE id > 100",
+                "expected/nd_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok and false FROM sensors",
+                "expected/nd_false.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok and null FROM sensors",
+                "expected/nd_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok and true FROM sensors",
+                "expected/nd_true.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&days, "SELECT ok and ok FROM days").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: ok"),
             "{}",
             err.message
         );
