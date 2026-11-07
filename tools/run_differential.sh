@@ -2004,7 +2004,23 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ud_beta "SELECT string_distinct_agg(note, 'β') FROM sensors" \
   ud_nul "SELECT string_distinct_agg(note, '') FROM sensors" \
   ud_nullsep "SELECT string_distinct_agg(note, null) FROM sensors" \
-  ud_madrid "SELECT string_distinct_agg(location, ',') FROM sensors WHERE location = 'madrid'"
+  ud_madrid "SELECT string_distinct_agg(location, ',') FROM sensors WHERE location = 'madrid'" \
+  kp_flags "SELECT kurtosis_pop(flags) FROM sensors" \
+  kp_one "SELECT kurtosis_pop(flags) FROM sensors WHERE id = 1" \
+  kp_none "SELECT kurtosis_pop(flags) FROM sensors WHERE id > 100" \
+  kp_read "SELECT kurtosis_pop(reading) FROM sensors" \
+  kp_score "SELECT kurtosis_pop(score) FROM sensors" \
+  kp_byte "SELECT kurtosis_pop(b) FROM sensors" \
+  kp_code "SELECT kurtosis_pop(code) FROM sensors" \
+  kp_id "SELECT kurtosis_pop(id) FROM sensors" \
+  kp_idpos "SELECT kurtosis_pop(id) FROM sensors WHERE id > 0" \
+  kp_flagpos "SELECT kurtosis_pop(flags) FROM sensors WHERE flags > 0" \
+  kp_grp "SELECT kurtosis_pop(flags) FROM sensors GROUP BY location ORDER BY location" \
+  kp_read_grp "SELECT kurtosis_pop(reading) FROM sensors GROUP BY location ORDER BY location" \
+  kp_lim0 "SELECT kurtosis_pop(flags) FROM sensors LIMIT 0" \
+  kp_case "SELECT KURTOSIS_POP(flags) FROM sensors" \
+  kp_day "SELECT kurtosis_pop(day) FROM sensors" \
+  kp_ts "SELECT kurtosis_pop(ts) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2228,7 +2244,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ud_days "SELECT string_distinct_agg(note, ',') FROM days" \
   ud_days_loc "SELECT string_distinct_agg(location, ',') FROM days" \
   ud_days_grp "SELECT string_distinct_agg(note, ',') FROM days GROUP BY location ORDER BY location" \
-  ud_days_id "SELECT string_distinct_agg(location, ',') FROM days GROUP BY id ORDER BY id"
+  ud_days_id "SELECT string_distinct_agg(location, ',') FROM days GROUP BY id ORDER BY id" \
+  kp_days "SELECT kurtosis_pop(id) FROM days" \
+  kp_days_grp "SELECT kurtosis_pop(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4180,6 +4198,22 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, '') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, null) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT string_distinct_agg(location, ',') FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(id) FROM sensors WHERE id > 0"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT KURTOSIS_POP(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_pop(ts) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4402,6 +4436,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT string_distinct_agg(location, ',') FROM days"),
     (os.environ["DIFF_H2"], "SELECT string_distinct_agg(note, ',') FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT string_distinct_agg(location, ',') FROM days GROUP BY id ORDER BY id"),
+    (os.environ["DIFF_H2"], "SELECT kurtosis_pop(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT kurtosis_pop(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

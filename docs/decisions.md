@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — kurtosis_pop()
+
+`kurtosis_pop(col)` devuelve la curtosis poblacional en exceso como `DOUBLE`. `kurtosis_pop(flags)` es `-1.5000000000000002`. Una sola fila o un grupo sin valores finitos devuelve NULL. Si todos los valores finitos son iguales, el resultado también es NULL. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — string_distinct_agg()
 
 `string_distinct_agg(col, sep)` une la primera aparición de cada texto con un separador de un carácter. Un nulo no aporta y una cadena vacía sí, así que `string_distinct_agg(note, ',')` es `alpha,,βeta`. Un valor repetido se queda una vez: `string_distinct_agg(location, ',')` es `madrid,東京`. El resultado es `STRING`, o `VARCHAR` si la columna lo es. Sin valores es NULL. Se contrastó con `/exec` en `sensors` y `days`.

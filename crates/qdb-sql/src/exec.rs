@@ -7354,7 +7354,9 @@ enum Accumulator {
         mean: f64,
         m2: f64,
         m3: f64,
+        m4: f64,
         count: i64,
+        kurtosis: bool,
     },
     Mode {
         seen: Vec<(Scalar, i64)>,
@@ -7413,11 +7415,13 @@ impl Accumulator {
                 count: 0,
                 invalid: false,
             },
-            AggFunc::Skewness => Self::Skewness {
+            AggFunc::Skewness | AggFunc::KurtosisPop => Self::Skewness {
                 mean: 0.0,
                 m2: 0.0,
                 m3: 0.0,
+                m4: 0.0,
                 count: 0,
+                kurtosis: func == AggFunc::KurtosisPop,
             },
             AggFunc::Mode => Self::Mode { seen: Vec::new() },
             AggFunc::ApproxMedian | AggFunc::ApproxPercentile => Self::ApproxMedian {
@@ -7600,7 +7604,20 @@ impl Accumulator {
                 PairKind::R2 => r2_result(*sum_xy, *sum_y, *sum_x, *count),
                 PairKind::Corr => corr_result(*sum_xy, *sum_y, *sum_x, *count),
             },
-            Self::Skewness { m2, m3, count, .. } => skewness_scalar(*m2, *m3, *count),
+            Self::Skewness {
+                m2,
+                m3,
+                m4,
+                count,
+                kurtosis,
+                ..
+            } => {
+                if *kurtosis {
+                    kurtosis_pop_scalar(*m2, *m4, *count)
+                } else {
+                    skewness_scalar(*m2, *m3, *count)
+                }
+            }
             Self::Mode { seen } => mode_scalar(seen),
             Self::ApproxMedian {
                 floating,
@@ -7753,13 +7770,15 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             qdb_types::type_name(tag)
         )));
     }
-    if matches!(aggregate.func, AggFunc::GeoMean | AggFunc::Skewness)
-        && matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL)
+    if matches!(
+        aggregate.func,
+        AggFunc::GeoMean | AggFunc::Skewness | AggFunc::KurtosisPop
+    ) && matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL)
     {
-        let fname = if aggregate.func == AggFunc::Skewness {
-            "skewness"
-        } else {
-            "geomean"
+        let fname = match aggregate.func {
+            AggFunc::Skewness => "skewness",
+            AggFunc::KurtosisPop => "kurtosis_pop",
+            _ => "geomean",
         };
         return Err(Error::new(format!(
             "argument type mismatch for function `{fname}` at #1 expected: DOUBLE, actual: {}",
@@ -7885,7 +7904,8 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::RegrIntercept
         | AggFunc::RegrR2
         | AggFunc::GeoMean
-        | AggFunc::Skewness => qdb_types::TAG_DOUBLE,
+        | AggFunc::Skewness
+        | AggFunc::KurtosisPop => qdb_types::TAG_DOUBLE,
         AggFunc::Mode => mode_result_tag(input.tag),
         AggFunc::ApproxMedian | AggFunc::ApproxPercentile => qdb_types::TAG_DOUBLE,
         AggFunc::ArgMax => arg_max_result_tag(input.tag, input.pair_tag),
@@ -7928,6 +7948,7 @@ fn contribution(
         }
         AggFunc::GeoMean => geomean_addend(value, input, "geomean"),
         AggFunc::Skewness => geomean_addend(value, input, "skewness"),
+        AggFunc::KurtosisPop => geomean_addend(value, input, "kurtosis_pop"),
         AggFunc::Mode => mode_addend(value, input),
         AggFunc::ApproxMedian | AggFunc::ApproxPercentile => median_addend(value, input),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
@@ -9341,6 +9362,19 @@ fn mode_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Erro
     Ok(Some(scalar))
 }
 
+fn kurtosis_pop_scalar(m2: f64, m4: f64, count: i64) -> Scalar {
+    if count < 1 || m2 == 0.0 {
+        return Scalar::Null;
+    }
+    let n = count as f64;
+    let result = n * m4 / (m2 * m2) - 3.0;
+    if result.is_finite() {
+        Scalar::Double(result)
+    } else {
+        Scalar::Null
+    }
+}
+
 fn skewness_scalar(m2: f64, m3: f64, count: i64) -> Scalar {
     if count < 3 || m2 == 0.0 {
         return Scalar::Null;
@@ -9592,7 +9626,9 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             mean,
             m2,
             m3,
+            m4,
             count,
+            ..
         } => {
             let Scalar::Double(value) = next else {
                 return;
@@ -9604,10 +9640,14 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             let n = *count as f64;
             let delta = value - *mean;
             let delta_n = delta / n;
+            let delta_n2 = delta_n * delta_n;
             let term1 = delta * delta_n * (n - 1.0);
+            let new_m4 = *m4 + term1 * delta_n2 * (n * n - 3.0 * n + 3.0) + 6.0 * delta_n2 * *m2
+                - 4.0 * delta_n * *m3;
             let new_m3 = *m3 + term1 * delta_n * (n - 2.0) - 3.0 * delta_n * *m2;
             *m2 += term1;
             *m3 = new_m3;
+            *m4 = new_m4;
             *mean += delta_n;
         }
         Accumulator::Mode { seen } => {
@@ -24188,6 +24228,174 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT geomean(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn kurtosis_pop_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT kurtosis_pop(flags) FROM sensors",
+                "expected/kp_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(flags) FROM sensors WHERE id = 1",
+                "expected/kp_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(flags) FROM sensors WHERE id > 100",
+                "expected/kp_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(reading) FROM sensors",
+                "expected/kp_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(score) FROM sensors",
+                "expected/kp_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(b) FROM sensors",
+                "expected/kp_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(code) FROM sensors",
+                "expected/kp_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(id) FROM sensors",
+                "expected/kp_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(id) FROM sensors WHERE id > 0",
+                "expected/kp_idpos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(flags) FROM sensors WHERE flags > 0",
+                "expected/kp_flagpos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/kp_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/kp_read_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(flags) FROM sensors LIMIT 0",
+                "expected/kp_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT KURTOSIS_POP(flags) FROM sensors",
+                "expected/kp_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(day) FROM sensors",
+                "expected/kp_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT kurtosis_pop(ts) FROM sensors",
+                "expected/kp_ts.tsv",
+            ),
+            (
+                &days,
+                "SELECT kurtosis_pop(id) FROM days",
+                "expected/kp_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT kurtosis_pop(id) FROM days GROUP BY location ORDER BY location",
+                "expected/kp_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT kurtosis_pop() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `kurtosis_pop` requires arguments: kurtosis_pop(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT kurtosis_pop(flags, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `kurtosis_pop`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT kurtosis_pop(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT kurtosis_pop(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT kurtosis_pop(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `kurtosis_pop` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT kurtosis_pop(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `kurtosis_pop` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT kurtosis_pop(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT kurtosis_pop(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT kurtosis_pop(ch) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),
