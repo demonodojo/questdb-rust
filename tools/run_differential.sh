@@ -2343,7 +2343,14 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   mp_none "SELECT mid(reading, score) FROM sensors WHERE id > 100" \
   mp_int "SELECT mid(flags, id) FROM sensors WHERE id = 1" \
   mp_case "SELECT MID(reading, score) FROM sensors WHERE id = 1" \
-  mp_lim0 "SELECT mid(reading, score) FROM sensors LIMIT 0"
+  mp_lim0 "SELECT mid(reading, score) FROM sensors LIMIT 0" \
+  sb_all "SELECT spread(reading, score) FROM sensors" \
+  sb_one "SELECT spread(reading, score) FROM sensors WHERE id = 1" \
+  sb_null "SELECT spread(reading, score) FROM sensors WHERE id = 2" \
+  sb_none "SELECT spread(reading, score) FROM sensors WHERE id > 100" \
+  sb_int "SELECT spread(flags, id) FROM sensors WHERE id = 1" \
+  sb_case "SELECT SPREAD(reading, score) FROM sensors WHERE id = 1" \
+  sb_lim0 "SELECT spread(reading, score) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2614,7 +2621,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   tq_days "SELECT timestamp_sequence(0, 1000000) FROM days" \
   tq_days_one "SELECT timestamp_sequence(0, 1000000) FROM days WHERE id = 1" \
   mp_days "SELECT mid(id, id) FROM days" \
-  mp_days_one "SELECT mid(id, id) FROM days WHERE id = 1"
+  mp_days_one "SELECT mid(id, id) FROM days WHERE id = 1" \
+  sb_days "SELECT spread(id, id) FROM days" \
+  sb_days_one "SELECT spread(id, id) FROM days WHERE id = 1"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4905,6 +4914,13 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT mid(flags, id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT MID(reading, score) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT mid(reading, score) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT spread(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT spread(reading, score) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT spread(reading, score) FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT spread(reading, score) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT spread(flags, id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT SPREAD(reading, score) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT spread(reading, score) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -5174,6 +5190,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT timestamp_sequence(0, 1000000) FROM days WHERE id = 1"),
     (os.environ["DIFF_H2"], "SELECT mid(id, id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT mid(id, id) FROM days WHERE id = 1"),
+    (os.environ["DIFF_H2"], "SELECT spread(id, id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT spread(id, id) FROM days WHERE id = 1"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
