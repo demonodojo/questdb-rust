@@ -26,7 +26,8 @@
 //! different from `0.0`. With no values it returns 0. Inside `GROUP BY` it has
 //! no `FLOAT`, `DOUBLE` or `BOOLEAN` overload. `concat` joins two or more
 //! values into a string. A text null is empty, a numeric null is `null`, and a
-//! null float is `NaN`. `length` returns the character count as `INT`, or `-1`
+//! null float is `NaN`. `||` is `concat` for two columns and names the result
+//! `concat(left, right)`. `length` returns the character count as `INT`, or `-1`
 //! when the text is null. `lower` returns the text in lowercase, or NULL when
 //! the text is null. `upper` returns the text in uppercase, or NULL when the
 //! text is null. `left` and `right` keep that many characters. A negative

@@ -1631,7 +1631,9 @@ impl<'a> Parser<'a> {
             } else {
                 let name = self.ident_spelling()?;
                 self.skip();
-                if self.eat_keyword("in") {
+                if self.starts_pipes() {
+                    pieces.push(SelectPiece::Concat(self.parse_concat_op(name)?));
+                } else if self.eat_keyword("in") {
                     pieces.push(SelectPiece::InList(self.parse_in_list(name)?));
                 } else if self.eat_keyword("and") {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::And)?));
@@ -3896,6 +3898,28 @@ impl<'a> Parser<'a> {
             index += 1;
         }
         bytes.get(index) == Some(&b'(')
+    }
+
+    fn starts_pipes(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        self.src[pos..].starts_with(b"||")
+    }
+
+    fn parse_concat_op(&mut self, name: String) -> Result<ConcatExpr, Error> {
+        self.skip();
+        if !self.eat(b'|') || !self.eat(b'|') {
+            return Err(Error::new(
+                "unsupported: expected '||' after column".to_string(),
+            ));
+        }
+        let right = self.ident_spelling()?;
+        Ok(ConcatExpr {
+            label: format!("concat({name}, {right})"),
+            args: vec![ConcatArg::Column(name), ConcatArg::Column(right)],
+        })
     }
 
     fn parse_concat(&mut self) -> Result<ConcatExpr, Error> {

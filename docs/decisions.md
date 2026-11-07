@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — operador de concatenación
+
+`left || right` es `concat` de dos columnas. El encabezado es `concat(left, right)` y el tipo es `STRING`. Un número nulo se escribe `null` y un texto nulo desaparece. `id || note` es `1alpha`, `2`, `null` y `-1βeta`. En `days` es `1alpha`, `2`, `3beta` y `null東京`. `note || note` es `alphaalpha`, una cadena vacía, otra cadena vacía y `βetaβeta`. `note || location` es `alphamadrid`, una cadena vacía, `madrid` y `βeta東京`. `id || id` es `11`, `22`, `nullnull` y `-1-1`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — resto de dos columnas
 
 `value % other` también calcula el resto de dos columnas. Un nulo hace nulo el resultado y el resto de cero también, incluido `-0.0 % -0.0`. El signo sigue al dividendo. El tipo se conserva si las dos columnas lo comparten. `LONG` con `INT` ensancha a `LONG`. `id % id` es `0`, `0`, NULL y `0`. En `days` es `0`, `0`, `0` y NULL. `reading % reading` es `0.0`, NULL, NULL y NULL. `flags % flags` es `0`, NULL, NULL y `0`. `id % flags` es `1`, NULL, NULL y `-1`. `flags % id` es `0`, NULL, NULL y `0`. Se contrastó con `/exec` en `sensors` y `days`.
