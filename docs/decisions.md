@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — `not` sin paréntesis
+
+`not value` es la función `not` con un solo argumento. El encabezado es `not(ok)`. `not ok` es `false`, `true`, `false` y `true`. Con `id = 1` es `false` y con `id = 2` es `true`. En `days` se rechaza porque no existe `ok`. Se contrastó con `/exec` en `sensors`.
+
 ## 2026-11-07 — operador de concatenación
 
 `left || right` es `concat` de dos columnas. El encabezado es `concat(left, right)` y el tipo es `STRING`. Un número nulo se escribe `null` y un texto nulo desaparece. `id || note` es `1alpha`, `2`, `null` y `-1βeta`. En `days` es `1alpha`, `2`, `3beta` y `null東京`. `note || note` es `alphaalpha`, una cadena vacía, otra cadena vacía y `βetaβeta`. `note || location` es `alphamadrid`, una cadena vacía, `madrid` y `βeta東京`. `id || id` es `11`, `22`, `nullnull` y `-1-1`. Se contrastó con `/exec` en `sensors` y `days`.

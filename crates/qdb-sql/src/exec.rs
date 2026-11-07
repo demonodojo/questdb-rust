@@ -16217,6 +16217,45 @@ mod tests {
     }
 
     #[test]
+    fn nk_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT not ok FROM sensors",
+                "expected/nk_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT not ok FROM sensors WHERE id = 1",
+                "expected/nk_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT not ok FROM sensors WHERE id = 2",
+                "expected/nk_two.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT not ok FROM sensors WHERE id > 100",
+                "expected/nk_none.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&days, "SELECT not ok FROM days").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: ok"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
     fn dj_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");

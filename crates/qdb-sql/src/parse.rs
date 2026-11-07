@@ -1574,6 +1574,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Ceil(self.parse_ceil()?));
             } else if self.starts_sign_call() {
                 pieces.push(SelectPiece::Sign(self.parse_sign()?));
+            } else if self.starts_not_prefix() {
+                pieces.push(SelectPiece::Not(self.parse_not_prefix()?));
             } else if self.starts_not_call() {
                 pieces.push(SelectPiece::Not(self.parse_not()?));
             } else if self.starts_typeof_call() {
@@ -2472,6 +2474,47 @@ impl<'a> Parser<'a> {
 
     fn starts_not_call(&self) -> bool {
         self.starts_named_call("not")
+    }
+
+    fn starts_not_prefix(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let start = pos;
+        let Some(first) = self.src.get(pos) else {
+            return false;
+        };
+        if !first.is_ascii_alphabetic() && *first != b'_' {
+            return false;
+        }
+        pos += 1;
+        while matches!(self.src.get(pos), Some(byte) if byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            pos += 1;
+        }
+        let word = std::str::from_utf8(&self.src[start..pos])
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if word != "not" {
+            return false;
+        }
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        matches!(
+            self.src.get(pos),
+            Some(byte) if byte.is_ascii_alphabetic() || *byte == b'_'
+        )
+    }
+
+    fn parse_not_prefix(&mut self) -> Result<NotExpr, Error> {
+        let _keyword = self.ident_spelling()?;
+        let value = self.ident_spelling()?;
+        Ok(NotExpr {
+            label: format!("not({value})"),
+            args: vec![ConcatArg::Column(value)],
+        })
     }
 
     fn parse_not(&mut self) -> Result<NotExpr, Error> {

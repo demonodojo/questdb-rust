@@ -2553,7 +2553,11 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   po_none "SELECT id || note FROM sensors WHERE id > 100" \
   po_note "SELECT note || note FROM sensors" \
   po_loc "SELECT note || location FROM sensors" \
-  po_id "SELECT id || id FROM sensors"
+  po_id "SELECT id || id FROM sensors" \
+  nk_all "SELECT not ok FROM sensors" \
+  nk_one "SELECT not ok FROM sensors WHERE id = 1" \
+  nk_two "SELECT not ok FROM sensors WHERE id = 2" \
+  nk_none "SELECT not ok FROM sensors WHERE id > 100"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -5359,6 +5363,10 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT note || note FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT note || location FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT id || id FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT not ok FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT not ok FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT not ok FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT not ok FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
