@@ -1,0 +1,2 @@
+quantile_cont(score, 0.5)
+0.0

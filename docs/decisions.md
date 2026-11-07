@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — quantile_cont()
+
+`quantile_cont(value, percentile)` es la interpolación ya cubierta por `percentile_cont()`. `quantile_cont(flags, 0.25)` es el `DOUBLE` `5.0` y `quantile_cont(reading, 0)` es `-0.0`. Sin valores el resultado es NULL. La llamada vacía exige argumentos y no nombra una firma. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — skewness_samp()
 
 `skewness_samp(value)` es la asimetría muestral ya cubierta por `skewness()`. `skewness_samp(flags)` es el `DOUBLE` `1.33609576072998`. Con menos de tres valores finitos, o si todos son iguales, el resultado es NULL. La llamada vacía exige `skewness_samp(DOUBLE)`. Se contrastó con `/exec` en `sensors` y `days`.

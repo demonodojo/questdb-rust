@@ -75,6 +75,7 @@ pub enum AggFunc {
     IsOrdered,
     PercentileDisc,
     PercentileCont,
+    QuantileCont,
     FirstNotNull,
     LastNotNull,
     BitAnd,
@@ -3181,6 +3182,7 @@ impl<'a> Parser<'a> {
                 | "isordered"
                 | "percentile_disc"
                 | "percentile_cont"
+                | "quantile_cont"
                 | "first_not_null"
                 | "last_not_null"
                 | "bit_and"
@@ -3261,6 +3263,7 @@ impl<'a> Parser<'a> {
             "isordered" => AggFunc::IsOrdered,
             "percentile_disc" => AggFunc::PercentileDisc,
             "percentile_cont" => AggFunc::PercentileCont,
+            "quantile_cont" => AggFunc::QuantileCont,
             "first_not_null" => AggFunc::FirstNotNull,
             "last_not_null" => AggFunc::LastNotNull,
             "bit_and" => AggFunc::BitAnd,
@@ -3718,8 +3721,10 @@ impl<'a> Parser<'a> {
             spark_label = Some(format!("{column_name}, {}", parsed.suffix));
             fourth_type = parsed.mismatch;
         }
-        if matches!(func, AggFunc::PercentileDisc | AggFunc::PercentileCont)
-            && self.peek() == Some(b',')
+        if matches!(
+            func,
+            AggFunc::PercentileDisc | AggFunc::PercentileCont | AggFunc::QuantileCont
+        ) && self.peek() == Some(b',')
         {
             let fname = name.to_ascii_lowercase();
             self.pos += 1;

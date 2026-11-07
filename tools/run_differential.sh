@@ -2215,7 +2215,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sy_lim0 "SELECT skewness_samp(flags) FROM sensors LIMIT 0" \
   sy_day "SELECT skewness_samp(day) FROM sensors" \
   sy_ts "SELECT skewness_samp(ts) FROM sensors" \
-  sy_case "SELECT SKEWNESS_SAMP(flags) FROM sensors"
+  sy_case "SELECT SKEWNESS_SAMP(flags) FROM sensors" \
+  qc_flags "SELECT quantile_cont(flags, 0.5) FROM sensors" \
+  qc_quart "SELECT quantile_cont(flags, 0.25) FROM sensors" \
+  qc_zero "SELECT quantile_cont(flags, 0) FROM sensors" \
+  qc_high "SELECT quantile_cont(flags, 1) FROM sensors" \
+  qc_one "SELECT quantile_cont(flags, 0.5) FROM sensors WHERE id = 1" \
+  qc_none "SELECT quantile_cont(flags, 0.5) FROM sensors WHERE id > 100" \
+  qc_read "SELECT quantile_cont(reading, 0.5) FROM sensors" \
+  qc_read0 "SELECT quantile_cont(reading, 0) FROM sensors" \
+  qc_read1 "SELECT quantile_cont(reading, 1) FROM sensors" \
+  qc_score "SELECT quantile_cont(score, 0.5) FROM sensors" \
+  qc_id "SELECT quantile_cont(id, 0.5) FROM sensors" \
+  qc_byte "SELECT quantile_cont(b, 0.5) FROM sensors" \
+  qc_code "SELECT quantile_cont(code, 0.5) FROM sensors" \
+  qc_grp "SELECT quantile_cont(flags, 0.5) FROM sensors GROUP BY location ORDER BY location" \
+  qc_grp_r "SELECT quantile_cont(reading, 0.5) FROM sensors GROUP BY location ORDER BY location" \
+  qc_lim0 "SELECT quantile_cont(flags, 0.5) FROM sensors LIMIT 0" \
+  qc_case "SELECT QUANTILE_CONT(flags, 0.5) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2466,7 +2483,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   pn_days "SELECT percentile_cont(id, 0.5) FROM days" \
   pn_days_grp "SELECT percentile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location" \
   sy_days "SELECT skewness_samp(id) FROM days" \
-  sy_days_grp "SELECT skewness_samp(id) FROM days GROUP BY location ORDER BY location"
+  sy_days_grp "SELECT skewness_samp(id) FROM days GROUP BY location ORDER BY location" \
+  qc_days "SELECT quantile_cont(id, 0.5) FROM days" \
+  qc_days_grp "SELECT quantile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4629,6 +4648,23 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT skewness_samp(day) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT skewness_samp(ts) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT SKEWNESS_SAMP(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(flags, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(flags, 0.25) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(flags, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(flags, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(flags, 0.5) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(flags, 0.5) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(reading, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(reading, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(reading, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(score, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(id, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(b, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(code, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(flags, 0.5) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(reading, 0.5) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT quantile_cont(flags, 0.5) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT QUANTILE_CONT(flags, 0.5) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4878,6 +4914,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT percentile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT skewness_samp(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT skewness_samp(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT quantile_cont(id, 0.5) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT quantile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

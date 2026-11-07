@@ -1,0 +1,4 @@
+quantile_cont(reading, 0.5)
+NULL
+0.75
+-0.0
