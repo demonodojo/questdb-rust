@@ -1,10 +1,10 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CeilExpr, CmpOp, CoalesceExpr, ConcatArg, ExpExpr, Filter, FloorExpr, GreatestExpr,
-    GroupedSelect, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, PadExpr, PiExpr, PowerExpr,
-    Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
-    RoundUpExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    GroupedSelect, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, NullIfExpr, PadExpr, PiExpr,
+    PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
+    RoundHalfEvenExpr, RoundUpExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr,
+    SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -201,6 +201,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::RoundUp { label, .. }
             | ResolvedProj::RoundHalfEven { label, .. }
             | ResolvedProj::Coalesce { label, .. }
+            | ResolvedProj::NullIf { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -341,6 +342,11 @@ enum ResolvedProj {
         args: Vec<CoalesceArg>,
         result_tag: i32,
     },
+    NullIf {
+        label: String,
+        args: Vec<NullIfArg>,
+        result_tag: i32,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -479,6 +485,7 @@ impl ResolvedProj {
             | Self::RoundUp { label, .. }
             | Self::RoundHalfEven { label, .. }
             | Self::Coalesce { label, .. }
+            | Self::NullIf { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -502,7 +509,7 @@ impl ResolvedProj {
             | Self::RoundDown { .. }
             | Self::RoundUp { .. }
             | Self::RoundHalfEven { .. } => qdb_types::TAG_DOUBLE,
-            Self::Coalesce { result_tag, .. } => *result_tag,
+            Self::Coalesce { result_tag, .. } | Self::NullIf { result_tag, .. } => *result_tag,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -572,6 +579,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::RoundUp(expr) => resolve_round_up(table, expr),
         Proj::RoundHalfEven(expr) => resolve_round_half_even(table, expr),
         Proj::Coalesce(expr) => resolve_coalesce(table, expr),
+        Proj::NullIf(expr) => resolve_nullif(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1219,6 +1227,317 @@ fn floor_input(table: &Table, arg: &ConcatArg) -> Result<(FloorInput, bool), ()>
             }
         }
         ConcatArg::Literal(_) => Err(()),
+    }
+}
+
+const NULLIF_NULL: i32 = -1;
+
+enum NullIfArg {
+    Null,
+    Int(i32),
+    Long(i64),
+    Double(f64),
+    Text(String),
+    Char(char),
+    Column { index: usize },
+}
+
+fn resolve_nullif(table: &Table, expr: &NullIfExpr) -> Result<ResolvedProj, Error> {
+    let mut args = Vec::with_capacity(expr.args.len());
+    for arg in &expr.args {
+        args.push(nullif_arg(table, arg)?);
+    }
+    if args.len() != 2 {
+        return Err(Error::new(format!(
+            "there is no matching function `nullif` with the argument types: ({})",
+            args.iter()
+                .map(|arg| nullif_type_name(nullif_declared(arg, table)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    let result_tag = nullif_result(&args[0], &args[1], table)?;
+    Ok(ResolvedProj::NullIf {
+        label: expr.label.clone(),
+        args,
+        result_tag,
+    })
+}
+
+fn nullif_arg(table: &Table, arg: &ConcatArg) -> Result<NullIfArg, Error> {
+    match arg {
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            Ok(NullIfArg::Column { index })
+        }
+        ConcatArg::Literal(Scalar::Null) => Ok(NullIfArg::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => match i32::try_from(*number) {
+            Ok(number) => Ok(NullIfArg::Int(number)),
+            Err(_) => Ok(NullIfArg::Long(*number)),
+        },
+        ConcatArg::Literal(Scalar::Double(number)) => Ok(NullIfArg::Double(*number)),
+        ConcatArg::Literal(Scalar::Text(text)) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) if u32::from(ch) <= u32::from(u16::MAX) => Ok(NullIfArg::Char(ch)),
+                _ => Ok(NullIfArg::Text(text.clone())),
+            }
+        }
+        ConcatArg::Literal(_) => Err(Error::new(
+            "there is no matching function `nullif` with the argument types: (UNSUPPORTED)"
+                .to_string(),
+        )),
+    }
+}
+
+fn nullif_declared(arg: &NullIfArg, table: &Table) -> i32 {
+    match arg {
+        NullIfArg::Null => NULLIF_NULL,
+        NullIfArg::Int(_) => qdb_types::TAG_INT,
+        NullIfArg::Long(_) => qdb_types::TAG_LONG,
+        NullIfArg::Double(_) => qdb_types::TAG_DOUBLE,
+        NullIfArg::Text(_) => qdb_types::TAG_STRING,
+        NullIfArg::Char(_) => qdb_types::TAG_CHAR,
+        NullIfArg::Column { index } => table.meta.columns[*index].tag,
+    }
+}
+
+fn nullif_type_name(tag: i32) -> &'static str {
+    if tag == NULLIF_NULL {
+        "NULL"
+    } else {
+        qdb_types::type_name(tag)
+    }
+}
+
+fn nullif_result(left: &NullIfArg, right: &NullIfArg, table: &Table) -> Result<i32, Error> {
+    let left_tag = nullif_declared(left, table);
+    let right_tag = nullif_declared(right, table);
+    if let Some(tag) = nullif_common(left, left_tag, right, right_tag) {
+        return Ok(tag);
+    }
+    Err(Error::new(format!(
+        "there is no matching function `nullif` with the argument types: ({}, {})",
+        nullif_type_name(left_tag),
+        nullif_type_name(right_tag)
+    )))
+}
+
+fn nullif_common(
+    left: &NullIfArg,
+    left_tag: i32,
+    right: &NullIfArg,
+    right_tag: i32,
+) -> Option<i32> {
+    if left_tag == NULLIF_NULL && right_tag == NULLIF_NULL {
+        return Some(qdb_types::TAG_STRING);
+    }
+    if left_tag == NULLIF_NULL {
+        return Some(nullif_with_null(right, right_tag));
+    }
+    if right_tag == NULLIF_NULL {
+        return Some(nullif_with_null(left, left_tag));
+    }
+    if left_tag == qdb_types::TAG_CHAR && right_tag == qdb_types::TAG_CHAR {
+        return Some(qdb_types::TAG_CHAR);
+    }
+    if nullif_text(left_tag) && nullif_text(right_tag) {
+        return Some(qdb_types::TAG_STRING);
+    }
+    if left_tag == qdb_types::TAG_CHAR && nullif_text(right_tag)
+        || right_tag == qdb_types::TAG_CHAR && nullif_text(left_tag)
+    {
+        return Some(qdb_types::TAG_STRING);
+    }
+    if nullif_numeric(left_tag) && nullif_numeric(right_tag) {
+        if left_tag == qdb_types::TAG_DOUBLE
+            || right_tag == qdb_types::TAG_DOUBLE
+            || left_tag == qdb_types::TAG_FLOAT
+            || right_tag == qdb_types::TAG_FLOAT
+        {
+            return Some(qdb_types::TAG_DOUBLE);
+        }
+        if left_tag == qdb_types::TAG_LONG || right_tag == qdb_types::TAG_LONG {
+            return Some(qdb_types::TAG_LONG);
+        }
+        return Some(qdb_types::TAG_INT);
+    }
+    None
+}
+
+fn nullif_with_null(other: &NullIfArg, tag: i32) -> i32 {
+    if tag == qdb_types::TAG_CHAR && matches!(other, NullIfArg::Char(_)) {
+        qdb_types::TAG_STRING
+    } else if tag == qdb_types::TAG_FLOAT {
+        qdb_types::TAG_DOUBLE
+    } else if matches!(tag, qdb_types::TAG_BYTE | qdb_types::TAG_SHORT) {
+        qdb_types::TAG_INT
+    } else if tag == qdb_types::TAG_SYMBOL || tag == qdb_types::TAG_VARCHAR {
+        qdb_types::TAG_STRING
+    } else {
+        tag
+    }
+}
+
+fn nullif_text(tag: i32) -> bool {
+    matches!(
+        tag,
+        qdb_types::TAG_STRING | qdb_types::TAG_SYMBOL | qdb_types::TAG_VARCHAR
+    )
+}
+
+fn nullif_numeric(tag: i32) -> bool {
+    matches!(
+        tag,
+        qdb_types::TAG_BYTE
+            | qdb_types::TAG_SHORT
+            | qdb_types::TAG_INT
+            | qdb_types::TAG_LONG
+            | qdb_types::TAG_FLOAT
+            | qdb_types::TAG_DOUBLE
+    )
+}
+
+fn nullif_value(table: &Table, row: usize, args: &[NullIfArg], result_tag: i32) -> Scalar {
+    match result_tag {
+        qdb_types::TAG_CHAR => {
+            let left = nullif_char(table, row, &args[0]);
+            let right = nullif_char(table, row, &args[1]);
+            if left == right {
+                Scalar::Char(0)
+            } else {
+                Scalar::Char(left)
+            }
+        }
+        qdb_types::TAG_STRING => {
+            let Some(left) = nullif_text_value(table, row, &args[0]) else {
+                return Scalar::Null;
+            };
+            match nullif_text_value(table, row, &args[1]) {
+                Some(right) if right == left => Scalar::Null,
+                _ => Scalar::Text(left),
+            }
+        }
+        qdb_types::TAG_DOUBLE => {
+            let Some(left) = nullif_f64(table, row, &args[0]) else {
+                return Scalar::Null;
+            };
+            if nullif_f64_equal(Some(left), nullif_f64(table, row, &args[1])) {
+                Scalar::Null
+            } else {
+                Scalar::Double(left)
+            }
+        }
+        qdb_types::TAG_LONG => {
+            let Some(left) = nullif_i64(table, row, &args[0]) else {
+                return Scalar::Null;
+            };
+            if nullif_i64(table, row, &args[1]) == Some(left) {
+                Scalar::Null
+            } else {
+                Scalar::Long(left)
+            }
+        }
+        qdb_types::TAG_INT => {
+            let Some(left) = nullif_i32(table, row, &args[0]) else {
+                return Scalar::Null;
+            };
+            if nullif_i32(table, row, &args[1]) == Some(left) {
+                Scalar::Null
+            } else {
+                Scalar::Int(left)
+            }
+        }
+        _ => Scalar::Null,
+    }
+}
+
+fn nullif_char(table: &Table, row: usize, arg: &NullIfArg) -> u16 {
+    match arg {
+        NullIfArg::Char(ch) => *ch as u16,
+        NullIfArg::Column { index } => match table.columns[*index][row] {
+            Scalar::Char(unit) => unit,
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
+fn nullif_text_value(table: &Table, row: usize, arg: &NullIfArg) -> Option<String> {
+    match arg {
+        NullIfArg::Null => None,
+        NullIfArg::Text(text) => Some(text.clone()),
+        NullIfArg::Char('\0') => None,
+        NullIfArg::Char(ch) => Some(ch.to_string()),
+        NullIfArg::Column { index } => match &table.columns[*index][row] {
+            Scalar::Null => None,
+            Scalar::Text(text) => Some(text.clone()),
+            Scalar::Char(0) => None,
+            Scalar::Char(unit) => char::from_u32(u32::from(*unit)).map(|ch| ch.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn nullif_f64(table: &Table, row: usize, arg: &NullIfArg) -> Option<f64> {
+    match arg {
+        NullIfArg::Null => None,
+        NullIfArg::Int(number) => Some(f64::from(*number)),
+        NullIfArg::Long(number) => Some(*number as f64),
+        NullIfArg::Double(number) => Some(*number),
+        NullIfArg::Column { index } => match table.columns[*index][row] {
+            Scalar::Null => None,
+            Scalar::Byte(number) => Some(f64::from(number)),
+            Scalar::Short(number) => Some(f64::from(number)),
+            Scalar::Int(number) => Some(f64::from(number)),
+            Scalar::Long(number) => Some(number as f64),
+            Scalar::Float(number) => Some(f64::from(number)),
+            Scalar::Double(number) => Some(number),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn nullif_f64_equal(left: Option<f64>, right: Option<f64>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left == right || (left == 0.0 && right == 0.0),
+        _ => false,
+    }
+}
+
+fn nullif_i64(table: &Table, row: usize, arg: &NullIfArg) -> Option<i64> {
+    match arg {
+        NullIfArg::Null => None,
+        NullIfArg::Int(number) => Some(i64::from(*number)),
+        NullIfArg::Long(number) => Some(*number),
+        NullIfArg::Column { index } => match table.columns[*index][row] {
+            Scalar::Null => None,
+            Scalar::Byte(number) => Some(i64::from(number)),
+            Scalar::Short(number) => Some(i64::from(number)),
+            Scalar::Int(number) => Some(i64::from(number)),
+            Scalar::Long(number) => Some(number),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn nullif_i32(table: &Table, row: usize, arg: &NullIfArg) -> Option<i32> {
+    match arg {
+        NullIfArg::Null => None,
+        NullIfArg::Int(number) => Some(*number),
+        NullIfArg::Column { index } => match table.columns[*index][row] {
+            Scalar::Null => None,
+            Scalar::Byte(number) => Some(i32::from(number)),
+            Scalar::Short(number) => Some(i32::from(number)),
+            Scalar::Int(number) => Some(number),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -2364,6 +2683,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Coalesce {
             args, result_tag, ..
         } => coalesce_value(table, row, args, *result_tag),
+        ResolvedProj::NullIf {
+            args, result_tag, ..
+        } => nullif_value(table, row, args, *result_tag),
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
         ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
             Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
@@ -10478,6 +10800,237 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT coalesce(missing, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn nullif_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT nullif(id, 1) FROM sensors",
+                "expected/ni_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(id, flags) FROM sensors",
+                "expected/ni_id_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(flags, 10) FROM sensors",
+                "expected/ni_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(reading, 1.5) FROM sensors",
+                "expected/ni_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(reading, score) FROM sensors",
+                "expected/ni_reading_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(score, 1.25) FROM sensors",
+                "expected/ni_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(note, 'alpha') FROM sensors",
+                "expected/ni_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(note, '') FROM sensors",
+                "expected/ni_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(location, 'madrid') FROM sensors",
+                "expected/ni_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(tag, 'v1') FROM sensors",
+                "expected/ni_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(code, 7) FROM sensors",
+                "expected/ni_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(b, 3) FROM sensors",
+                "expected/ni_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(ch, 'A') FROM sensors",
+                "expected/ni_char.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(null, null) FROM sensors LIMIT 1",
+                "expected/ni_nulls.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(-0.0, 0.0) FROM sensors LIMIT 1",
+                "expected/ni_negzero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(reading, 0) FROM sensors",
+                "expected/ni_reading_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(id, 1.5) FROM sensors",
+                "expected/ni_id_double.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(flags, id) FROM sensors",
+                "expected/ni_flags_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(1, id) FROM sensors",
+                "expected/ni_one_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(ch, 'β') FROM sensors",
+                "expected/ni_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(note, null) FROM sensors",
+                "expected/ni_note_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif('', '') FROM sensors LIMIT 1",
+                "expected/ni_empty_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(code, b) FROM sensors",
+                "expected/ni_code_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(score, 1) FROM sensors",
+                "expected/ni_score_int.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(ch, 'ab') FROM sensors",
+                "expected/ni_char_text.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif('A', ch) FROM sensors",
+                "expected/ni_lit_char.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT NULLIF(NOTE, 'alpha') FROM sensors",
+                "expected/ni_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(id, flags) FROM sensors ORDER BY nullif(id, flags)",
+                "expected/ni_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(reading, 1.5) FROM sensors ORDER BY nullif(reading, 1.5)",
+                "expected/ni_reading_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(note, 'alpha') FROM sensors ORDER BY nullif(note, 'alpha')",
+                "expected/ni_text_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(note, 'alpha') FROM sensors WHERE id = 1",
+                "expected/ni_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nullif(id, 1) FROM sensors LIMIT 0",
+                "expected/ni_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT nullif(note, 'x') FROM days ORDER BY ts",
+                "expected/ni_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT nullif(id, 2) FROM days ORDER BY ts",
+                "expected/ni_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT nullif() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("function `nullif` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nullif(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `nullif` with the argument types: (LONG)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nullif(null) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `nullif` with the argument types: (NULL)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nullif(id, 1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `nullif` with the argument types: (LONG, INT, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nullif(ok, ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("there is no matching function `nullif` with the argument types: (BOOLEAN, BOOLEAN)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nullif(id, note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `nullif` with the argument types: (LONG, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nullif(missing, id) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

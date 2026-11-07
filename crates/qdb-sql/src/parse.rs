@@ -102,6 +102,7 @@ pub enum Proj {
     RoundUp(RoundUpExpr),
     RoundHalfEven(RoundHalfEvenExpr),
     Coalesce(CoalesceExpr),
+    NullIf(NullIfExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -253,6 +254,13 @@ pub struct RoundHalfEvenExpr {
 /// `coalesce(value, value, ...)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoalesceExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `nullif(value, value)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NullIfExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -423,6 +431,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_round_half_even()?.label
             } else if parser.starts_coalesce_call() {
                 parser.parse_coalesce()?.label
+            } else if parser.starts_nullif_call() {
+                parser.parse_nullif()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -519,6 +529,7 @@ enum SelectPiece {
     RoundUp(RoundUpExpr),
     RoundHalfEven(RoundHalfEvenExpr),
     Coalesce(CoalesceExpr),
+    NullIf(NullIfExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -660,6 +671,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::RoundHalfEven(self.parse_round_half_even()?));
             } else if self.starts_coalesce_call() {
                 pieces.push(SelectPiece::Coalesce(self.parse_coalesce()?));
+            } else if self.starts_nullif_call() {
+                pieces.push(SelectPiece::NullIf(self.parse_nullif()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -719,6 +732,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::RoundUp(_)
                     | SelectPiece::RoundHalfEven(_)
                     | SelectPiece::Coalesce(_)
+                    | SelectPiece::NullIf(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -764,6 +778,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::RoundUp(expr) => items.push(Proj::RoundUp(expr)),
                     SelectPiece::RoundHalfEven(expr) => items.push(Proj::RoundHalfEven(expr)),
                     SelectPiece::Coalesce(expr) => items.push(Proj::Coalesce(expr)),
+                    SelectPiece::NullIf(expr) => items.push(Proj::NullIf(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -833,6 +848,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::RoundUp(_)
                 | SelectPiece::RoundHalfEven(_)
                 | SelectPiece::Coalesce(_)
+                | SelectPiece::NullIf(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1079,6 +1095,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_nullif_call(&self) -> bool {
+        self.starts_named_call("nullif")
+    }
+
+    fn parse_nullif(&mut self) -> Result<NullIfExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `nullif` requires arguments".to_string(),
+            ));
+        }
+        Ok(NullIfExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

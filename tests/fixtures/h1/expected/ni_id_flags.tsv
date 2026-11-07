@@ -1,0 +1,5 @@
+nullif(id, flags)
+1
+2
+NULL
+-1

@@ -840,7 +840,39 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ca_reading_order "SELECT coalesce(reading, 0.0) FROM sensors ORDER BY coalesce(reading, 0.0)" \
   ca_text_order "SELECT coalesce(note, tag) FROM sensors ORDER BY coalesce(note, tag)" \
   ca_where "SELECT coalesce(note, 'x') FROM sensors WHERE id = 1" \
-  ca_limit_zero "SELECT coalesce(id, flags) FROM sensors LIMIT 0"
+  ca_limit_zero "SELECT coalesce(id, flags) FROM sensors LIMIT 0" \
+  ni_id "SELECT nullif(id, 1) FROM sensors" \
+  ni_id_flags "SELECT nullif(id, flags) FROM sensors" \
+  ni_flags "SELECT nullif(flags, 10) FROM sensors" \
+  ni_reading "SELECT nullif(reading, 1.5) FROM sensors" \
+  ni_reading_score "SELECT nullif(reading, score) FROM sensors" \
+  ni_score "SELECT nullif(score, 1.25) FROM sensors" \
+  ni_note "SELECT nullif(note, 'alpha') FROM sensors" \
+  ni_empty "SELECT nullif(note, '') FROM sensors" \
+  ni_location "SELECT nullif(location, 'madrid') FROM sensors" \
+  ni_tag "SELECT nullif(tag, 'v1') FROM sensors" \
+  ni_code "SELECT nullif(code, 7) FROM sensors" \
+  ni_byte "SELECT nullif(b, 3) FROM sensors" \
+  ni_char "SELECT nullif(ch, 'A') FROM sensors" \
+  ni_nulls "SELECT nullif(null, null) FROM sensors LIMIT 1" \
+  ni_negzero "SELECT nullif(-0.0, 0.0) FROM sensors LIMIT 1" \
+  ni_reading_zero "SELECT nullif(reading, 0) FROM sensors" \
+  ni_id_double "SELECT nullif(id, 1.5) FROM sensors" \
+  ni_flags_id "SELECT nullif(flags, id) FROM sensors" \
+  ni_one_id "SELECT nullif(1, id) FROM sensors" \
+  ni_beta "SELECT nullif(ch, 'β') FROM sensors" \
+  ni_note_null "SELECT nullif(note, null) FROM sensors" \
+  ni_empty_lit "SELECT nullif('', '') FROM sensors LIMIT 1" \
+  ni_code_byte "SELECT nullif(code, b) FROM sensors" \
+  ni_score_int "SELECT nullif(score, 1) FROM sensors" \
+  ni_char_text "SELECT nullif(ch, 'ab') FROM sensors" \
+  ni_lit_char "SELECT nullif('A', ch) FROM sensors" \
+  ni_case "SELECT NULLIF(NOTE, 'alpha') FROM sensors" \
+  ni_order "SELECT nullif(id, flags) FROM sensors ORDER BY nullif(id, flags)" \
+  ni_reading_order "SELECT nullif(reading, 1.5) FROM sensors ORDER BY nullif(reading, 1.5)" \
+  ni_text_order "SELECT nullif(note, 'alpha') FROM sensors ORDER BY nullif(note, 'alpha')" \
+  ni_where "SELECT nullif(note, 'alpha') FROM sensors WHERE id = 1" \
+  ni_limit_zero "SELECT nullif(id, 1) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -952,7 +984,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   rup_id "SELECT round_up(id, 0) FROM days ORDER BY ts" \
   rhe_id "SELECT round_half_even(id, 0) FROM days ORDER BY ts" \
   ca_note "SELECT coalesce(note, 'x') FROM days ORDER BY ts" \
-  ca_id "SELECT coalesce(id, 0) FROM days ORDER BY ts"
+  ca_id "SELECT coalesce(id, 0) FROM days ORDER BY ts" \
+  ni_note "SELECT nullif(note, 'x') FROM days ORDER BY ts" \
+  ni_id "SELECT nullif(id, 2) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1740,6 +1774,38 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT coalesce(note, tag) FROM sensors ORDER BY coalesce(note, tag)"),
     (os.environ["DIFF_H1"], "SELECT coalesce(note, 'x') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT coalesce(id, flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT nullif(id, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(flags, 10) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(reading, 1.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(score, 1.25) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(note, 'alpha') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(note, '') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(location, 'madrid') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(tag, 'v1') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(code, 7) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(b, 3) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(ch, 'A') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(null, null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT nullif(-0.0, 0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT nullif(reading, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(id, 1.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(flags, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(1, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(ch, 'β') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(note, null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif('', '') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT nullif(code, b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(score, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(ch, 'ab') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif('A', ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT NULLIF(NOTE, 'alpha') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nullif(id, flags) FROM sensors ORDER BY nullif(id, flags)"),
+    (os.environ["DIFF_H1"], "SELECT nullif(reading, 1.5) FROM sensors ORDER BY nullif(reading, 1.5)"),
+    (os.environ["DIFF_H1"], "SELECT nullif(note, 'alpha') FROM sensors ORDER BY nullif(note, 'alpha')"),
+    (os.environ["DIFF_H1"], "SELECT nullif(note, 'alpha') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT nullif(id, 1) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1850,6 +1916,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT round_half_even(id, 0) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT coalesce(note, 'x') FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT coalesce(id, 0) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT nullif(note, 'x') FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT nullif(id, 2) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

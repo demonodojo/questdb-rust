@@ -1,0 +1,5 @@
+nullif(code, 7)
+NULL
+0
+-32768
+1
