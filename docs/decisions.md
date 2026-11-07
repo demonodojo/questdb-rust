@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `::boolean`
+
+`column::boolean` convierte una columna a `BOOLEAN` y el encabezado conserva la grafía. Un nulo es `false`, el cero es `false` y un texto es `false`. Cualquier otro número es `true`. `id::boolean` es `true`, `true`, `false` y `true`. En `days` es `true`, `true`, `true` y `false`. `ok::boolean` es `true`, `false`, `true` y `false`. `flags::boolean` es `true`, `false`, `false` y `true`. `note::boolean` es `false`, `false`, `false` y `false`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `::float`
 
 `column::float` y `column::FLOAT` se resuelven como `DOUBLE`. El encabezado es `id::DOUBLE`. Un nulo sigue siendo `NULL` y un texto que no es un número es `NULL`. `id::float` es `1.0`, `2.0`, `NULL` y `-1.0`. En `days` es `1.0`, `2.0`, `3.0` y `NULL`. `flags::float` es `10.0`, `NULL`, `0.0` y `42.0`. `note::float` es `NULL`, `NULL`, `NULL` y `NULL`. `reading::float` es `1.5`, `NULL`, `0.0` y `-0.0`. `score::float` es `1.25`, `NULL`, `0.0` y `-1.5`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.

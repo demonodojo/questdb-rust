@@ -17677,6 +17677,65 @@ mod tests {
     }
 
     #[test]
+    fn zb_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id::boolean FROM sensors",
+                "expected/zb_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::BOOLEAN FROM sensors",
+                "expected/zb_upper.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::boolean FROM sensors WHERE id = 1",
+                "expected/zb_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::boolean FROM sensors WHERE id > 100",
+                "expected/zb_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ok::boolean FROM sensors",
+                "expected/zb_ok.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags::boolean FROM sensors",
+                "expected/zb_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note::boolean FROM sensors",
+                "expected/zb_note.tsv",
+            ),
+            (
+                &days,
+                "SELECT id::boolean FROM days",
+                "expected/zb_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id::missing FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid constant: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
     fn dj_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
