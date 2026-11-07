@@ -51,6 +51,7 @@ pub enum AggFunc {
     Variance,
     VarPop,
     StdDevPop,
+    StdDevSamp,
     KSum,
     NSum,
     ApproxCountDistinct,
@@ -3044,6 +3045,7 @@ impl<'a> Parser<'a> {
                 | "variance"
                 | "var_pop"
                 | "stddev_pop"
+                | "stddev_samp"
                 | "ksum"
                 | "nsum"
                 | "approx_count_distinct"
@@ -3094,6 +3096,7 @@ impl<'a> Parser<'a> {
             "variance" => AggFunc::Variance,
             "var_pop" => AggFunc::VarPop,
             "stddev_pop" => AggFunc::StdDevPop,
+            "stddev_samp" => AggFunc::StdDevSamp,
             "ksum" => AggFunc::KSum,
             "nsum" => AggFunc::NSum,
             "approx_count_distinct" => AggFunc::ApproxCountDistinct,
@@ -3116,6 +3119,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Variance
                 | AggFunc::VarPop
                 | AggFunc::StdDevPop
+                | AggFunc::StdDevSamp
                 | AggFunc::KSum
                 | AggFunc::NSum
         ) && self.peek() != Some(b')')
@@ -3274,6 +3278,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Variance
                 | AggFunc::VarPop
                 | AggFunc::StdDevPop
+                | AggFunc::StdDevSamp
                 | AggFunc::KSum
                 | AggFunc::NSum
         ) && column.is_none()
