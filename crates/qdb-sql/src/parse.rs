@@ -115,6 +115,7 @@ pub enum Proj {
     Millis(MillisExpr),
     Micros(MicrosExpr),
     DayOfWeek(DayOfWeekExpr),
+    WeekOfYear(WeekOfYearExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -362,6 +363,13 @@ pub struct DayOfWeekExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `week_of_year(timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeekOfYearExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -554,6 +562,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_micros()?.label
             } else if parser.starts_day_of_week_call() {
                 parser.parse_day_of_week()?.label
+            } else if parser.starts_week_of_year_call() {
+                parser.parse_week_of_year()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -663,6 +673,7 @@ enum SelectPiece {
     Millis(MillisExpr),
     Micros(MicrosExpr),
     DayOfWeek(DayOfWeekExpr),
+    WeekOfYear(WeekOfYearExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -830,6 +841,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Micros(self.parse_micros()?));
             } else if self.starts_day_of_week_call() {
                 pieces.push(SelectPiece::DayOfWeek(self.parse_day_of_week()?));
+            } else if self.starts_week_of_year_call() {
+                pieces.push(SelectPiece::WeekOfYear(self.parse_week_of_year()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -902,6 +915,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Millis(_)
                     | SelectPiece::Micros(_)
                     | SelectPiece::DayOfWeek(_)
+                    | SelectPiece::WeekOfYear(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -960,6 +974,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Millis(expr) => items.push(Proj::Millis(expr)),
                     SelectPiece::Micros(expr) => items.push(Proj::Micros(expr)),
                     SelectPiece::DayOfWeek(expr) => items.push(Proj::DayOfWeek(expr)),
+                    SelectPiece::WeekOfYear(expr) => items.push(Proj::WeekOfYear(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -1042,6 +1057,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Millis(_)
                 | SelectPiece::Micros(_)
                 | SelectPiece::DayOfWeek(_)
+                | SelectPiece::WeekOfYear(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1288,6 +1304,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_week_of_year_call(&self) -> bool {
+        self.starts_named_call("week_of_year")
+    }
+
+    fn parse_week_of_year(&mut self) -> Result<WeekOfYearExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `week_of_year` requires arguments: week_of_year(TIMESTAMP)".to_string(),
+            ));
+        }
+        Ok(WeekOfYearExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

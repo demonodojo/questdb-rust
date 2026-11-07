@@ -6,7 +6,7 @@ use crate::parse::{
     NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
     RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr,
     SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
-    TrimEnd, TrimExpr, UpperExpr, YearExpr,
+    TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -216,6 +216,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Millis { label, .. }
             | ResolvedProj::Micros { label, .. }
             | ResolvedProj::DayOfWeek { label, .. }
+            | ResolvedProj::WeekOfYear { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -414,6 +415,10 @@ enum ResolvedProj {
         label: String,
         value: DateDiffSide,
     },
+    WeekOfYear {
+        label: String,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -565,6 +570,7 @@ impl ResolvedProj {
             | Self::Millis { label, .. }
             | Self::Micros { label, .. }
             | Self::DayOfWeek { label, .. }
+            | Self::WeekOfYear { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -600,7 +606,8 @@ impl ResolvedProj {
             | Self::Second { .. }
             | Self::Millis { .. }
             | Self::Micros { .. }
-            | Self::DayOfWeek { .. } => qdb_types::TAG_INT,
+            | Self::DayOfWeek { .. }
+            | Self::WeekOfYear { .. } => qdb_types::TAG_INT,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -683,6 +690,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Millis(expr) => resolve_millis(table, expr),
         Proj::Micros(expr) => resolve_micros(table, expr),
         Proj::DayOfWeek(expr) => resolve_day_of_week(table, expr),
+        Proj::WeekOfYear(expr) => resolve_week_of_year(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1337,6 +1345,31 @@ enum DateDiffSide {
     Micros(i64),
     Column { index: usize },
     Null,
+}
+
+fn resolve_week_of_year(table: &Table, expr: &WeekOfYearExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `week_of_year`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::WeekOfYear {
+        label: expr.label.clone(),
+        value: datediff_side(table, &expr.args[0], "week_of_year", 1)?,
+    })
+}
+
+fn iso_week(micros: i64) -> i32 {
+    let days = micros.div_euclid(DATEADD_DAY);
+    let weekday = i64::from(weekday_monday(micros));
+    let thursday = days + (4 - weekday);
+    let (year, _, _) = qdb_types::civil_from_unix_days(thursday);
+    let jan4 = qdb_types::unix_days_from_civil(year, 1, 4).unwrap_or(0);
+    let jan4_index = (jan4 + 4).rem_euclid(7);
+    let jan4_weekday = if jan4_index == 0 { 7 } else { jan4_index };
+    let week1_thursday = jan4 + (4 - jan4_weekday);
+    ((thursday - week1_thursday) / 7 + 1) as i32
 }
 
 fn resolve_day_of_week(table: &Table, expr: &DayOfWeekExpr) -> Result<ResolvedProj, Error> {
@@ -3513,6 +3546,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::DayOfWeek { value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Int(weekday_monday(micros)),
+            None => Scalar::Null,
+        },
+        ResolvedProj::WeekOfYear { value, .. } => match datediff_micros(table, row, value) {
+            Some(micros) => Scalar::Int(iso_week(micros)),
             None => Scalar::Null,
         },
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
@@ -12377,6 +12414,101 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn week_of_year_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT week_of_year(ts) FROM sensors",
+                "expected/wy_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT week_of_year(id) FROM sensors",
+                "expected/wy_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT week_of_year('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1",
+                "expected/wy_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT week_of_year('2019-12-29T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/wy_prev.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT week_of_year('2020-12-31T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/wy_w53.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT week_of_year('2021-01-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/wy_ny.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT WEEK_OF_YEAR(TS) FROM sensors",
+                "expected/wy_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT week_of_year(id) FROM sensors ORDER BY week_of_year(id)",
+                "expected/wy_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT week_of_year(ts) FROM sensors WHERE id = 1",
+                "expected/wy_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT week_of_year(ts) FROM sensors LIMIT 0",
+                "expected/wy_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT week_of_year(ts) FROM days ORDER BY ts",
+                "expected/wy_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT week_of_year() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `week_of_year` requires arguments: week_of_year(TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT week_of_year(ts, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `week_of_year`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT week_of_year(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT week_of_year('nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
             "{}",

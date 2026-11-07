@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — week_of_year()
+
+`week_of_year(instante)` devuelve `INT` con la semana ISO. El jueves decide el año: el 29 de diciembre de 2019 es la semana 52, el 31 de diciembre de 2020 es la 53 y el 1 de enero de 2021 sigue en la 53. En `sensors` y `days` los timestamps caen en la semana 1. Un `LONG` se lee como microsegundos y aquí también da 1, salvo el nulo. Una cadena con fecha UTC se acepta. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — day_of_week()
 
 `day_of_week(instante)` devuelve `INT` con el día de la semana, lunes 1 y domingo 7. El 2 de enero de 2020 es jueves (4), el 5 es domingo (7) y el 6 es lunes (1). En `days`, ordenado por `ts`, los días son 4, 4, 5 y 5. Un `LONG` se lee como microsegundos: 1 y 2 caen en jueves, el nulo es NULL y -1 es miércoles. Una cadena con fecha UTC se acepta. Se contrastó con `/exec` en `sensors` y `days`.
