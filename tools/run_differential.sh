@@ -1958,7 +1958,36 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ax_flags_ts "SELECT arg_max(flags, ts) FROM sensors" \
   ax_flags_read "SELECT arg_max(flags, reading) FROM sensors" \
   ax_byte_ts "SELECT arg_max(b, ts) FROM sensors" \
-  ax_ch_id "SELECT arg_max(ch, id) FROM sensors"
+  ax_ch_id "SELECT arg_max(ch, id) FROM sensors" \
+  im_read "SELECT arg_min(reading, flags) FROM sensors" \
+  im_one "SELECT arg_min(reading, flags) FROM sensors WHERE id = 1" \
+  im_none "SELECT arg_min(reading, flags) FROM sensors WHERE id > 100" \
+  im_pos "SELECT arg_min(reading, flags) FROM sensors WHERE flags > 0" \
+  im_score "SELECT arg_min(score, flags) FROM sensors" \
+  im_byte "SELECT arg_min(b, flags) FROM sensors" \
+  im_code "SELECT arg_min(code, flags) FROM sensors" \
+  im_id "SELECT arg_min(id, flags) FROM sensors" \
+  im_flags "SELECT arg_min(flags, flags) FROM sensors" \
+  im_flags_id "SELECT arg_min(flags, id) FROM sensors" \
+  im_same "SELECT arg_min(id, id) FROM sensors WHERE id = 1" \
+  im_id_ts "SELECT arg_min(id, ts) FROM sensors" \
+  im_flags_ts "SELECT arg_min(flags, ts) FROM sensors" \
+  im_flags_read "SELECT arg_min(flags, reading) FROM sensors" \
+  im_byte_ts "SELECT arg_min(b, ts) FROM sensors" \
+  im_byte_id "SELECT arg_min(b, id) FROM sensors" \
+  im_day "SELECT arg_min(day, flags) FROM sensors" \
+  im_ts "SELECT arg_min(ts, flags) FROM sensors" \
+  im_ch "SELECT arg_min(ch, flags) FROM sensors" \
+  im_ch_id "SELECT arg_min(ch, id) FROM sensors" \
+  im_loc "SELECT arg_min(location, flags) FROM sensors" \
+  im_loc_id "SELECT arg_min(location, id) FROM sensors" \
+  im_loc_ts "SELECT arg_min(location, ts) FROM sensors" \
+  im_readmax "SELECT arg_min(reading, reading) FROM sensors" \
+  im_grp "SELECT arg_min(reading, flags) FROM sensors GROUP BY location ORDER BY location" \
+  im_lim0 "SELECT arg_min(reading, flags) FROM sensors LIMIT 0" \
+  im_case "SELECT ARG_MIN(reading, flags) FROM sensors" \
+  im_score1 "SELECT arg_min(score, id) FROM sensors WHERE id = 1" \
+  im_day_id "SELECT arg_min(day, id) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2174,7 +2203,11 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ax_days "SELECT arg_max(note, id) FROM days" \
   ax_days_loc "SELECT arg_max(location, id) FROM days" \
   ax_days_grp "SELECT arg_max(note, id) FROM days GROUP BY location ORDER BY location" \
-  ax_days_ts "SELECT arg_max(ts, id) FROM days"
+  ax_days_ts "SELECT arg_max(ts, id) FROM days" \
+  im_days "SELECT arg_min(id, id) FROM days" \
+  im_days_loc "SELECT arg_min(location, id) FROM days" \
+  im_days_grp "SELECT arg_min(id, id) FROM days GROUP BY location ORDER BY location" \
+  im_days_ts "SELECT arg_min(ts, id) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4080,6 +4113,35 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT arg_max(flags, reading) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT arg_max(b, ts) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT arg_max(ch, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(reading, flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(reading, flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(reading, flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(score, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(b, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(code, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(flags, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(flags, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(id, id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(id, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(flags, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(flags, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(b, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(b, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(day, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(ts, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(ch, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(ch, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(location, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(location, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(location, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(reading, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(reading, flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(reading, flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT ARG_MIN(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(score, id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT arg_min(day, id) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4294,6 +4356,10 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT arg_max(location, id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT arg_max(note, id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT arg_max(ts, id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT arg_min(id, id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT arg_min(location, id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT arg_min(id, id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT arg_min(ts, id) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

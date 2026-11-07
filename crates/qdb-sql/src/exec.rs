@@ -7366,6 +7366,7 @@ enum Accumulator {
     ArgMax {
         value: Scalar,
         key: Option<ArgKey>,
+        min: bool,
     },
 }
 
@@ -7423,9 +7424,10 @@ impl Accumulator {
                 samples: Vec::new(),
                 percentile: 0.5,
             },
-            AggFunc::ArgMax => Self::ArgMax {
+            AggFunc::ArgMax | AggFunc::ArgMin => Self::ArgMax {
                 value: Scalar::Null,
                 key: None,
+                min: func == AggFunc::ArgMin,
             },
             AggFunc::Avg => Self::Average {
                 total: None,
@@ -7609,7 +7611,7 @@ impl Accumulator {
                     histogram.value_at(point)
                 }
             }
-            Self::ArgMax { value, key } => {
+            Self::ArgMax { value, key, .. } => {
                 if key.is_none() {
                     Scalar::Null
                 } else {
@@ -7778,7 +7780,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             | AggFunc::RegrR2
     ) {
         covar_pair(table, tag, aggregate)?
-    } else if aggregate.func == AggFunc::ArgMax {
+    } else if matches!(aggregate.func, AggFunc::ArgMax | AggFunc::ArgMin) {
         arg_max_pair(table, tag, aggregate)?
     } else {
         (None, qdb_types::TAG_DOUBLE)
@@ -7873,6 +7875,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::Mode => mode_result_tag(input.tag),
         AggFunc::ApproxMedian | AggFunc::ApproxPercentile => qdb_types::TAG_DOUBLE,
         AggFunc::ArgMax => arg_max_result_tag(input.tag, input.pair_tag),
+        AggFunc::ArgMin => arg_min_result_tag(input.tag, input.pair_tag),
         AggFunc::BoolAnd | AggFunc::BoolOr => qdb_types::TAG_BOOLEAN,
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
@@ -7944,7 +7947,8 @@ fn contribution(
         | AggFunc::RegrSlope
         | AggFunc::RegrIntercept
         | AggFunc::RegrR2
-        | AggFunc::ArgMax => Ok(None),
+        | AggFunc::ArgMax
+        | AggFunc::ArgMin => Ok(None),
     }
 }
 
@@ -8044,7 +8048,7 @@ fn feed(
         }
         return Ok(());
     }
-    if input.func == AggFunc::ArgMax {
+    if matches!(input.func, AggFunc::ArgMax | AggFunc::ArgMin) {
         update_arg_max(accumulator, columns, row, input)?;
         return Ok(());
     }
@@ -8604,29 +8608,42 @@ fn arg_max_pair(
             None => "UNKNOWN".to_string(),
         };
         let third = percentile_shown_type(table, kind)?;
-        return Err(arg_max_types(&[first, second, third]));
+        return Err(arg_types(aggregate.func, &[first, second, third]));
     }
     let Some(name) = &aggregate.pair else {
-        return Err(arg_max_types(&[first]));
+        return Err(arg_types(aggregate.func, &[first]));
     };
     let other = table
         .column_index(name)
         .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
     let key_tag = table.meta.columns[other].tag;
     if matches!(tag, qdb_types::TAG_BOOLEAN) || matches!(key_tag, qdb_types::TAG_BOOLEAN) {
-        return Err(arg_max_types(&[
-            first,
-            qdb_types::type_name(key_tag).to_string(),
-        ]));
+        return Err(arg_types(
+            aggregate.func,
+            &[first, qdb_types::type_name(key_tag).to_string()],
+        ));
     }
     Ok((Some(other), key_tag))
 }
 
-fn arg_max_types(parts: &[String]) -> Error {
+fn arg_types(func: AggFunc, parts: &[String]) -> Error {
+    let name = if func == AggFunc::ArgMin {
+        "arg_min"
+    } else {
+        "arg_max"
+    };
     Error::new(format!(
-        "there is no matching function `arg_max` with the argument types: ({})",
+        "there is no matching function `{name}` with the argument types: ({})",
         parts.join(", ")
     ))
+}
+
+fn arg_min_result_tag(value: i32, key: i32) -> i32 {
+    match value {
+        qdb_types::TAG_STRING => qdb_types::TAG_DOUBLE,
+        qdb_types::TAG_VARCHAR | qdb_types::TAG_SYMBOL => qdb_types::TAG_CHAR,
+        _ => arg_max_result_tag(value, key),
+    }
 }
 
 fn arg_max_result_tag(value: i32, key: i32) -> i32 {
@@ -8679,9 +8696,10 @@ fn update_arg_max(
     row: usize,
     input: &AggColumn,
 ) -> Result<(), Error> {
-    let Accumulator::ArgMax { value, key } = accumulator else {
+    let Accumulator::ArgMax { value, key, min } = accumulator else {
         return Ok(());
     };
+    let min = *min;
     let value_index = input
         .index
         .ok_or_else(|| Error::new("internal: arg_max column"))?;
@@ -8693,18 +8711,30 @@ fn update_arg_max(
     };
     if key
         .as_ref()
-        .is_none_or(|best| arg_key_beats(&next_key, best))
+        .is_none_or(|best| arg_key_beats(&next_key, best, min))
     {
-        *value = arg_value(&columns[value_index][row], input);
+        *value = arg_value(&columns[value_index][row], input, min)?;
         *key = Some(next_key);
     }
     Ok(())
 }
 
-fn arg_key_beats(next: &ArgKey, best: &ArgKey) -> bool {
+fn arg_key_beats(next: &ArgKey, best: &ArgKey, min: bool) -> bool {
     match (next, best) {
-        (ArgKey::Long(left), ArgKey::Long(right)) => left > right,
-        (ArgKey::Double(left), ArgKey::Double(right)) => left > right,
+        (ArgKey::Long(left), ArgKey::Long(right)) => {
+            if min {
+                left < right
+            } else {
+                left > right
+            }
+        }
+        (ArgKey::Double(left), ArgKey::Double(right)) => {
+            if min {
+                left < right
+            } else {
+                left > right
+            }
+        }
         _ => false,
     }
 }
@@ -8753,25 +8783,67 @@ fn arg_key(value: &Scalar, input: &AggColumn) -> Result<Option<ArgKey>, Error> {
         qdb_types::TAG_CHAR => {
             let text = scalar_text(value);
             let Some(number) = parse_integer_text(&text) else {
+                let target = if input.func == AggFunc::ArgMin {
+                    "LONG"
+                } else {
+                    "INT"
+                };
                 return Err(Error::new(format!(
-                    "inconvertible value: {text} [CHAR -> INT]"
+                    "inconvertible value: {text} [CHAR -> {target}]"
                 )));
             };
             Ok(Some(ArgKey::Long(number)))
         }
-        _ => Err(arg_max_types(&[
-            qdb_types::type_name(input.tag).to_string(),
-            qdb_types::type_name(input.pair_tag).to_string(),
-        ])),
+        _ => Err(arg_types(
+            input.func,
+            &[
+                qdb_types::type_name(input.tag).to_string(),
+                qdb_types::type_name(input.pair_tag).to_string(),
+            ],
+        )),
     }
 }
 
-fn arg_value(value: &Scalar, input: &AggColumn) -> Scalar {
+fn arg_value(value: &Scalar, input: &AggColumn, min: bool) -> Result<Scalar, Error> {
     if value.is_null() {
-        return Scalar::Null;
+        return Ok(Scalar::Null);
     }
-    let result = arg_max_result_tag(input.tag, input.pair_tag);
-    match result {
+    if min {
+        match input.tag {
+            qdb_types::TAG_STRING => {
+                let text = scalar_text(value);
+                let Some(number) = parse_questdb_f64(&text).filter(|number| number.is_finite())
+                else {
+                    return Err(Error::new(format!(
+                        "inconvertible value: `{text}` [STRING -> DOUBLE]"
+                    )));
+                };
+                return Ok(Scalar::Double(number));
+            }
+            qdb_types::TAG_VARCHAR => {
+                let text = scalar_text(value);
+                let mut chars = text.chars();
+                let Some(unit) = chars.next().filter(|_| chars.next().is_none()) else {
+                    return Err(Error::new(format!(
+                        "inconvertible value: `{text}` [VARCHAR -> CHAR]"
+                    )));
+                };
+                return Ok(Scalar::Char(utf16_unit(unit)));
+            }
+            qdb_types::TAG_SYMBOL => {
+                let text = scalar_text(value);
+                let unit = text.chars().next().map(utf16_unit).unwrap_or(0);
+                return Ok(Scalar::Char(unit));
+            }
+            _ => {}
+        }
+    }
+    let result = if min {
+        arg_min_result_tag(input.tag, input.pair_tag)
+    } else {
+        arg_max_result_tag(input.tag, input.pair_tag)
+    };
+    Ok(match result {
         qdb_types::TAG_VARCHAR => Scalar::Text(scalar_text(value)),
         qdb_types::TAG_CHAR => value.clone(),
         qdb_types::TAG_TIMESTAMP => match value {
@@ -8791,7 +8863,12 @@ fn arg_value(value: &Scalar, input: &AggColumn) -> Scalar {
             _ => as_i64(value).map(Scalar::Long).unwrap_or(Scalar::Null),
         },
         _ => as_f64(value).map(Scalar::Double).unwrap_or(Scalar::Null),
-    }
+    })
+}
+
+fn utf16_unit(unit: char) -> u16 {
+    let mut encoded = [0; 2];
+    unit.encode_utf16(&mut encoded)[0]
 }
 
 fn percentile_spec(
@@ -24132,6 +24209,270 @@ mod tests {
         let err = execute(&sensors, "SELECT mode(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn arg_min_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT arg_min(reading, flags) FROM sensors",
+                "expected/im_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(reading, flags) FROM sensors WHERE id = 1",
+                "expected/im_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(reading, flags) FROM sensors WHERE id > 100",
+                "expected/im_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(reading, flags) FROM sensors WHERE flags > 0",
+                "expected/im_pos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(score, flags) FROM sensors",
+                "expected/im_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(b, flags) FROM sensors",
+                "expected/im_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(code, flags) FROM sensors",
+                "expected/im_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(id, flags) FROM sensors",
+                "expected/im_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(flags, flags) FROM sensors",
+                "expected/im_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(flags, id) FROM sensors",
+                "expected/im_flags_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(id, id) FROM sensors WHERE id = 1",
+                "expected/im_same.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(id, ts) FROM sensors",
+                "expected/im_id_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(flags, ts) FROM sensors",
+                "expected/im_flags_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(flags, reading) FROM sensors",
+                "expected/im_flags_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(b, ts) FROM sensors",
+                "expected/im_byte_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(b, id) FROM sensors",
+                "expected/im_byte_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(day, flags) FROM sensors",
+                "expected/im_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(ts, flags) FROM sensors",
+                "expected/im_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(ch, flags) FROM sensors",
+                "expected/im_ch.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(ch, id) FROM sensors",
+                "expected/im_ch_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(location, flags) FROM sensors",
+                "expected/im_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(location, id) FROM sensors",
+                "expected/im_loc_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(location, ts) FROM sensors",
+                "expected/im_loc_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(reading, reading) FROM sensors",
+                "expected/im_readmax.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(reading, flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/im_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(reading, flags) FROM sensors LIMIT 0",
+                "expected/im_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ARG_MIN(reading, flags) FROM sensors",
+                "expected/im_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(score, id) FROM sensors WHERE id = 1",
+                "expected/im_score1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT arg_min(day, id) FROM sensors",
+                "expected/im_day_id.tsv",
+            ),
+            (
+                &days,
+                "SELECT arg_min(id, id) FROM days",
+                "expected/im_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT arg_min(location, id) FROM days",
+                "expected/im_days_loc.tsv",
+            ),
+            (
+                &days,
+                "SELECT arg_min(id, id) FROM days GROUP BY location ORDER BY location",
+                "expected/im_days_grp.tsv",
+            ),
+            (
+                &days,
+                "SELECT arg_min(ts, id) FROM days",
+                "expected/im_days_ts.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT arg_min() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `arg_min` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_min(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `arg_min` with the argument types: (DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_min(reading, flags, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `arg_min` with the argument types: (DOUBLE, INT, LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_min(ok, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `arg_min` with the argument types: (BOOLEAN, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_min(reading, ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `arg_min` with the argument types: (DOUBLE, BOOLEAN)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_min(reading, ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_min(note, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_min(tag, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> CHAR]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_min(reading, location) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `madrid` [SYMBOL -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_min(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT arg_min(missing, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&days, "SELECT arg_min(note, flags) FROM days").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: flags"),
             "{}",
             err.message
         );

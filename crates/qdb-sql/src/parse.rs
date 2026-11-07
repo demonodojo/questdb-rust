@@ -76,6 +76,7 @@ pub enum AggFunc {
     ApproxMedian,
     ApproxPercentile,
     ArgMax,
+    ArgMin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3093,6 +3094,7 @@ impl<'a> Parser<'a> {
                 | "approx_median"
                 | "approx_percentile"
                 | "arg_max"
+                | "arg_min"
                 | "approx_count_distinct"
                 | "string_agg"
                 | "covar_pop"
@@ -3158,6 +3160,7 @@ impl<'a> Parser<'a> {
             "approx_median" => AggFunc::ApproxMedian,
             "approx_percentile" => AggFunc::ApproxPercentile,
             "arg_max" => AggFunc::ArgMax,
+            "arg_min" => AggFunc::ArgMin,
             "approx_count_distinct" => AggFunc::ApproxCountDistinct,
             "string_agg" => AggFunc::StringAgg,
             "covar_pop" => AggFunc::CovarPop,
@@ -3490,7 +3493,7 @@ impl<'a> Parser<'a> {
                 )));
             }
         }
-        if func == AggFunc::ArgMax && self.peek() == Some(b',') {
+        if matches!(func, AggFunc::ArgMax | AggFunc::ArgMin) && self.peek() == Some(b',') {
             self.pos += 1;
             self.skip();
             if self
@@ -3499,7 +3502,10 @@ impl<'a> Parser<'a> {
             {
                 pair = Some(self.ident_spelling()?);
             } else {
-                return Err(Error::new("unsupported: arg_max expects a column"));
+                return Err(Error::new(format!(
+                    "unsupported: {} expects a column",
+                    name.to_ascii_lowercase()
+                )));
             }
             self.skip();
             if self.peek() == Some(b',') {
@@ -3524,7 +3530,10 @@ impl<'a> Parser<'a> {
                     third_type = Some(median_literal_type(&number).to_string());
                 }
                 if self.pos == third_start {
-                    return Err(Error::new("unsupported: arg_max expects a column"));
+                    return Err(Error::new(format!(
+                        "unsupported: {} expects a column",
+                        name.to_ascii_lowercase()
+                    )));
                 }
             }
         }
