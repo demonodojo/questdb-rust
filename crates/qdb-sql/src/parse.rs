@@ -65,6 +65,7 @@ pub enum AggFunc {
     RegrR2,
     BoolAnd,
     BoolOr,
+    FirstNotNull,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +87,15 @@ pub struct AggregateExpr {
     pub separator_more: Option<Scalar>,
     /// Second column of `covar_pop(y, x)`.
     pub pair: Option<String>,
+    /// Extra argument of `first_not_null`. QuestDB 10.1.0 has no two-argument form.
+    pub extra: Option<AggregateExtra>,
+}
+
+/// A second argument that `first_not_null` rejects with the QuestDB type list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AggregateExtra {
+    Column(String),
+    Type(String),
 }
 
 /// One grouping column plus one aggregate, in select-list order.
@@ -3062,6 +3072,7 @@ impl<'a> Parser<'a> {
                 | "regr_r2"
                 | "bool_and"
                 | "bool_or"
+                | "first_not_null"
         ) {
             return false;
         }
@@ -3116,6 +3127,7 @@ impl<'a> Parser<'a> {
             "regr_r2" => AggFunc::RegrR2,
             "bool_and" => AggFunc::BoolAnd,
             "bool_or" => AggFunc::BoolOr,
+            "first_not_null" => AggFunc::FirstNotNull,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3162,6 +3174,7 @@ impl<'a> Parser<'a> {
         let mut separator_more = None;
         let mut separator_label = None;
         let mut pair = None;
+        let mut extra = None;
         if func == AggFunc::StringAgg && self.peek() == Some(b',') {
             self.pos += 1;
             self.skip();
@@ -3279,6 +3292,39 @@ impl<'a> Parser<'a> {
                 )));
             }
         }
+        if func == AggFunc::FirstNotNull && self.peek() == Some(b',') {
+            self.pos += 1;
+            self.skip();
+            if self.peek() == Some(b'\'') {
+                let _ = self.parse_string()?;
+                extra = Some(AggregateExtra::Type("STRING".to_string()));
+            } else if self
+                .peek()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            {
+                let word = self.ident_spelling()?;
+                extra = if word.eq_ignore_ascii_case("null") {
+                    Some(AggregateExtra::Type("NULL".to_string()))
+                } else {
+                    Some(AggregateExtra::Column(word))
+                };
+            } else if self.peek() == Some(b'-')
+                || self.peek() == Some(b'.')
+                || self.peek().is_some_and(|byte| byte.is_ascii_digit())
+            {
+                let number = self.parse_number()?;
+                let kind = match number {
+                    Scalar::Double(_) => "DOUBLE",
+                    Scalar::Long(value) if i32::try_from(value).is_ok() => "INT",
+                    Scalar::Long(_) => "LONG",
+                    _ => "DOUBLE",
+                };
+                extra = Some(AggregateExtra::Type(kind.to_string()));
+            } else {
+                return Err(Error::new("unsupported: first_not_null extra argument"));
+            }
+            self.skip();
+        }
         if !self.eat(b')') {
             return Err(Error::new(format!(
                 "unsupported: expected ')' after {name}"
@@ -3360,6 +3406,7 @@ impl<'a> Parser<'a> {
             separator_column,
             separator_more,
             pair,
+            extra,
         })
     }
 

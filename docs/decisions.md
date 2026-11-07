@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — first_not_null()
+
+`first_not_null(col)` devuelve el primer valor no nulo en el orden de las filas y conserva el tipo. `BYTE` y `SHORT` se ensanchan a `INT`: `first_not_null(b)` es `3` y `first_not_null(code)` es `7`. `first_not_null(note)` es `alpha`. La fila con `id` nulo tiene la nota vacía, y esa cadena cuenta. Si el único `id` es nulo, el resultado es NULL. Sin filas también es NULL. `BOOLEAN` no tiene función. Un segundo argumento se rechaza con la lista de tipos: `(STRING, INT)` para `first_not_null(note, 1)`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — bool_or()
 
 `bool_or(col)` devuelve el OR de una columna `BOOLEAN`. Sin filas el resultado es `false`. `bool_or(ok)` es `true`. La fila con `id = 1` es `true` y la de `id = -1` es `false`. El grupo `madrid` es `true`; el grupo NULL y el de `東京` son `false`. `LONG`, `DOUBLE`, `STRING` y `SYMBOL` no encajan. `days` no tiene columna `BOOLEAN`, así que `bool_or(id)` se rechaza. Se contrastó con `/exec` en `sensors`.

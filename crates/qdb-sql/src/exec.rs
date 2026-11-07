@@ -1,16 +1,16 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AggFunc,
-    AggregateExpr, AsinExpr, Atan2Expr, AtanExpr, CastExpr, CeilExpr, CmpOp, CoalesceExpr,
-    ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr,
-    DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, ExpExpr, ExtractExpr, Filter,
-    FloorExpr, GreatestExpr, GroupedSelect, HourExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr,
-    LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr,
-    NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
-    ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
-    Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr,
-    ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
-    WeekOfYearExpr, YearExpr,
+    AggregateExpr, AggregateExtra, AsinExpr, Atan2Expr, AtanExpr, CastExpr, CeilExpr, CmpOp,
+    CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
+    DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, ExpExpr, ExtractExpr,
+    Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr, IsEndOfMonthExpr, IsLeapYearExpr,
+    LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MillisExpr, MinuteExpr,
+    MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
+    RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr,
+    SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SplitPartExpr,
+    SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr,
+    TimestampFloorExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr,
+    UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -7341,9 +7341,12 @@ impl Accumulator {
     fn start(func: AggFunc) -> Self {
         match func {
             AggFunc::Count => Self::Count(0),
-            AggFunc::Min | AggFunc::Max | AggFunc::Sum | AggFunc::First | AggFunc::Last => {
-                Self::Value(None)
-            }
+            AggFunc::Min
+            | AggFunc::Max
+            | AggFunc::Sum
+            | AggFunc::First
+            | AggFunc::Last
+            | AggFunc::FirstNotNull => Self::Value(None),
             AggFunc::Avg => Self::Average {
                 total: None,
                 count: 0,
@@ -7538,6 +7541,28 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         .column_index(name)
         .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
     let tag = table.meta.columns[index].tag;
+    if aggregate.func == AggFunc::FirstNotNull {
+        if let Some(extra) = &aggregate.extra {
+            let second = match extra {
+                AggregateExtra::Type(kind) => kind.clone(),
+                AggregateExtra::Column(name) => {
+                    let other = table
+                        .column_index(name)
+                        .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+                    qdb_types::type_name(table.meta.columns[other].tag).to_string()
+                }
+            };
+            return Err(Error::new(format!(
+                "there is no matching function `first_not_null` with the argument types: ({}, {second})",
+                qdb_types::type_name(tag)
+            )));
+        }
+        if tag == qdb_types::TAG_BOOLEAN {
+            return Err(Error::new(
+                "there is no matching function `first_not_null` with the argument types: (BOOLEAN)",
+            ));
+        }
+    }
     if matches!(aggregate.func, AggFunc::BoolAnd | AggFunc::BoolOr) && tag != qdb_types::TAG_BOOLEAN
     {
         let fname = match aggregate.func {
@@ -7647,6 +7672,12 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::RegrIntercept
         | AggFunc::RegrR2 => qdb_types::TAG_DOUBLE,
         AggFunc::BoolAnd | AggFunc::BoolOr => qdb_types::TAG_BOOLEAN,
+        AggFunc::FirstNotNull
+            if matches!(input.tag, qdb_types::TAG_BYTE | qdb_types::TAG_SHORT) =>
+        {
+            qdb_types::TAG_INT
+        }
+        AggFunc::FirstNotNull => input.tag,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
@@ -7666,6 +7697,12 @@ fn contribution(
     match input.func {
         AggFunc::First | AggFunc::Last => Ok(Some(value.clone())),
         _ if skipped => Ok(None),
+        AggFunc::FirstNotNull
+            if matches!(input.tag, qdb_types::TAG_BYTE | qdb_types::TAG_SHORT) =>
+        {
+            Ok(Some(Scalar::Int(as_i64(value)? as i32)))
+        }
+        AggFunc::FirstNotNull => Ok(Some(value.clone())),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::CountDistinct => Ok(Some(value.clone())),
         AggFunc::ApproxCountDistinct => approx_distinct_value(value, input),
@@ -8266,7 +8303,7 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
                 seen.push(next);
             }
         }
-        Accumulator::Value(current) if func == AggFunc::First => {
+        Accumulator::Value(current) if func == AggFunc::First || func == AggFunc::FirstNotNull => {
             if current.is_none() {
                 *current = Some(next);
             }
@@ -21641,6 +21678,178 @@ mod tests {
         assert!(
             err.message.contains(
                 "argument type mismatch for function `bool_or` at #1 expected: BOOLEAN, actual: LONG"
+            ),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn first_not_null_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT first_not_null(note) FROM sensors",
+                "expected/fn_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(id) FROM sensors",
+                "expected/fn_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(reading) FROM sensors",
+                "expected/fn_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(score) FROM sensors",
+                "expected/fn_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(flags) FROM sensors",
+                "expected/fn_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(b) FROM sensors",
+                "expected/fn_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(code) FROM sensors",
+                "expected/fn_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(ch) FROM sensors",
+                "expected/fn_ch.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(location) FROM sensors",
+                "expected/fn_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(tag) FROM sensors",
+                "expected/fn_tag.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(day) FROM sensors",
+                "expected/fn_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(ts) FROM sensors",
+                "expected/fn_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(note) FROM sensors WHERE id = NULL",
+                "expected/fn_empty.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(id) FROM sensors WHERE id = NULL",
+                "expected/fn_nullid.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(note) FROM sensors WHERE id > 100",
+                "expected/fn_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(note) FROM sensors WHERE id = -1",
+                "expected/fn_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT FIRST_NOT_NULL(note) FROM sensors",
+                "expected/fn_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(note) FROM sensors LIMIT 0",
+                "expected/fn_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(note) FROM sensors GROUP BY location ORDER BY location",
+                "expected/fn_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT first_not_null(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/fn_grp_id.tsv",
+            ),
+            (
+                &days,
+                "SELECT first_not_null(id) FROM days",
+                "expected/fn_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT first_not_null(note) FROM days",
+                "expected/fn_days_note.tsv",
+            ),
+            (
+                &days,
+                "SELECT first_not_null(note) FROM days GROUP BY location ORDER BY location",
+                "expected/fn_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT first_not_null() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `first_not_null` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT first_not_null(note, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `first_not_null` with the argument types: (STRING, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT first_not_null(id, note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `first_not_null` with the argument types: (LONG, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT first_not_null(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT first_not_null(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT first_not_null(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `first_not_null` with the argument types: (BOOLEAN)"
             ),
             "{}",
             err.message

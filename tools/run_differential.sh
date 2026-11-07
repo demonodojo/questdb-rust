@@ -1747,7 +1747,27 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   bo_case "SELECT BOOL_OR(ok) FROM sensors" \
   bo_lim0 "SELECT bool_or(ok) FROM sensors LIMIT 0" \
   bo_mad "SELECT bool_or(ok) FROM sensors WHERE location = 'madrid'" \
-  bo_grp "SELECT bool_or(ok) FROM sensors GROUP BY location ORDER BY location"
+  bo_grp "SELECT bool_or(ok) FROM sensors GROUP BY location ORDER BY location" \
+  fn_note "SELECT first_not_null(note) FROM sensors" \
+  fn_id "SELECT first_not_null(id) FROM sensors" \
+  fn_read "SELECT first_not_null(reading) FROM sensors" \
+  fn_score "SELECT first_not_null(score) FROM sensors" \
+  fn_flags "SELECT first_not_null(flags) FROM sensors" \
+  fn_byte "SELECT first_not_null(b) FROM sensors" \
+  fn_code "SELECT first_not_null(code) FROM sensors" \
+  fn_ch "SELECT first_not_null(ch) FROM sensors" \
+  fn_loc "SELECT first_not_null(location) FROM sensors" \
+  fn_tag "SELECT first_not_null(tag) FROM sensors" \
+  fn_day "SELECT first_not_null(day) FROM sensors" \
+  fn_ts "SELECT first_not_null(ts) FROM sensors" \
+  fn_empty "SELECT first_not_null(note) FROM sensors WHERE id = NULL" \
+  fn_nullid "SELECT first_not_null(id) FROM sensors WHERE id = NULL" \
+  fn_none "SELECT first_not_null(note) FROM sensors WHERE id > 100" \
+  fn_neg "SELECT first_not_null(note) FROM sensors WHERE id = -1" \
+  fn_case "SELECT FIRST_NOT_NULL(note) FROM sensors" \
+  fn_lim0 "SELECT first_not_null(note) FROM sensors LIMIT 0" \
+  fn_grp "SELECT first_not_null(note) FROM sensors GROUP BY location ORDER BY location" \
+  fn_grp_id "SELECT first_not_null(id) FROM sensors GROUP BY location ORDER BY location"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1933,7 +1953,10 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   r2_days "SELECT regr_r2(id, ts) FROM days" \
   r2_days_grp "SELECT regr_r2(id, ts) FROM days GROUP BY location ORDER BY location" \
   ss_days "SELECT stddev_samp(id) FROM days" \
-  vs_days "SELECT var_samp(id) FROM days"
+  vs_days "SELECT var_samp(id) FROM days" \
+  fn_days "SELECT first_not_null(id) FROM days" \
+  fn_days_note "SELECT first_not_null(note) FROM days" \
+  fn_days_grp "SELECT first_not_null(note) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3628,6 +3651,26 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT bool_or(ok) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT bool_or(ok) FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H1"], "SELECT bool_or(ok) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(tag) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(note) FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(id) FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(note) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(note) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT FIRST_NOT_NULL(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(note) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(note) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT first_not_null(id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3812,6 +3855,9 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT regr_r2(id, ts) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT stddev_samp(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT var_samp(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT first_not_null(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT first_not_null(note) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT first_not_null(note) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
