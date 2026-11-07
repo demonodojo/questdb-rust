@@ -2301,8 +2301,10 @@ impl<'a> Parser<'a> {
                 "unsupported: expected '+', '-', '*', '/' or '%' after column".to_string(),
             ));
         };
-        let (literal, other) = if matches!(op, ArithOp::Add | ArithOp::Sub | ArithOp::Mul)
-            && self.starts_add_column()
+        let (literal, other) = if matches!(
+            op,
+            ArithOp::Add | ArithOp::Sub | ArithOp::Mul | ArithOp::Div
+        ) && self.starts_add_column()
         {
             (Scalar::Null, Some(self.ident_spelling()?))
         } else {

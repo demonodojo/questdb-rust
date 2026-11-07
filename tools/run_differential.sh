@@ -2530,7 +2530,15 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   mx_read "SELECT reading * reading FROM sensors" \
   mx_flags "SELECT flags * flags FROM sensors" \
   mx_mix "SELECT id * flags FROM sensors" \
-  mx_rev "SELECT flags * id FROM sensors"
+  mx_rev "SELECT flags * id FROM sensors" \
+  dx_all "SELECT id / id FROM sensors" \
+  dx_one "SELECT id / id FROM sensors WHERE id = 1" \
+  dx_neg "SELECT id / id FROM sensors WHERE id = -1" \
+  dx_none "SELECT id / id FROM sensors WHERE id > 100" \
+  dx_read "SELECT reading / reading FROM sensors" \
+  dx_flags "SELECT flags / flags FROM sensors" \
+  dx_mix "SELECT id / flags FROM sensors" \
+  dx_rev "SELECT flags / id FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2832,7 +2840,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   bc_days "SELECT ~id FROM days" \
   cc_days "SELECT id + id FROM days" \
   ms_days "SELECT id - id FROM days" \
-  mx_days "SELECT id * id FROM days"
+  mx_days "SELECT id * id FROM days" \
+  dx_days "SELECT id / id FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5310,6 +5319,14 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT flags * flags FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT id * flags FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT flags * id FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id / id FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id / id FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT id / id FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT id / id FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT reading / reading FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT flags / flags FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id / flags FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT flags / id FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -5610,6 +5627,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT id + id FROM days"),
     (os.environ["DIFF_H2"], "SELECT id - id FROM days"),
     (os.environ["DIFF_H2"], "SELECT id * id FROM days"),
+    (os.environ["DIFF_H2"], "SELECT id / id FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

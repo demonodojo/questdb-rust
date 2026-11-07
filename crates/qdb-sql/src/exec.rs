@@ -16060,6 +16060,60 @@ mod tests {
     }
 
     #[test]
+    fn dx_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id / id FROM sensors",
+                "expected/dx_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id / id FROM sensors WHERE id = 1",
+                "expected/dx_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id / id FROM sensors WHERE id = -1",
+                "expected/dx_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id / id FROM sensors WHERE id > 100",
+                "expected/dx_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT reading / reading FROM sensors",
+                "expected/dx_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags / flags FROM sensors",
+                "expected/dx_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id / flags FROM sensors",
+                "expected/dx_mix.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags / id FROM sensors",
+                "expected/dx_rev.tsv",
+            ),
+            (&days, "SELECT id / id FROM days", "expected/dx_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
     fn dj_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
