@@ -2303,7 +2303,7 @@ impl<'a> Parser<'a> {
         };
         let (literal, other) = if matches!(
             op,
-            ArithOp::Add | ArithOp::Sub | ArithOp::Mul | ArithOp::Div
+            ArithOp::Add | ArithOp::Sub | ArithOp::Mul | ArithOp::Div | ArithOp::Mod
         ) && self.starts_add_column()
         {
             (Scalar::Null, Some(self.ident_spelling()?))
