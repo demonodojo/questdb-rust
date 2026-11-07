@@ -704,6 +704,7 @@ enum ResolvedProj {
         index: usize,
         op: CmpOp,
         literal: Scalar,
+        other: Option<usize>,
     },
     Add {
         label: String,
@@ -2083,11 +2084,20 @@ fn resolve_eq(table: &Table, expr: &EqExpr) -> Result<ResolvedProj, Error> {
     let Some(index) = table.column_index(&expr.value) else {
         return Err(Error::new(format!("Invalid column: {}", expr.value)));
     };
+    let other = match &expr.other {
+        Some(name) => Some(
+            table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?,
+        ),
+        None => None,
+    };
     Ok(ResolvedProj::Eq {
         label: expr.label.clone(),
         index,
         op: expr.op,
         literal: expr.literal.clone(),
+        other,
     })
 }
 
@@ -2097,9 +2107,19 @@ fn eq_value(
     index: usize,
     op: CmpOp,
     literal: &Scalar,
+    other: Option<usize>,
 ) -> Result<Scalar, Error> {
     let tag = table.meta.columns[index].tag;
     let left = &table.columns[index][row];
+    if let Some(other) = other {
+        let right = &table.columns[other][row];
+        let result = match op {
+            CmpOp::NotEq => !sql_cmp(left, tag, CmpOp::Eq, right)?,
+            CmpOp::Eq => sql_cmp(left, tag, CmpOp::Eq, right)?,
+            other_op => sql_cmp(left, tag, other_op, right)?,
+        };
+        return Ok(Scalar::Boolean(result));
+    }
     let result = match op {
         CmpOp::NotEq => !sql_cmp(left, tag, CmpOp::Eq, literal)?,
         CmpOp::Eq => sql_cmp(left, tag, CmpOp::Eq, literal)?,
@@ -7545,8 +7565,12 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         ResolvedProj::Neg { index, .. } => neg_value(table, row, *index),
         ResolvedProj::BitNot { index, .. } => bit_not_value(table, row, *index),
         ResolvedProj::Eq {
-            index, op, literal, ..
-        } => eq_value(table, row, *index, *op, literal),
+            index,
+            op,
+            literal,
+            other,
+            ..
+        } => eq_value(table, row, *index, *op, literal, *other),
         ResolvedProj::Bar {
             value,
             min,
@@ -7641,8 +7665,12 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         }
         ResolvedProj::InList { index, items, .. } => in_list_value(table, row, *index, items),
         ResolvedProj::Eq {
-            index, op, literal, ..
-        } => eq_value(table, row, *index, *op, literal).unwrap_or(Scalar::Null),
+            index,
+            op,
+            literal,
+            other,
+            ..
+        } => eq_value(table, row, *index, *op, literal, *other).unwrap_or(Scalar::Null),
         ResolvedProj::Add {
             index,
             result_tag,
@@ -17043,6 +17071,56 @@ mod tests {
             assert_eq!(render_tsv(&result), expected, "{sql}");
         }
         let err = execute(&sensors, "SELECT id ^ missing FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn qe_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id = id FROM sensors",
+                "expected/qe_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id = id FROM sensors WHERE id = 1",
+                "expected/qe_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id = id FROM sensors WHERE id > 100",
+                "expected/qe_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id = flags FROM sensors",
+                "expected/qe_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags = id FROM sensors",
+                "expected/qe_rev.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note = note FROM sensors",
+                "expected/qe_note.tsv",
+            ),
+            (&days, "SELECT id = id FROM days", "expected/qe_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id = missing FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
