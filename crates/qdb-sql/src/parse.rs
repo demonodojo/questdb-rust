@@ -109,6 +109,7 @@ pub enum Proj {
     Year(YearExpr),
     Month(MonthExpr),
     Day(DayExpr),
+    Hour(HourExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -314,6 +315,13 @@ pub struct DayExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `hour(timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HourExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -494,6 +502,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_month()?.label
             } else if parser.starts_day_call() {
                 parser.parse_day()?.label
+            } else if parser.starts_hour_call() {
+                parser.parse_hour()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -597,6 +607,7 @@ enum SelectPiece {
     Year(YearExpr),
     Month(MonthExpr),
     Day(DayExpr),
+    Hour(HourExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -752,6 +763,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Month(self.parse_month()?));
             } else if self.starts_day_call() {
                 pieces.push(SelectPiece::Day(self.parse_day()?));
+            } else if self.starts_hour_call() {
+                pieces.push(SelectPiece::Hour(self.parse_hour()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -818,6 +831,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Year(_)
                     | SelectPiece::Month(_)
                     | SelectPiece::Day(_)
+                    | SelectPiece::Hour(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -870,6 +884,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Year(expr) => items.push(Proj::Year(expr)),
                     SelectPiece::Month(expr) => items.push(Proj::Month(expr)),
                     SelectPiece::Day(expr) => items.push(Proj::Day(expr)),
+                    SelectPiece::Hour(expr) => items.push(Proj::Hour(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -946,6 +961,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Year(_)
                 | SelectPiece::Month(_)
                 | SelectPiece::Day(_)
+                | SelectPiece::Hour(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1192,6 +1208,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_hour_call(&self) -> bool {
+        self.starts_named_call("hour")
+    }
+
+    fn parse_hour(&mut self) -> Result<HourExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `hour` requires arguments: hour(TIMESTAMP)".to_string(),
+            ));
+        }
+        Ok(HourExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
