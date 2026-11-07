@@ -93,6 +93,7 @@ pub enum Proj {
     StartsWith(StartsWithExpr),
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
+    Pad(PadExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +173,14 @@ pub struct SplitPartExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `lpad` or `rpad`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PadExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+    pub from_right: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -245,6 +254,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_strpos()?.label
             } else if parser.starts_split_part_call() {
                 parser.parse_split_part()?.label
+            } else if parser.starts_pad_call() {
+                parser.parse_pad()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -308,6 +319,7 @@ enum SelectPiece {
     StartsWith(StartsWithExpr),
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
+    Pad(PadExpr),
 }
 
 struct Parser<'a> {
@@ -422,6 +434,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::StrPos(self.parse_strpos()?));
             } else if self.starts_split_part_call() {
                 pieces.push(SelectPiece::SplitPart(self.parse_split_part()?));
+            } else if self.starts_pad_call() {
+                pieces.push(SelectPiece::Pad(self.parse_pad()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -448,6 +462,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::StartsWith(_)
                     | SelectPiece::StrPos(_)
                     | SelectPiece::SplitPart(_)
+                    | SelectPiece::Pad(_)
             )
         });
         if counts > 0 && projected {
@@ -473,6 +488,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::StartsWith(expr) => items.push(Proj::StartsWith(expr)),
                     SelectPiece::StrPos(expr) => items.push(Proj::StrPos(expr)),
                     SelectPiece::SplitPart(expr) => items.push(Proj::SplitPart(expr)),
+                    SelectPiece::Pad(expr) => items.push(Proj::Pad(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -521,7 +537,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Replace(_)
                 | SelectPiece::StartsWith(_)
                 | SelectPiece::StrPos(_)
-                | SelectPiece::SplitPart(_) => {
+                | SelectPiece::SplitPart(_)
+                | SelectPiece::Pad(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -564,6 +581,27 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_pad_call(&self) -> bool {
+        self.starts_named_call("lpad") || self.starts_named_call("rpad")
+    }
+
+    fn parse_pad(&mut self) -> Result<PadExpr, Error> {
+        let name = self.ident_spelling()?;
+        let from_right = name.eq_ignore_ascii_case("rpad");
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(PadExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+            from_right,
+        })
     }
 
     fn starts_split_part_call(&self) -> bool {

@@ -1,0 +1,2 @@
+lpad('ab', 5, 'xy')
+xyxab

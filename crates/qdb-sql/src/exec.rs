@@ -1,7 +1,8 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
-    ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, ReplaceExpr, SelectList,
-    SideExpr, SplitPartExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, PadExpr, Proj, Query, ReplaceExpr,
+    SelectList, SideExpr, SplitPartExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr,
+    UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -188,7 +189,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Replace { label, .. }
             | ResolvedProj::StartsWith { label, .. }
             | ResolvedProj::StrPos { label, .. }
-            | ResolvedProj::SplitPart { label, .. } => label.clone(),
+            | ResolvedProj::SplitPart { label, .. }
+            | ResolvedProj::Pad { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -272,6 +274,13 @@ enum ResolvedProj {
         delimiter: ResolvedArg,
         index: Option<i32>,
     },
+    Pad {
+        label: String,
+        value: ResolvedArg,
+        width: CountArg,
+        fill: Option<ResolvedArg>,
+        from_right: bool,
+    },
 }
 
 enum ReplaceMode {
@@ -308,7 +317,8 @@ impl ResolvedProj {
             | Self::Replace { label, .. }
             | Self::StartsWith { label, .. }
             | Self::StrPos { label, .. }
-            | Self::SplitPart { label, .. } => Some(label),
+            | Self::SplitPart { label, .. }
+            | Self::Pad { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -361,6 +371,46 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::StartsWith(expr) => resolve_starts_with(table, expr),
         Proj::StrPos(expr) => resolve_strpos(table, expr),
         Proj::SplitPart(expr) => resolve_split_part(table, expr),
+        Proj::Pad(expr) => resolve_pad(table, expr),
+    }
+}
+
+fn resolve_pad(table: &Table, expr: &PadExpr) -> Result<ResolvedProj, Error> {
+    let name = function_name(&expr.label);
+    let width = expr.args.get(1).and_then(|arg| pad_width(table, arg).ok());
+    let fill_ok = expr.args.len() != 3
+        || expr
+            .args
+            .get(2)
+            .is_some_and(|arg| replace_text_ok(table, arg));
+    if !matches!(expr.args.len(), 2 | 3)
+        || expr
+            .args
+            .first()
+            .is_none_or(|arg| !replace_text_ok(table, arg))
+        || width.is_none()
+        || !fill_ok
+    {
+        return Err(text_type_error(table, &name, &expr.args));
+    }
+    let fill = if expr.args.len() == 3 {
+        Some(resolve_concat_arg(table, &expr.args[2])?)
+    } else {
+        None
+    };
+    Ok(ResolvedProj::Pad {
+        label: expr.label.clone(),
+        value: resolve_concat_arg(table, &expr.args[0])?,
+        width: width.expect("width already checked"),
+        fill,
+        from_right: expr.from_right,
+    })
+}
+
+fn pad_width(table: &Table, arg: &ConcatArg) -> Result<CountArg, ()> {
+    match resolve_i32_count(table, arg)? {
+        CountArg::ColumnSymbol { .. } => Err(()),
+        width => Ok(width),
     }
 }
 
@@ -892,6 +942,34 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 }
             }
         },
+        ResolvedProj::Pad {
+            value,
+            width,
+            fill,
+            from_right,
+            ..
+        } => {
+            let Some(text) = text_of(table, row, value) else {
+                return Scalar::Null;
+            };
+            let Some(width) = count_of(table, row, width) else {
+                return Scalar::Null;
+            };
+            let Ok(width) = i32::try_from(width) else {
+                return Scalar::Null;
+            };
+            if width < 0 {
+                return Scalar::Null;
+            }
+            let fill = match fill {
+                None => " ".to_string(),
+                Some(fill) => match text_of(table, row, fill) {
+                    Some(fill) if !fill.is_empty() => fill,
+                    _ => return Scalar::Null,
+                },
+            };
+            Scalar::Text(pad_utf16(&text, width, &fill, *from_right))
+        }
         ResolvedProj::SplitPart {
             value,
             delimiter,
@@ -954,6 +1032,35 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             None => Scalar::Null,
         },
     }
+}
+
+fn pad_utf16(text: &str, width: i32, fill: &str, from_right: bool) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let width = width as usize;
+    if width <= units.len() {
+        let slice = if from_right {
+            &units[units.len() - width..]
+        } else {
+            &units[..width]
+        };
+        return String::from_utf16(slice).unwrap_or_else(|_| String::from_utf16_lossy(slice));
+    }
+    let fill_units: Vec<u16> = fill.encode_utf16().collect();
+    let need = width - units.len();
+    let mut out = Vec::with_capacity(width);
+    let copies = need / fill_units.len();
+    let rest = need % fill_units.len();
+    if from_right {
+        out.extend_from_slice(&units);
+    }
+    for _ in 0..copies {
+        out.extend_from_slice(&fill_units);
+    }
+    out.extend_from_slice(&fill_units[..rest]);
+    if !from_right {
+        out.extend_from_slice(&units);
+    }
+    String::from_utf16(&out).unwrap_or_else(|_| String::from_utf16_lossy(&out))
 }
 
 fn split_part_utf16(value: &str, delimiter: &str, index: i32) -> String {
@@ -5442,6 +5549,158 @@ mod tests {
         let err = execute(&sensors, "SELECT to_lowercase(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn pad_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT lpad(note, 6, 'x') FROM sensors",
+                "expected/lp_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT rpad(note, 6, 'x') FROM sensors",
+                "expected/rp_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad('ab', 5, 'xy') FROM sensors LIMIT 1",
+                "expected/lp_fill.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad('abc', 2, 'x') FROM sensors LIMIT 1",
+                "expected/lp_cut.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT rpad('abc', 2, 'x') FROM sensors LIMIT 1",
+                "expected/rp_cut.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad('ab', 0, 'x') FROM sensors LIMIT 1",
+                "expected/lp_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad('ab', -1, 'x') FROM sensors LIMIT 1",
+                "expected/lp_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad(null, 3, 'x') FROM sensors LIMIT 1",
+                "expected/lp_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad('ab', null, 'x') FROM sensors LIMIT 1",
+                "expected/lp_null_len.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad('ab', 3, null) FROM sensors LIMIT 1",
+                "expected/lp_null_fill.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad('ab', 3, '') FROM sensors LIMIT 1",
+                "expected/lp_empty_fill.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad(note, 3) FROM sensors",
+                "expected/lp_spaces.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT rpad(note, 3) FROM sensors",
+                "expected/rp_spaces.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad(note, flags, 'x') FROM sensors",
+                "expected/lp_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad(note, b) FROM sensors",
+                "expected/lp_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad(ch, 3, 'x') FROM sensors",
+                "expected/lp_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad(note, 6, location) FROM sensors",
+                "expected/lp_symbol.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT LPAD(NOTE, 6, 'x') FROM sensors",
+                "expected/lp_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT rpad(note, 6, 'x') FROM sensors ORDER BY rpad(note, 6, 'x')",
+                "expected/rp_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT lpad(note, 6, 'x') FROM sensors LIMIT 0",
+                "expected/lp_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT rpad(location, 8, '.') FROM days ORDER BY ts",
+                "expected/rp_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT lpad() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("function `lpad` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT lpad(id, 3, 'x') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `lpad` with the argument types: (LONG, INT, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT lpad(note, id, 'x') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `lpad` with the argument types: (STRING, LONG, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT lpad(missing, 3, 'x') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT rpad() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("function `rpad` requires arguments"),
             "{}",
             err.message
         );

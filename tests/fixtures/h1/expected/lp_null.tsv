@@ -1,0 +1,2 @@
+lpad(null, 3, 'x')
+NULL

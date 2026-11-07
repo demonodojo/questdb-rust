@@ -452,7 +452,27 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tl_where "SELECT to_lowercase(note) FROM sensors WHERE note = ''" \
   tl_limit_zero "SELECT to_lowercase(note) FROM sensors LIMIT 0" \
   tu_ch "SELECT to_uppercase(ch) FROM sensors" \
-  tu_tag "SELECT to_uppercase(tag) FROM sensors"
+  tu_tag "SELECT to_uppercase(tag) FROM sensors" \
+  lp_note "SELECT lpad(note, 6, 'x') FROM sensors" \
+  rp_note "SELECT rpad(note, 6, 'x') FROM sensors" \
+  lp_fill "SELECT lpad('ab', 5, 'xy') FROM sensors LIMIT 1" \
+  lp_cut "SELECT lpad('abc', 2, 'x') FROM sensors LIMIT 1" \
+  rp_cut "SELECT rpad('abc', 2, 'x') FROM sensors LIMIT 1" \
+  lp_zero "SELECT lpad('ab', 0, 'x') FROM sensors LIMIT 1" \
+  lp_neg "SELECT lpad('ab', -1, 'x') FROM sensors LIMIT 1" \
+  lp_null "SELECT lpad(null, 3, 'x') FROM sensors LIMIT 1" \
+  lp_null_len "SELECT lpad('ab', null, 'x') FROM sensors LIMIT 1" \
+  lp_null_fill "SELECT lpad('ab', 3, null) FROM sensors LIMIT 1" \
+  lp_empty_fill "SELECT lpad('ab', 3, '') FROM sensors LIMIT 1" \
+  lp_spaces "SELECT lpad(note, 3) FROM sensors" \
+  rp_spaces "SELECT rpad(note, 3) FROM sensors" \
+  lp_flags "SELECT lpad(note, flags, 'x') FROM sensors" \
+  lp_byte "SELECT lpad(note, b) FROM sensors" \
+  lp_ch "SELECT lpad(ch, 3, 'x') FROM sensors" \
+  lp_symbol "SELECT lpad(note, 6, location) FROM sensors" \
+  lp_case "SELECT LPAD(NOTE, 6, 'x') FROM sensors" \
+  rp_order "SELECT rpad(note, 6, 'x') FROM sensors ORDER BY rpad(note, 6, 'x')" \
+  lp_limit_zero "SELECT lpad(note, 6, 'x') FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -541,7 +561,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   part_location "SELECT split_part(location, 'a', 2) FROM days ORDER BY ts" \
   tl_note "SELECT to_lowercase(note) FROM days" \
   tu_note "SELECT to_uppercase(note) FROM days ORDER BY ts" \
-  tl_location "SELECT to_lowercase(location) FROM days ORDER BY ts"
+  tl_location "SELECT to_lowercase(location) FROM days ORDER BY ts" \
+  rp_location "SELECT rpad(location, 8, '.') FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -941,6 +962,26 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_lowercase(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT to_uppercase(ch) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT to_uppercase(tag) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT lpad(note, 6, 'x') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT rpad(note, 6, 'x') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT lpad('ab', 5, 'xy') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT lpad('abc', 2, 'x') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT rpad('abc', 2, 'x') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT lpad('ab', 0, 'x') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT lpad('ab', -1, 'x') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT lpad(null, 3, 'x') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT lpad('ab', null, 'x') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT lpad('ab', 3, null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT lpad('ab', 3, '') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT lpad(note, 3) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT rpad(note, 3) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT lpad(note, flags, 'x') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT lpad(note, b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT lpad(ch, 3, 'x') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT lpad(note, 6, location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT LPAD(NOTE, 6, 'x') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT rpad(note, 6, 'x') FROM sensors ORDER BY rpad(note, 6, 'x')"),
+    (os.environ["DIFF_H1"], "SELECT lpad(note, 6, 'x') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1028,6 +1069,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT to_lowercase(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT to_uppercase(note) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT to_lowercase(location) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT rpad(location, 8, '.') FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

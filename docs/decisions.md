@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — lpad() y rpad()
+
+Aceptan dos o tres argumentos. El ancho puede ser una columna `BYTE`, `SHORT` o `INT`. Con dos argumentos el relleno es un espacio. Un relleno vacío o NULL, un texto NULL o un ancho negativo dejan NULL. Un ancho 0 deja cadena vacía. Si el texto es más largo, `lpad` conserva el principio y `rpad` el final. La longitud cuenta unidades UTF-16. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — to_lowercase() y to_uppercase()
 
 Son los mismos `lower` y `upper`. El nombre escrito se conserva en la cabecera y en el error de tipo. `to_uppercase('β')` devuelve la beta griega mayúscula. Un literal de un carácter se informa como `CHAR`. Se contrastó con `/exec` en `sensors` y `days`.
