@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — to_lowercase() y to_uppercase()
+
+Son los mismos `lower` y `upper`. El nombre escrito se conserva en la cabecera y en el error de tipo. `to_uppercase('β')` devuelve la beta griega mayúscula. Un literal de un carácter se informa como `CHAR`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — split_part()
 
 `split_part(text, delimiter, index)` devuelve `STRING`. El índice es constante: 1 es el primer campo y uno negativo cuenta desde el final. `0` responde `field position must not be zero`. Un índice que no es constante responde que debe serlo. Un campo ausente es cadena vacía. Un separador vacío con índice positivo también. Con índice `-1` el separador vacío devuelve el texto entero. NULL en el texto, el separador o el índice deja NULL. Se contrastó con `/exec` en `sensors` y `days`.

@@ -40,7 +40,8 @@
 //! boolean. A null text or prefix is false, and an empty prefix matches any
 //! non-null text. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
-//! null. `split_part` returns one field around a delimiter. Index 1 is the
+//! null. `to_lowercase` and `to_uppercase` are the same functions as `lower`
+//! and `upper`. `split_part` returns one field around a delimiter. Index 1 is the
 //! first field and a negative index counts from the end. Index 0 is rejected.
 //! An aggregate without `GROUP BY` returns one
 //! row, or none when `LIMIT` removes it.

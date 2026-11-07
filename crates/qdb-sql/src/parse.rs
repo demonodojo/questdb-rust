@@ -551,11 +551,11 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_lower_call(&self) -> bool {
-        self.starts_named_call("lower")
+        self.starts_named_call("lower") || self.starts_named_call("to_lowercase")
     }
 
     fn starts_upper_call(&self) -> bool {
-        self.starts_named_call("upper")
+        self.starts_named_call("upper") || self.starts_named_call("to_uppercase")
     }
 
     fn starts_side_call(&self) -> bool {

@@ -731,15 +731,23 @@ fn side_arg_type(table: &Table, arg: &ConcatArg) -> Result<String, Error> {
 fn resolve_upper(table: &Table, expr: &UpperExpr) -> Result<ResolvedProj, Error> {
     Ok(ResolvedProj::Upper {
         label: expr.label.clone(),
-        arg: resolve_one_text(table, "upper", &expr.args)?,
+        arg: resolve_one_text(table, &function_name(&expr.label), &expr.args)?,
     })
 }
 
 fn resolve_lower(table: &Table, expr: &LowerExpr) -> Result<ResolvedProj, Error> {
     Ok(ResolvedProj::Lower {
         label: expr.label.clone(),
-        arg: resolve_one_text(table, "lower", &expr.args)?,
+        arg: resolve_one_text(table, &function_name(&expr.label), &expr.args)?,
     })
+}
+
+fn function_name(label: &str) -> String {
+    label
+        .split_once('(')
+        .map(|(name, _)| name)
+        .unwrap_or(label)
+        .to_ascii_lowercase()
 }
 
 fn resolve_one_text(table: &Table, name: &str, args: &[ConcatArg]) -> Result<ResolvedArg, Error> {
@@ -807,6 +815,9 @@ fn resolve_length(table: &Table, expr: &LengthExpr) -> Result<ResolvedProj, Erro
 fn concat_arg_type(table: &Table, arg: &ConcatArg) -> Result<String, Error> {
     match arg {
         ConcatArg::Literal(Scalar::Null) => Ok("NULL".to_string()),
+        ConcatArg::Literal(Scalar::Text(text)) if text.encode_utf16().count() == 1 => {
+            Ok("CHAR".to_string())
+        }
         ConcatArg::Literal(_) => Ok("STRING".to_string()),
         ConcatArg::Column(name) => {
             let index = table
@@ -5304,6 +5315,131 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT split_part(missing, 'a', 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn case_aliases_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT to_lowercase(note) FROM sensors",
+                "expected/tl_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_uppercase(note) FROM sensors",
+                "expected/tu_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_uppercase('β') FROM sensors LIMIT 1",
+                "expected/tu_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT TO_LOWERCASE(NOTE) FROM sensors",
+                "expected/tl_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_lowercase(note) FROM sensors ORDER BY to_lowercase(note)",
+                "expected/tl_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_uppercase(note) FROM sensors ORDER BY to_uppercase(note)",
+                "expected/tu_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, to_lowercase(note) FROM sensors ORDER BY to_lowercase(note)",
+                "expected/tl_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_lowercase(null) FROM sensors LIMIT 1",
+                "expected/tl_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_lowercase(note) FROM sensors WHERE note = ''",
+                "expected/tl_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_lowercase(note) FROM sensors LIMIT 0",
+                "expected/tl_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_uppercase(ch) FROM sensors",
+                "expected/tu_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_uppercase(tag) FROM sensors",
+                "expected/tu_tag.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT to_lowercase(note) FROM days",
+                "expected/tl_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT to_uppercase(note) FROM days ORDER BY ts",
+                "expected/tu_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT to_lowercase(location) FROM days ORDER BY ts",
+                "expected/tl_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT to_lowercase() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `to_lowercase` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_lowercase(note, 'a') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_lowercase` with the argument types: (STRING, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_lowercase(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_lowercase` with the argument types: (LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_uppercase(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_uppercase` with the argument types: (LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_lowercase(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

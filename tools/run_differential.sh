@@ -440,7 +440,19 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   part_order "SELECT split_part(note, 'a', 1) FROM sensors ORDER BY split_part(note, 'a', 1)" \
   part_with_id "SELECT id, split_part(note, 'a', 1) FROM sensors ORDER BY split_part(note, 'a', 1)" \
   part_where "SELECT split_part(note, 'a', 1) FROM sensors WHERE note = ''" \
-  part_limit_zero "SELECT split_part(note, 'a', 1) FROM sensors LIMIT 0"
+  part_limit_zero "SELECT split_part(note, 'a', 1) FROM sensors LIMIT 0" \
+  tl_note "SELECT to_lowercase(note) FROM sensors" \
+  tu_note "SELECT to_uppercase(note) FROM sensors" \
+  tu_beta "SELECT to_uppercase('β') FROM sensors LIMIT 1" \
+  tl_case "SELECT TO_LOWERCASE(NOTE) FROM sensors" \
+  tl_order "SELECT to_lowercase(note) FROM sensors ORDER BY to_lowercase(note)" \
+  tu_order "SELECT to_uppercase(note) FROM sensors ORDER BY to_uppercase(note)" \
+  tl_with_id "SELECT id, to_lowercase(note) FROM sensors ORDER BY to_lowercase(note)" \
+  tl_null "SELECT to_lowercase(null) FROM sensors LIMIT 1" \
+  tl_where "SELECT to_lowercase(note) FROM sensors WHERE note = ''" \
+  tl_limit_zero "SELECT to_lowercase(note) FROM sensors LIMIT 0" \
+  tu_ch "SELECT to_uppercase(ch) FROM sensors" \
+  tu_tag "SELECT to_uppercase(tag) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -526,7 +538,10 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   sp_note "SELECT strpos(note, 'a') FROM days" \
   sp_location "SELECT strpos(location, 'id') FROM days ORDER BY ts" \
   part_note "SELECT split_part(note, 'a', 1) FROM days" \
-  part_location "SELECT split_part(location, 'a', 2) FROM days ORDER BY ts"
+  part_location "SELECT split_part(location, 'a', 2) FROM days ORDER BY ts" \
+  tl_note "SELECT to_lowercase(note) FROM days" \
+  tu_note "SELECT to_uppercase(note) FROM days ORDER BY ts" \
+  tl_location "SELECT to_lowercase(location) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -914,6 +929,18 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, split_part(note, 'a', 1) FROM sensors ORDER BY split_part(note, 'a', 1)"),
     (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', 1) FROM sensors WHERE note = ''"),
     (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', 1) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT to_lowercase(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_uppercase(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_uppercase('β') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT TO_LOWERCASE(NOTE) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_lowercase(note) FROM sensors ORDER BY to_lowercase(note)"),
+    (os.environ["DIFF_H1"], "SELECT to_uppercase(note) FROM sensors ORDER BY to_uppercase(note)"),
+    (os.environ["DIFF_H1"], "SELECT id, to_lowercase(note) FROM sensors ORDER BY to_lowercase(note)"),
+    (os.environ["DIFF_H1"], "SELECT to_lowercase(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_lowercase(note) FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT to_lowercase(note) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT to_uppercase(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_uppercase(tag) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -998,6 +1025,9 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT strpos(location, 'id') FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT split_part(note, 'a', 1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT split_part(location, 'a', 2) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT to_lowercase(note) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT to_uppercase(note) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT to_lowercase(location) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
