@@ -52,6 +52,7 @@ pub enum AggFunc {
     VarPop,
     StdDevPop,
     KSum,
+    NSum,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3024,6 +3025,7 @@ impl<'a> Parser<'a> {
                 | "var_pop"
                 | "stddev_pop"
                 | "ksum"
+                | "nsum"
         ) {
             return false;
         }
@@ -3065,6 +3067,7 @@ impl<'a> Parser<'a> {
             "var_pop" => AggFunc::VarPop,
             "stddev_pop" => AggFunc::StdDevPop,
             "ksum" => AggFunc::KSum,
+            "nsum" => AggFunc::NSum,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3078,6 +3081,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::VarPop
                 | AggFunc::StdDevPop
                 | AggFunc::KSum
+                | AggFunc::NSum
         ) && self.peek() != Some(b')')
         {
             let mut provided = if column.is_some() { 1 } else { 0 };
@@ -3110,6 +3114,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::VarPop
                 | AggFunc::StdDevPop
                 | AggFunc::KSum
+                | AggFunc::NSum
         ) && column.is_none()
         {
             let fname = name.to_ascii_lowercase();

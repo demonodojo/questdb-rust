@@ -1565,7 +1565,21 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ks_lim0 "SELECT ksum(reading) FROM sensors LIMIT 0" \
   ks_grp "SELECT ksum(reading) FROM sensors GROUP BY location ORDER BY location" \
   ks_grp_id "SELECT ksum(id) FROM sensors GROUP BY location ORDER BY location" \
-  ks_where "SELECT ksum(reading) FROM sensors WHERE location = 'madrid'"
+  ks_where "SELECT ksum(reading) FROM sensors WHERE location = 'madrid'" \
+  ns_read "SELECT nsum(reading) FROM sensors" \
+  ns_id "SELECT nsum(id) FROM sensors" \
+  ns_score "SELECT nsum(score) FROM sensors" \
+  ns_byte "SELECT nsum(b) FROM sensors" \
+  ns_code "SELECT nsum(code) FROM sensors" \
+  ns_flags "SELECT nsum(flags) FROM sensors" \
+  ns_one "SELECT nsum(reading) FROM sensors WHERE id = 1" \
+  ns_none "SELECT nsum(reading) FROM sensors WHERE id > 100" \
+  ns_neg "SELECT nsum(reading) FROM sensors WHERE id = -1" \
+  ns_case "SELECT NSUM(reading) FROM sensors" \
+  ns_lim0 "SELECT nsum(reading) FROM sensors LIMIT 0" \
+  ns_grp "SELECT nsum(reading) FROM sensors GROUP BY location ORDER BY location" \
+  ns_grp_id "SELECT nsum(id) FROM sensors GROUP BY location ORDER BY location" \
+  ns_where "SELECT nsum(reading) FROM sensors WHERE location = 'madrid'"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1735,7 +1749,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   dp_days "SELECT stddev_pop(id) FROM days" \
   dp_days_grp "SELECT stddev_pop(id) FROM days GROUP BY location ORDER BY location" \
   ks_days "SELECT ksum(id) FROM days" \
-  ks_days_grp "SELECT ksum(id) FROM days GROUP BY location ORDER BY location"
+  ks_days_grp "SELECT ksum(id) FROM days GROUP BY location ORDER BY location" \
+  ns_days "SELECT nsum(id) FROM days" \
+  ns_days_grp "SELECT nsum(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3248,6 +3264,20 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT ksum(reading) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT ksum(id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT ksum(reading) FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT nsum(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nsum(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nsum(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nsum(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nsum(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nsum(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nsum(reading) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT nsum(reading) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT nsum(reading) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT NSUM(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nsum(reading) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT nsum(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT nsum(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT nsum(reading) FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3416,6 +3446,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT stddev_pop(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT ksum(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT ksum(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT nsum(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT nsum(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -7295,6 +7295,11 @@ enum Accumulator {
         compensation: f64,
         count: i64,
     },
+    Neumaier {
+        sum: f64,
+        compensation: f64,
+        count: i64,
+    },
 }
 
 impl Accumulator {
@@ -7323,6 +7328,11 @@ impl Accumulator {
                 compensation: 0.0,
                 count: 0,
             },
+            AggFunc::NSum => Self::Neumaier {
+                sum: 0.0,
+                compensation: 0.0,
+                count: 0,
+            },
         }
     }
 
@@ -7334,7 +7344,8 @@ impl Accumulator {
             Self::Value(None)
             | Self::Average { count: 0, .. }
             | Self::StdDev { count: 0, .. }
-            | Self::Kahan { count: 0, .. } => Scalar::Null,
+            | Self::Kahan { count: 0, .. }
+            | Self::Neumaier { count: 0, .. } => Scalar::Null,
             Self::Average {
                 total: Some(total),
                 count,
@@ -7370,6 +7381,18 @@ impl Accumulator {
                     Scalar::Null
                 }
             }
+            Self::Neumaier {
+                sum,
+                compensation,
+                count,
+            } => {
+                let result = *sum + *compensation;
+                if *count > 0 && result.is_finite() {
+                    Scalar::Double(result)
+                } else {
+                    Scalar::Null
+                }
+            }
         }
     }
 }
@@ -7389,7 +7412,12 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     let tag = table.meta.columns[index].tag;
     if matches!(
         aggregate.func,
-        AggFunc::StdDev | AggFunc::Variance | AggFunc::VarPop | AggFunc::StdDevPop | AggFunc::KSum
+        AggFunc::StdDev
+            | AggFunc::Variance
+            | AggFunc::VarPop
+            | AggFunc::StdDevPop
+            | AggFunc::KSum
+            | AggFunc::NSum
     ) && matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL)
     {
         let fname = moment_name(aggregate.func);
@@ -7439,7 +7467,8 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::Variance
         | AggFunc::VarPop
         | AggFunc::StdDevPop
-        | AggFunc::KSum => qdb_types::TAG_DOUBLE,
+        | AggFunc::KSum
+        | AggFunc::NSum => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
@@ -7474,7 +7503,8 @@ fn contribution(
         | AggFunc::Variance
         | AggFunc::VarPop
         | AggFunc::StdDevPop
-        | AggFunc::KSum => stddev_addend(value, input),
+        | AggFunc::KSum
+        | AggFunc::NSum => stddev_addend(value, input),
     }
 }
 
@@ -7545,6 +7575,7 @@ fn moment_name(func: AggFunc) -> &'static str {
         AggFunc::VarPop => "var_pop",
         AggFunc::StdDevPop => "stddev_pop",
         AggFunc::KSum => "ksum",
+        AggFunc::NSum => "nsum",
         _ => "stddev",
     }
 }
@@ -7697,6 +7728,26 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             let t = *sum + y;
             *compensation = (t - *sum) - y;
             *sum = t;
+            *count += 1;
+        }
+        Accumulator::Neumaier {
+            sum,
+            compensation,
+            count,
+        } => {
+            let Scalar::Double(value) = next else {
+                return;
+            };
+            if !value.is_finite() {
+                return;
+            }
+            let total = *sum + value;
+            if sum.abs() >= value.abs() {
+                *compensation += (*sum - total) + value;
+            } else {
+                *compensation += (value - total) + *sum;
+            }
+            *sum = total;
             *count += 1;
         }
         Accumulator::Value(current) => match current {
@@ -18756,6 +18807,164 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT ksum(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn nsum_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT nsum(reading) FROM sensors",
+                "expected/ns_read.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(id) FROM sensors",
+                "expected/ns_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(score) FROM sensors",
+                "expected/ns_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(b) FROM sensors",
+                "expected/ns_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(code) FROM sensors",
+                "expected/ns_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(flags) FROM sensors",
+                "expected/ns_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(reading) FROM sensors WHERE id = 1",
+                "expected/ns_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(reading) FROM sensors WHERE id > 100",
+                "expected/ns_none.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(reading) FROM sensors WHERE id = -1",
+                "expected/ns_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT NSUM(reading) FROM sensors",
+                "expected/ns_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(reading) FROM sensors LIMIT 0",
+                "expected/ns_lim0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/ns_grp.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/ns_grp_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT nsum(reading) FROM sensors WHERE location = 'madrid'",
+                "expected/ns_where.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT nsum(id) FROM days",
+                "expected/ns_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT nsum(id) FROM days GROUP BY location ORDER BY location",
+                "expected/ns_days_grp.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT nsum() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `nsum` requires arguments: nsum(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nsum(reading, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `nsum`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nsum(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nsum(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nsum(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `nsum` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nsum(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `nsum` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nsum(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nsum(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nsum(ch) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),
