@@ -5,10 +5,10 @@ use crate::parse::{
     Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr, IsEndOfMonthExpr, IsLeapYearExpr,
     LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MillisExpr, MinuteExpr,
     MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
-    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr,
-    SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
-    TimestampCeilExpr, TimestampFloorExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd,
-    TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr,
+    SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
+    SubstrExpr, TimestampCeilExpr, TimestampFloorExpr, ToDateExpr, ToStrExpr, ToTimestampExpr,
+    TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -230,6 +230,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::ToTimestamp { label, .. }
             | ResolvedProj::ToDate { label, .. }
             | ResolvedProj::Md5 { label, .. }
+            | ResolvedProj::Sha1 { label, .. }
             | ResolvedProj::Extract { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
@@ -484,6 +485,10 @@ enum ResolvedProj {
         label: String,
         arg: ResolvedArg,
     },
+    Sha1 {
+        label: String,
+        arg: ResolvedArg,
+    },
     Extract {
         label: String,
         part: ExtractPart,
@@ -652,6 +657,7 @@ impl ResolvedProj {
             | Self::ToTimestamp { label, .. }
             | Self::ToDate { label, .. }
             | Self::Md5 { label, .. }
+            | Self::Sha1 { label, .. }
             | Self::Extract { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
@@ -700,7 +706,7 @@ impl ResolvedProj {
             Self::DayOfWeekSundayFirst { .. } => qdb_types::TAG_INT,
             Self::ToTimestamp { .. } => qdb_types::TAG_TIMESTAMP,
             Self::ToDate { .. } => qdb_types::TAG_DATE,
-            Self::Md5 { .. } => qdb_types::TAG_VARCHAR,
+            Self::Md5 { .. } | Self::Sha1 { .. } => qdb_types::TAG_VARCHAR,
             Self::Extract { part, .. } => match part {
                 ExtractPart::Epoch => qdb_types::TAG_LONG,
                 _ => qdb_types::TAG_INT,
@@ -799,6 +805,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::ToTimestamp(expr) => resolve_to_timestamp(table, expr),
         Proj::ToDate(expr) => resolve_to_date(table, expr),
         Proj::Md5(expr) => resolve_md5(table, expr),
+        Proj::Sha1(expr) => resolve_sha1(table, expr),
         Proj::Extract(expr) => resolve_extract(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
@@ -2238,6 +2245,118 @@ fn md5_hex(message: &[u8]) -> String {
         }
     }
     out
+}
+
+fn sha1_hex(message: &[u8]) -> String {
+    let mut state = [
+        0x6745_2301_u32,
+        0xefcd_ab89,
+        0x98ba_dcfe,
+        0x1032_5476,
+        0xc3d2_e1f0,
+    ];
+    let bit_len = (message.len() as u64).wrapping_mul(8);
+    let mut data = message.to_vec();
+    data.push(0x80);
+    while data.len() % 64 != 56 {
+        data.push(0);
+    }
+    data.extend_from_slice(&bit_len.to_be_bytes());
+    for chunk in data.chunks_exact(64) {
+        let mut words = [0_u32; 80];
+        for (word, bytes) in words.iter_mut().zip(chunk.chunks_exact(4)) {
+            let mut buf = [0_u8; 4];
+            buf.copy_from_slice(bytes);
+            *word = u32::from_be_bytes(buf);
+        }
+        for index in 16..80 {
+            words[index] =
+                (words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16])
+                    .rotate_left(1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e) =
+            (state[0], state[1], state[2], state[3], state[4]);
+        for (index, word) in words.iter().enumerate() {
+            let (mixed, constant) = match index {
+                0..=19 => ((b & c) | (!b & d), 0x5a82_7999),
+                20..=39 => (b ^ c ^ d, 0x6ed9_eba1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8f1b_bcdc),
+                _ => (b ^ c ^ d, 0xca62_c1d6),
+            };
+            let mixed = a
+                .rotate_left(5)
+                .wrapping_add(mixed)
+                .wrapping_add(e)
+                .wrapping_add(constant)
+                .wrapping_add(*word);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = mixed;
+        }
+        state[0] = state[0].wrapping_add(a);
+        state[1] = state[1].wrapping_add(b);
+        state[2] = state[2].wrapping_add(c);
+        state[3] = state[3].wrapping_add(d);
+        state[4] = state[4].wrapping_add(e);
+    }
+    let mut out = String::with_capacity(40);
+    for word in state {
+        for byte in word.to_be_bytes() {
+            out.push(char::from(b"0123456789abcdef"[(byte >> 4) as usize]));
+            out.push(char::from(b"0123456789abcdef"[(byte & 0x0f) as usize]));
+        }
+    }
+    out
+}
+
+fn resolve_sha1(table: &Table, expr: &Sha1Expr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "there is no matching function `sha1` with the argument types: ({})",
+            timestamp_floor_types(table, &expr.args)?
+        )));
+    }
+    let arg = match &expr.args[0] {
+        ConcatArg::Literal(Scalar::Null) => ResolvedArg::Null,
+        ConcatArg::Literal(Scalar::Text(text)) => ResolvedArg::Text(text.clone()),
+        ConcatArg::Literal(Scalar::Char(0)) => ResolvedArg::Null,
+        ConcatArg::Literal(Scalar::Char(unit)) => ResolvedArg::Text(
+            char::from_u32(u32::from(*unit))
+                .unwrap_or('\u{0}')
+                .to_string(),
+        ),
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            let tag = table.meta.columns[index].tag;
+            if !matches!(
+                tag,
+                qdb_types::TAG_STRING
+                    | qdb_types::TAG_SYMBOL
+                    | qdb_types::TAG_VARCHAR
+                    | qdb_types::TAG_CHAR
+            ) {
+                return Err(Error::new(format!(
+                    "there is no matching function `sha1` with the argument types: ({})",
+                    timestamp_floor_types(table, &expr.args)?
+                )));
+            }
+            ResolvedArg::Column { index, tag }
+        }
+        _ => {
+            return Err(Error::new(format!(
+                "there is no matching function `sha1` with the argument types: ({})",
+                timestamp_floor_types(table, &expr.args)?
+            )));
+        }
+    };
+    Ok(ResolvedProj::Sha1 {
+        label: expr.label.clone(),
+        arg,
+    })
 }
 
 fn resolve_md5(table: &Table, expr: &Md5Expr) -> Result<ResolvedProj, Error> {
@@ -5128,6 +5247,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::Md5 { arg, .. } => match text_of(table, row, arg) {
             Some(text) => Scalar::Text(md5_hex(text.as_bytes())),
+            None => Scalar::Null,
+        },
+        ResolvedProj::Sha1 { arg, .. } => match text_of(table, row, arg) {
+            Some(text) => Scalar::Text(sha1_hex(text.as_bytes())),
             None => Scalar::Null,
         },
         ResolvedProj::ToDate { arg, pattern, .. } => match text_of(table, row, arg) {
@@ -14187,6 +14310,106 @@ mod tests {
             err.message.contains(
                 "there is no matching function `to_str` with the argument types: (TIMESTAMP, STRING, CHAR)"
             ),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn sha1_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT sha1('abc') FROM sensors LIMIT 1",
+                "expected/s1_abc.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sha1('') FROM sensors LIMIT 1",
+                "expected/s1_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sha1(null) FROM sensors LIMIT 1",
+                "expected/s1_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sha1(note) FROM sensors",
+                "expected/s1_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sha1(location) FROM sensors LIMIT 1",
+                "expected/s1_sym.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sha1('β') FROM sensors LIMIT 1",
+                "expected/s1_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sha1('東京') FROM sensors LIMIT 1",
+                "expected/s1_tokyo.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT SHA1('abc') FROM sensors LIMIT 1",
+                "expected/s1_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sha1(note) FROM sensors ORDER BY sha1(note)",
+                "expected/s1_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sha1(note) FROM sensors WHERE id = 1",
+                "expected/s1_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sha1(note) FROM sensors LIMIT 0",
+                "expected/s1_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT sha1(note) FROM days ORDER BY ts",
+                "expected/s1_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT sha1() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("function `sha1` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sha1(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `sha1` with the argument types: (LONG)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sha1('a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `sha1` with the argument types: (CHAR, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sha1(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );

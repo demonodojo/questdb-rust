@@ -1207,7 +1207,18 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   m5_case "SELECT MD5('abc') FROM sensors LIMIT 1" \
   m5_order "SELECT md5(note) FROM sensors ORDER BY md5(note)" \
   m5_where "SELECT md5(note) FROM sensors WHERE id = 1" \
-  m5_zero "SELECT md5(note) FROM sensors LIMIT 0"
+  m5_zero "SELECT md5(note) FROM sensors LIMIT 0" \
+  s1_abc "SELECT sha1('abc') FROM sensors LIMIT 1" \
+  s1_empty "SELECT sha1('') FROM sensors LIMIT 1" \
+  s1_null "SELECT sha1(null) FROM sensors LIMIT 1" \
+  s1_note "SELECT sha1(note) FROM sensors" \
+  s1_sym "SELECT sha1(location) FROM sensors LIMIT 1" \
+  s1_beta "SELECT sha1('β') FROM sensors LIMIT 1" \
+  s1_tokyo "SELECT sha1('東京') FROM sensors LIMIT 1" \
+  s1_case "SELECT SHA1('abc') FROM sensors LIMIT 1" \
+  s1_order "SELECT sha1(note) FROM sensors ORDER BY sha1(note)" \
+  s1_where "SELECT sha1(note) FROM sensors WHERE id = 1" \
+  s1_zero "SELECT sha1(note) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1348,7 +1359,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   tp_days "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM days ORDER BY ts" \
   xt_days "SELECT extract(day FROM ts) FROM days ORDER BY ts" \
   td_days "SELECT to_date(note, 'yyyy-MM-dd') FROM days ORDER BY ts" \
-  m5_days "SELECT md5(note) FROM days ORDER BY ts"
+  m5_days "SELECT md5(note) FROM days ORDER BY ts" \
+  s1_days "SELECT sha1(note) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2503,6 +2515,17 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT md5(note) FROM sensors ORDER BY md5(note)"),
     (os.environ["DIFF_H1"], "SELECT md5(note) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT md5(note) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT sha1('abc') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sha1('') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sha1(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sha1(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sha1(location) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sha1('β') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sha1('東京') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT SHA1('abc') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sha1(note) FROM sensors ORDER BY sha1(note)"),
+    (os.environ["DIFF_H1"], "SELECT sha1(note) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT sha1(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2642,6 +2665,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT extract(day FROM ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT to_date(note, 'yyyy-MM-dd') FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT md5(note) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT sha1(note) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -127,6 +127,7 @@ pub enum Proj {
     ToTimestamp(ToTimestampExpr),
     ToDate(ToDateExpr),
     Md5(Md5Expr),
+    Sha1(Sha1Expr),
     Extract(ExtractExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
@@ -459,6 +460,13 @@ pub struct Md5Expr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `sha1(text)` returns the lowercase hex digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sha1Expr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `extract(part FROM timestamp)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractExpr {
@@ -673,6 +681,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_days_in_month()?.label
             } else if parser.starts_extract_call() {
                 parser.parse_extract()?.label
+            } else if parser.starts_sha1_call() {
+                parser.parse_sha1()?.label
             } else if parser.starts_md5_call() {
                 parser.parse_md5()?.label
             } else if parser.starts_to_date_call() {
@@ -806,6 +816,7 @@ enum SelectPiece {
     ToTimestamp(ToTimestampExpr),
     ToDate(ToDateExpr),
     Md5(Md5Expr),
+    Sha1(Sha1Expr),
     Extract(ExtractExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
@@ -988,6 +999,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::DaysInMonth(self.parse_days_in_month()?));
             } else if self.starts_extract_call() {
                 pieces.push(SelectPiece::Extract(self.parse_extract()?));
+            } else if self.starts_sha1_call() {
+                pieces.push(SelectPiece::Sha1(self.parse_sha1()?));
             } else if self.starts_md5_call() {
                 pieces.push(SelectPiece::Md5(self.parse_md5()?));
             } else if self.starts_to_date_call() {
@@ -1086,6 +1099,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::ToTimestamp(_)
                     | SelectPiece::ToDate(_)
                     | SelectPiece::Md5(_)
+                    | SelectPiece::Sha1(_)
                     | SelectPiece::Extract(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
@@ -1159,6 +1173,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::ToTimestamp(expr) => items.push(Proj::ToTimestamp(expr)),
                     SelectPiece::ToDate(expr) => items.push(Proj::ToDate(expr)),
                     SelectPiece::Md5(expr) => items.push(Proj::Md5(expr)),
+                    SelectPiece::Sha1(expr) => items.push(Proj::Sha1(expr)),
                     SelectPiece::Extract(expr) => items.push(Proj::Extract(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
@@ -1254,6 +1269,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::ToTimestamp(_)
                 | SelectPiece::ToDate(_)
                 | SelectPiece::Md5(_)
+                | SelectPiece::Sha1(_)
                 | SelectPiece::Extract(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
@@ -1557,6 +1573,22 @@ impl<'a> Parser<'a> {
             label: format!("{name}({part_src}, {arg_label})"),
             part,
             arg,
+        })
+    }
+
+    fn starts_sha1_call(&self) -> bool {
+        self.starts_named_call("sha1")
+    }
+
+    fn parse_sha1(&mut self) -> Result<Sha1Expr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new("function `sha1` requires arguments".to_string()));
+        }
+        Ok(Sha1Expr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
         })
     }
 
