@@ -7271,8 +7271,10 @@ struct AggColumn {
     delimiter: char,
     pair_index: Option<usize>,
     pair_tag: i32,
-    /// Significant digits for `approx_median`. One when the call omits precision.
+    /// Significant digits for `approx_median` and `approx_percentile`. One when omitted.
     precision: i32,
+    /// Percentile in the closed interval `0.0..=1.0`. `approx_median` uses `0.5`.
+    percentile: f64,
 }
 
 enum Accumulator {
@@ -7359,6 +7361,7 @@ enum Accumulator {
         floating: bool,
         histogram: HdrHistogram,
         samples: Vec<f64>,
+        percentile: f64,
     },
 }
 
@@ -7405,10 +7408,11 @@ impl Accumulator {
                 count: 0,
             },
             AggFunc::Mode => Self::Mode { seen: Vec::new() },
-            AggFunc::ApproxMedian => Self::ApproxMedian {
+            AggFunc::ApproxMedian | AggFunc::ApproxPercentile => Self::ApproxMedian {
                 floating: false,
                 histogram: HdrHistogram::new(1),
                 samples: Vec::new(),
+                percentile: 0.5,
             },
             AggFunc::Avg => Self::Average {
                 total: None,
@@ -7583,11 +7587,13 @@ impl Accumulator {
                 floating,
                 histogram,
                 samples,
+                percentile,
             } => {
+                let point = *percentile * 100.0;
                 if *floating {
-                    double_median(samples)
+                    double_at(samples, point)
                 } else {
-                    histogram.median()
+                    histogram.value_at(point)
                 }
             }
             Self::GeoMean {
@@ -7626,6 +7632,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             pair_index: None,
             pair_tag: qdb_types::TAG_DOUBLE,
             precision: 1,
+            percentile: 0.5,
         });
     };
     let index = table
@@ -7779,10 +7786,10 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     } else {
         Vec::new()
     };
-    let precision = if aggregate.func == AggFunc::ApproxMedian {
-        median_precision(table, tag, aggregate)?
-    } else {
-        1
+    let (precision, percentile) = match aggregate.func {
+        AggFunc::ApproxMedian => (median_precision(table, tag, aggregate)?, 0.5),
+        AggFunc::ApproxPercentile => percentile_spec(table, tag, aggregate)?,
+        _ => (1, 0.5),
     };
     Ok(AggColumn {
         index: Some(index),
@@ -7793,6 +7800,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         pair_index,
         pair_tag,
         precision,
+        percentile,
     })
 }
 
@@ -7824,7 +7832,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::GeoMean
         | AggFunc::Skewness => qdb_types::TAG_DOUBLE,
         AggFunc::Mode => mode_result_tag(input.tag),
-        AggFunc::ApproxMedian => qdb_types::TAG_DOUBLE,
+        AggFunc::ApproxMedian | AggFunc::ApproxPercentile => qdb_types::TAG_DOUBLE,
         AggFunc::BoolAnd | AggFunc::BoolOr => qdb_types::TAG_BOOLEAN,
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
@@ -7864,7 +7872,7 @@ fn contribution(
         AggFunc::GeoMean => geomean_addend(value, input, "geomean"),
         AggFunc::Skewness => geomean_addend(value, input, "skewness"),
         AggFunc::Mode => mode_addend(value, input),
-        AggFunc::ApproxMedian => median_addend(value, input),
+        AggFunc::ApproxMedian | AggFunc::ApproxPercentile => median_addend(value, input),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::CountDistinct => Ok(Some(value.clone())),
         AggFunc::ApproxCountDistinct => approx_distinct_value(value, input),
@@ -8197,6 +8205,7 @@ fn start_accumulator(aggregate: &AggregateExpr, input: &AggColumn) -> Accumulato
     if let Accumulator::ApproxMedian {
         floating,
         histogram,
+        percentile,
         ..
     } = &mut accumulator
     {
@@ -8208,6 +8217,7 @@ fn start_accumulator(aggregate: &AggregateExpr, input: &AggColumn) -> Accumulato
                 | qdb_types::TAG_VARCHAR
         );
         *histogram = HdrHistogram::new(input.precision);
+        *percentile = input.percentile;
     }
     accumulator
 }
@@ -8537,6 +8547,85 @@ fn stddev_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Er
     }
 }
 
+fn percentile_spec(
+    table: &Table,
+    tag: i32,
+    aggregate: &AggregateExpr,
+) -> Result<(i32, f64), Error> {
+    let first = qdb_types::type_name(tag).to_string();
+    let second = match (&aggregate.extra, &aggregate.precision) {
+        (Some(AggregateExtra::Type(kind)), _) => kind.clone(),
+        (Some(AggregateExtra::Column(name)), _) => median_column_type(table, name)?,
+        (None, Some(number)) => median_number_type(number).to_string(),
+        (None, None) => {
+            return Err(percentile_types(&[first]));
+        }
+    };
+    let mut parts = vec![first.clone(), second];
+    if let Some(kind) = &aggregate.third_type {
+        parts.push(percentile_shown_type(table, kind)?);
+    }
+    if let Some(kind) = &aggregate.fourth_type {
+        parts.push(percentile_shown_type(table, kind)?);
+    }
+    let acceptable = !matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL);
+    if !acceptable || aggregate.fourth_type.is_some() {
+        return Err(percentile_types(&parts));
+    }
+    let third_is_precision = match aggregate.third_type.as_deref() {
+        None => true,
+        Some("NULL") => true,
+        Some("INT") => aggregate.third_value.is_some(),
+        Some(_) => false,
+    };
+    if !third_is_precision {
+        return Err(percentile_types(&parts));
+    }
+    if matches!(aggregate.extra, Some(AggregateExtra::Column(_))) {
+        return Err(Error::new(
+            "percentile must be a constant or runtime constant",
+        ));
+    }
+    let Some(number) = &aggregate.precision else {
+        return Err(Error::new("percentile must be between 0.0 and 1.0"));
+    };
+    let value = match number {
+        Scalar::Double(value) => *value,
+        Scalar::Long(value) => *value as f64,
+        _ => return Err(Error::new("percentile must be between 0.0 and 1.0")),
+    };
+    if !(0.0..=1.0).contains(&value) {
+        return Err(Error::new("percentile must be between 0.0 and 1.0"));
+    }
+    let Some(kind) = aggregate.third_type.as_deref() else {
+        return Ok((1, value));
+    };
+    if kind == "NULL" {
+        return Err(Error::new("precision must be between 0 and 5"));
+    }
+    let Some(Scalar::Long(digits)) = aggregate.third_value else {
+        return Err(percentile_types(&parts));
+    };
+    if !(0..=5).contains(&digits) {
+        return Err(Error::new("precision must be between 0 and 5"));
+    }
+    Ok((digits as i32, value))
+}
+
+fn percentile_shown_type(table: &Table, kind: &str) -> Result<String, Error> {
+    if matches!(kind, "NULL" | "INT" | "LONG" | "DOUBLE") {
+        return Ok(kind.to_string());
+    }
+    median_column_type(table, kind)
+}
+
+fn percentile_types(parts: &[String]) -> Error {
+    Error::new(format!(
+        "there is no matching function `approx_percentile` with the argument types: ({})",
+        parts.join(", ")
+    ))
+}
+
 fn median_precision(table: &Table, tag: i32, aggregate: &AggregateExpr) -> Result<i32, Error> {
     if let Some(third) = &aggregate.third_type {
         let second = match &aggregate.extra {
@@ -8674,13 +8763,13 @@ fn median_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Er
     }
 }
 
-fn double_median(samples: &[f64]) -> Scalar {
+fn double_at(samples: &[f64], percentile: f64) -> Scalar {
     if samples.is_empty() {
         return Scalar::Null;
     }
     let mut values = samples.to_vec();
     values.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
-    let requested = next_down(50.0).clamp(0.0, 100.0);
+    let requested = next_down(percentile).clamp(0.0, 100.0);
     let count_at = ((requested * values.len() as f64) / 100.0).ceil().max(1.0) as usize;
     Scalar::Double(values[count_at - 1])
 }
@@ -8788,11 +8877,11 @@ impl HdrHistogram {
         Ok(())
     }
 
-    fn median(&self) -> Scalar {
+    fn value_at(&self, percentile: f64) -> Scalar {
         if self.total == 0 {
             return Scalar::Null;
         }
-        let requested = next_down(50.0).clamp(0.0, 100.0);
+        let requested = next_down(percentile).clamp(0.0, 100.0);
         let mut count_at = ((requested * self.total as f64) / 100.0).ceil() as i64;
         if count_at < 1 {
             count_at = 1;
@@ -8801,7 +8890,12 @@ impl HdrHistogram {
         for (index, count) in self.counts.iter().enumerate() {
             seen += *count;
             if seen >= count_at {
-                let value = self.highest_equivalent(self.value_from_slot(index as i32));
+                let raw = self.value_from_slot(index as i32);
+                let value = if percentile == 0.0 {
+                    self.lowest_equivalent(raw)
+                } else {
+                    self.highest_equivalent(raw)
+                };
                 return Scalar::Double(value as f64);
             }
         }
@@ -8835,6 +8929,12 @@ impl HdrHistogram {
             sub -= self.sub_bucket_half_count;
             bucket = 0;
         }
+        self.value_from_parts(bucket, sub)
+    }
+
+    fn lowest_equivalent(&self, value: i64) -> i64 {
+        let bucket = self.bucket_index(value);
+        let sub = self.sub_bucket_index(value, bucket);
         self.value_from_parts(bucket, sub)
     }
 
@@ -9168,6 +9268,7 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             floating,
             histogram,
             samples,
+            ..
         } => {
             if *floating {
                 let Scalar::Double(value) = next else {
@@ -23783,6 +23884,352 @@ mod tests {
         let err = execute(&sensors, "SELECT mode(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn approx_percentile_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.5) FROM sensors",
+                "expected/pc_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE id = 1",
+                "expected/pc_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE id > 100",
+                "expected/pc_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 1) FROM sensors",
+                "expected/pc_high.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0) FROM sensors",
+                "expected/pc_low.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.25) FROM sensors",
+                "expected/pc_p25.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.75) FROM sensors",
+                "expected/pc_p75.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE id = -1",
+                "expected/pc_forty.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.5, 0) FROM sensors WHERE id = -1",
+                "expected/pc_prec0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.5, 3) FROM sensors WHERE id = -1",
+                "expected/pc_prec3.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.5, 1) FROM sensors",
+                "expected/pc_prec1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE flags > 0",
+                "expected/pc_pos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(reading, 0.5) FROM sensors",
+                "expected/pc_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(reading, 0) FROM sensors",
+                "expected/pc_read0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(reading, 1) FROM sensors",
+                "expected/pc_read1p.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(reading, 0.5) FROM sensors WHERE id = 1",
+                "expected/pc_read1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(score, 0.5) FROM sensors WHERE id = 1",
+                "expected/pc_score1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(b, 0.5) FROM sensors WHERE b >= 0",
+                "expected/pc_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(code, 0.5) FROM sensors WHERE code > 0",
+                "expected/pc_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.5) FROM sensors GROUP BY location ORDER BY location",
+                "expected/pc_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(reading, 0.5) FROM sensors GROUP BY location ORDER BY location",
+                "expected/pc_read_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT approx_percentile(flags, 0.5) FROM sensors LIMIT 0",
+                "expected/pc_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT APPROX_PERCENTILE(flags, 0.5) FROM sensors",
+                "expected/pc_case.tsv",
+            ),
+            (
+                &days,
+                "SELECT approx_percentile(id, 0.5) FROM days",
+                "expected/pc_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT approx_percentile(id, 0) FROM days",
+                "expected/pc_days0.tsv",
+            ),
+            (
+                &days,
+                "SELECT approx_percentile(id, 1) FROM days",
+                "expected/pc_days1.tsv",
+            ),
+            (
+                &days,
+                "SELECT approx_percentile(id, 0.5) FROM days GROUP BY location ORDER BY location",
+                "expected/pc_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT approx_percentile(id, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("Histogram recorded value cannot be negative."),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_percentile() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `approx_percentile` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_percentile(flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_percentile` with the argument types: (INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT approx_percentile(flags, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("percentile must be a constant or runtime constant"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_percentile(flags, 1.5) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("percentile must be between 0.0 and 1.0"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_percentile(flags, null) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("percentile must be between 0.0 and 1.0"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_percentile(flags, 0.5, 6) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("precision must be between 0 and 5"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_percentile(flags, 0.5, null) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("precision must be between 0 and 5"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_percentile(flags, 0.5, id) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_percentile` with the argument types: (INT, DOUBLE, LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_percentile(flags, 0.5, 1.5) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_percentile` with the argument types: (INT, DOUBLE, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_percentile(flags, 0.5, 1, 2) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_percentile` with the argument types: (INT, DOUBLE, INT, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_percentile(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_percentile(missing, 0.5) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_percentile(ok, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_percentile` with the argument types: (BOOLEAN, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_percentile(ok, 0) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_percentile` with the argument types: (BOOLEAN, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_percentile(ok, null) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_percentile` with the argument types: (BOOLEAN, NULL)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_percentile(location, 0.5) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_percentile` with the argument types: (SYMBOL, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_percentile(location, id) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `approx_percentile` with the argument types: (SYMBOL, LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT approx_percentile(note, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT approx_percentile(ch, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT approx_percentile(score, 0.5) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Negative values cannot be recorded"),
             "{}",
             err.message
         );

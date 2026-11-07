@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — approx_percentile()
+
+`approx_percentile(col, percentile)` estima un percentil entre `0.0` y `1.0` y devuelve `DOUBLE`. La precisión por defecto es 1 y el tercer argumento la cambia entre 0 y 5. `approx_percentile(flags, 0.5)` es `10.0`. El percentil `0` de `flags` es `0.0` y el `1` es `43.0`. Un `42` suelto en el percentil `0.5` sale como `43.0`, con precisión 0 como `63.0` y con precisión 3 como `42.0`. `approx_percentile(id, 0.5)` en `days` es `2.0`, el percentil `0` es `1.0` y el `1` es `3.0`. El percentil tiene que ser constante. Un entero negativo se rechaza. Sin filas el resultado es NULL. `BOOLEAN` y `SYMBOL` no encajan. El histograma de coma flotante de QuestDB se aproxima aquí con la muestra ordenada de este fixture. `approx_percentile(score, 0.5)` en la columna entera imprime en 10.1.0 el rango cubierto `[1.0, 2048.0)` y aquí solo `Negative values cannot be recorded`. Esa consulta no se captura. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — approx_median()
 
 `approx_median(col)` estima la mediana con un histograma y devuelve `DOUBLE`. La precisión por defecto es 1. `approx_median(flags)` es `10.0`. Un valor suelto de `42` sale como `43.0` y con precisión 0 como `63.0`. Precisión 3 deja `42.0`. `approx_median(reading)` es `0.0` y una fila con `id = 1` de `score` es `1.25`. `approx_median(id)` en `days` es `2.0`. Un entero negativo se rechaza. Sin filas el resultado es NULL. `BOOLEAN` y `SYMBOL` no encajan. El histograma de coma flotante de QuestDB se aproxima aquí con la muestra ordenada de este fixture. Se contrastó con `/exec` en `sensors` y `days`.

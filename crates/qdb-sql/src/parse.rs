@@ -74,6 +74,7 @@ pub enum AggFunc {
     Skewness,
     Mode,
     ApproxMedian,
+    ApproxPercentile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +100,10 @@ pub struct AggregateExpr {
     pub extra: Option<AggregateExtra>,
     /// Type name of a third `approx_median` argument, when present.
     pub third_type: Option<String>,
+    /// Literal in the third argument of `approx_percentile`, when it is a number.
+    pub third_value: Option<Scalar>,
+    /// Type name of a fourth `approx_percentile` argument, when present.
+    pub fourth_type: Option<String>,
 }
 
 fn median_literal_type(number: &Scalar) -> &'static str {
@@ -3085,6 +3090,7 @@ impl<'a> Parser<'a> {
                 | "skewness"
                 | "mode"
                 | "approx_median"
+                | "approx_percentile"
                 | "approx_count_distinct"
                 | "string_agg"
                 | "covar_pop"
@@ -3148,6 +3154,7 @@ impl<'a> Parser<'a> {
             "skewness" => AggFunc::Skewness,
             "mode" => AggFunc::Mode,
             "approx_median" => AggFunc::ApproxMedian,
+            "approx_percentile" => AggFunc::ApproxPercentile,
             "approx_count_distinct" => AggFunc::ApproxCountDistinct,
             "string_agg" => AggFunc::StringAgg,
             "covar_pop" => AggFunc::CovarPop,
@@ -3204,6 +3211,9 @@ impl<'a> Parser<'a> {
             )));
         }
         let mut third_type = None;
+        let mut third_value = None;
+        let mut third_label = None;
+        let mut fourth_type = None;
         let mut precision = None;
         let mut precision_more = false;
         let mut precision_label = None;
@@ -3313,6 +3323,96 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 let _ = third_start;
+            }
+        }
+        if func == AggFunc::ApproxPercentile && self.peek() == Some(b',') {
+            self.pos += 1;
+            self.skip();
+            let start = self.pos;
+            if self
+                .peek()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            {
+                let word = self.ident_spelling()?;
+                extra = if word.eq_ignore_ascii_case("null") {
+                    Some(AggregateExtra::Type("NULL".to_string()))
+                } else {
+                    Some(AggregateExtra::Column(word))
+                };
+                precision_label = Some(
+                    std::str::from_utf8(&self.src[start..self.pos])
+                        .unwrap_or("")
+                        .to_string(),
+                );
+            } else {
+                precision = Some(self.parse_number()?);
+                precision_label = Some(
+                    std::str::from_utf8(&self.src[start..self.pos])
+                        .unwrap_or("")
+                        .to_string(),
+                );
+            }
+            self.skip();
+            if self.peek() == Some(b',') {
+                self.pos += 1;
+                self.skip();
+                let third_start = self.pos;
+                if self
+                    .peek()
+                    .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+                {
+                    let word = self.ident_spelling()?;
+                    third_type = if word.eq_ignore_ascii_case("null") {
+                        Some("NULL".to_string())
+                    } else {
+                        Some(word)
+                    };
+                } else if self.starts_limit_int()
+                    || self.peek() == Some(b'.')
+                    || self.peek() == Some(b'-')
+                {
+                    let number = self.parse_number()?;
+                    third_type = Some(median_literal_type(&number).to_string());
+                    third_value = Some(number);
+                }
+                if self.pos == third_start {
+                    return Err(Error::new(
+                        "unsupported: approx_percentile precision must be a literal",
+                    ));
+                }
+                third_label = Some(
+                    std::str::from_utf8(&self.src[third_start..self.pos])
+                        .unwrap_or("")
+                        .to_string(),
+                );
+                self.skip();
+                if self.peek() == Some(b',') {
+                    self.pos += 1;
+                    self.skip();
+                    let fourth_start = self.pos;
+                    if self
+                        .peek()
+                        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+                    {
+                        let word = self.ident_spelling()?;
+                        fourth_type = if word.eq_ignore_ascii_case("null") {
+                            Some("NULL".to_string())
+                        } else {
+                            Some(word)
+                        };
+                    } else if self.starts_limit_int()
+                        || self.peek() == Some(b'.')
+                        || self.peek() == Some(b'-')
+                    {
+                        let number = self.parse_number()?;
+                        fourth_type = Some(median_literal_type(&number).to_string());
+                    }
+                    if self.pos == fourth_start {
+                        return Err(Error::new(
+                            "unsupported: approx_percentile precision must be a literal",
+                        ));
+                    }
+                }
             }
         }
         if func == AggFunc::ApproxCountDistinct && self.peek() == Some(b',') {
@@ -3498,12 +3598,20 @@ impl<'a> Parser<'a> {
                 name.to_ascii_lowercase()
             )));
         }
-        let label = match (&column, &precision_label, &separator_label, &pair) {
-            (Some(column), Some(precision), _, _) => format!("{name}({column}, {precision})"),
-            (Some(column), None, Some(separator), _) => format!("{name}({column}, {separator})"),
-            (Some(column), None, None, Some(pair)) => format!("{name}({column}, {pair})"),
-            (Some(column), None, None, None) => format!("{name}({column})"),
-            (None, _, _, _) => format!("{name}()"),
+        let label = if let (Some(column), Some(second), Some(third)) =
+            (&column, &precision_label, &third_label)
+        {
+            format!("{name}({column}, {second}, {third})")
+        } else {
+            match (&column, &precision_label, &separator_label, &pair) {
+                (Some(column), Some(precision), _, _) => format!("{name}({column}, {precision})"),
+                (Some(column), None, Some(separator), _) => {
+                    format!("{name}({column}, {separator})")
+                }
+                (Some(column), None, None, Some(pair)) => format!("{name}({column}, {pair})"),
+                (Some(column), None, None, None) => format!("{name}({column})"),
+                (None, _, _, _) => format!("{name}()"),
+            }
         };
         Ok(AggregateExpr {
             func,
@@ -3517,6 +3625,8 @@ impl<'a> Parser<'a> {
             pair,
             extra,
             third_type,
+            third_value,
+            fourth_type,
         })
     }
 

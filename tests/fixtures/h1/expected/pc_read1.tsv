@@ -1,0 +1,2 @@
+approx_percentile(reading, 0.5)
+1.5

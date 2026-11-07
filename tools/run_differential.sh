@@ -1901,7 +1901,30 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   am_grp "SELECT approx_median(flags) FROM sensors GROUP BY location ORDER BY location" \
   am_read_grp "SELECT approx_median(reading) FROM sensors GROUP BY location ORDER BY location" \
   am_lim0 "SELECT approx_median(flags) FROM sensors LIMIT 0" \
-  am_case "SELECT APPROX_MEDIAN(flags) FROM sensors"
+  am_case "SELECT APPROX_MEDIAN(flags) FROM sensors" \
+  pc_flags "SELECT approx_percentile(flags, 0.5) FROM sensors" \
+  pc_one "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE id = 1" \
+  pc_none "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE id > 100" \
+  pc_high "SELECT approx_percentile(flags, 1) FROM sensors" \
+  pc_low "SELECT approx_percentile(flags, 0) FROM sensors" \
+  pc_p25 "SELECT approx_percentile(flags, 0.25) FROM sensors" \
+  pc_p75 "SELECT approx_percentile(flags, 0.75) FROM sensors" \
+  pc_forty "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE id = -1" \
+  pc_prec0 "SELECT approx_percentile(flags, 0.5, 0) FROM sensors WHERE id = -1" \
+  pc_prec3 "SELECT approx_percentile(flags, 0.5, 3) FROM sensors WHERE id = -1" \
+  pc_prec1 "SELECT approx_percentile(flags, 0.5, 1) FROM sensors" \
+  pc_pos "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE flags > 0" \
+  pc_read "SELECT approx_percentile(reading, 0.5) FROM sensors" \
+  pc_read0 "SELECT approx_percentile(reading, 0) FROM sensors" \
+  pc_read1p "SELECT approx_percentile(reading, 1) FROM sensors" \
+  pc_read1 "SELECT approx_percentile(reading, 0.5) FROM sensors WHERE id = 1" \
+  pc_score1 "SELECT approx_percentile(score, 0.5) FROM sensors WHERE id = 1" \
+  pc_byte "SELECT approx_percentile(b, 0.5) FROM sensors WHERE b >= 0" \
+  pc_code "SELECT approx_percentile(code, 0.5) FROM sensors WHERE code > 0" \
+  pc_grp "SELECT approx_percentile(flags, 0.5) FROM sensors GROUP BY location ORDER BY location" \
+  pc_read_grp "SELECT approx_percentile(reading, 0.5) FROM sensors GROUP BY location ORDER BY location" \
+  pc_lim0 "SELECT approx_percentile(flags, 0.5) FROM sensors LIMIT 0" \
+  pc_case "SELECT APPROX_PERCENTILE(flags, 0.5) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2109,7 +2132,11 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   me_days_grp "SELECT mode(id) FROM days GROUP BY location ORDER BY location" \
   me_days_loc_grp "SELECT mode(location) FROM days GROUP BY location ORDER BY location" \
   am_days "SELECT approx_median(id) FROM days" \
-  am_days_grp "SELECT approx_median(id) FROM days GROUP BY location ORDER BY location"
+  am_days_grp "SELECT approx_median(id) FROM days GROUP BY location ORDER BY location" \
+  pc_days "SELECT approx_percentile(id, 0.5) FROM days" \
+  pc_days0 "SELECT approx_percentile(id, 0) FROM days" \
+  pc_days1 "SELECT approx_percentile(id, 1) FROM days" \
+  pc_days_grp "SELECT approx_percentile(id, 0.5) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3958,6 +3985,29 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT approx_median(reading) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT approx_median(flags) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT APPROX_MEDIAN(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.25) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.75) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.5, 0) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.5, 3) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.5, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.5) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(reading, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(reading, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(reading, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(reading, 0.5) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(score, 0.5) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(b, 0.5) FROM sensors WHERE b >= 0"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(code, 0.5) FROM sensors WHERE code > 0"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.5) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(reading, 0.5) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT approx_percentile(flags, 0.5) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT APPROX_PERCENTILE(flags, 0.5) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4164,6 +4214,10 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT mode(location) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT approx_median(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT approx_median(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT approx_percentile(id, 0.5) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT approx_percentile(id, 0) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT approx_percentile(id, 1) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT approx_percentile(id, 0.5) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
