@@ -7319,6 +7319,10 @@ enum Accumulator {
         count: i64,
         kind: PairKind,
     },
+    BoolAnd {
+        value: bool,
+        count: i64,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -7394,6 +7398,10 @@ impl Accumulator {
                     },
                 }
             }
+            AggFunc::BoolAnd => Self::BoolAnd {
+                value: true,
+                count: 0,
+            },
         }
     }
 
@@ -7495,6 +7503,13 @@ impl Accumulator {
                 PairKind::R2 => r2_result(*sum_xy, *sum_y, *sum_x, *count),
                 PairKind::Corr => corr_result(*sum_xy, *sum_y, *sum_x, *count),
             },
+            Self::BoolAnd { value, count } => {
+                if *count == 0 {
+                    Scalar::Boolean(false)
+                } else {
+                    Scalar::Boolean(*value)
+                }
+            }
         }
     }
 }
@@ -7515,6 +7530,12 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         .column_index(name)
         .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
     let tag = table.meta.columns[index].tag;
+    if aggregate.func == AggFunc::BoolAnd && tag != qdb_types::TAG_BOOLEAN {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `bool_and` at #1 expected: BOOLEAN, actual: {}",
+            qdb_types::type_name(tag)
+        )));
+    }
     if matches!(
         aggregate.func,
         AggFunc::StdDev
@@ -7612,6 +7633,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::RegrSlope
         | AggFunc::RegrIntercept
         | AggFunc::RegrR2 => qdb_types::TAG_DOUBLE,
+        AggFunc::BoolAnd => qdb_types::TAG_BOOLEAN,
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => qdb_types::TAG_DOUBLE,
         AggFunc::Min | AggFunc::Max | AggFunc::First | AggFunc::Last => input.tag,
     }
@@ -7644,6 +7666,10 @@ fn contribution(
         AggFunc::Min | AggFunc::Max => Ok(Some(value.clone())),
         AggFunc::Sum => sum_addend(value, input),
         AggFunc::Avg => avg_addend(value, input),
+        AggFunc::BoolAnd => match value {
+            Scalar::Boolean(bit) => Ok(Some(Scalar::Boolean(*bit))),
+            _ => Ok(None),
+        },
         AggFunc::StdDev
         | AggFunc::Variance
         | AggFunc::VarSamp
@@ -8320,6 +8346,15 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             *has_value = true;
         }
         Accumulator::Covar { .. } | Accumulator::Corr { .. } => {}
+        Accumulator::BoolAnd { value, count } => {
+            let Scalar::Boolean(bit) = next else {
+                return;
+            };
+            if *count == 0 || *value {
+                *value = bit;
+            }
+            *count += 1;
+        }
         Accumulator::Value(current) => match current {
             None => *current = Some(next),
             Some(kept) => {
@@ -21343,6 +21378,127 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn bool_and_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT bool_and(ok) FROM sensors",
+                "expected/ba_ok.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bool_and(ok) FROM sensors WHERE id = 1",
+                "expected/ba_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bool_and(ok) FROM sensors WHERE id > 100",
+                "expected/ba_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bool_and(ok) FROM sensors WHERE id = -1",
+                "expected/ba_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT BOOL_AND(ok) FROM sensors",
+                "expected/ba_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bool_and(ok) FROM sensors LIMIT 0",
+                "expected/ba_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bool_and(ok) FROM sensors WHERE location = 'madrid'",
+                "expected/ba_mad.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bool_and(ok) FROM sensors GROUP BY location ORDER BY location",
+                "expected/ba_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT bool_and() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `bool_and` requires arguments: bool_and(BOOLEAN)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bool_and(ok, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `bool_and`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bool_and(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bool_and(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bool_and(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `bool_and` at #1 expected: BOOLEAN, actual: LONG"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bool_and(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `bool_and` at #1 expected: BOOLEAN, actual: DOUBLE"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bool_and(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `bool_and` at #1 expected: BOOLEAN, actual: STRING"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bool_and(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `bool_and` at #1 expected: BOOLEAN, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&days, "SELECT bool_and(id) FROM days").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `bool_and` at #1 expected: BOOLEAN, actual: LONG"
+            ),
             "{}",
             err.message
         );

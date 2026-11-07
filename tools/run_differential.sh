@@ -1731,7 +1731,15 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   vs_neg "SELECT var_samp(reading) FROM sensors WHERE id = -1" \
   vs_case "SELECT VAR_SAMP(reading) FROM sensors" \
   vs_lim0 "SELECT var_samp(reading) FROM sensors LIMIT 0" \
-  vs_grp "SELECT var_samp(reading) FROM sensors GROUP BY location ORDER BY location"
+  vs_grp "SELECT var_samp(reading) FROM sensors GROUP BY location ORDER BY location" \
+  ba_ok "SELECT bool_and(ok) FROM sensors" \
+  ba_one "SELECT bool_and(ok) FROM sensors WHERE id = 1" \
+  ba_none "SELECT bool_and(ok) FROM sensors WHERE id > 100" \
+  ba_neg "SELECT bool_and(ok) FROM sensors WHERE id = -1" \
+  ba_case "SELECT BOOL_AND(ok) FROM sensors" \
+  ba_lim0 "SELECT bool_and(ok) FROM sensors LIMIT 0" \
+  ba_mad "SELECT bool_and(ok) FROM sensors WHERE location = 'madrid'" \
+  ba_grp "SELECT bool_and(ok) FROM sensors GROUP BY location ORDER BY location"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3596,6 +3604,14 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT VAR_SAMP(reading) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT var_samp(reading) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT var_samp(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT bool_and(ok) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT bool_and(ok) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT bool_and(ok) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT bool_and(ok) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT BOOL_AND(ok) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT bool_and(ok) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT bool_and(ok) FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT bool_and(ok) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),

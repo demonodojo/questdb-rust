@@ -63,6 +63,7 @@ pub enum AggFunc {
     RegrSlope,
     RegrIntercept,
     RegrR2,
+    BoolAnd,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3058,6 +3059,7 @@ impl<'a> Parser<'a> {
                 | "regr_slope"
                 | "regr_intercept"
                 | "regr_r2"
+                | "bool_and"
         ) {
             return false;
         }
@@ -3110,6 +3112,7 @@ impl<'a> Parser<'a> {
             "regr_slope" => AggFunc::RegrSlope,
             "regr_intercept" => AggFunc::RegrIntercept,
             "regr_r2" => AggFunc::RegrR2,
+            "bool_and" => AggFunc::BoolAnd,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3126,6 +3129,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::StdDevSamp
                 | AggFunc::KSum
                 | AggFunc::NSum
+                | AggFunc::BoolAnd
         ) && self.peek() != Some(b')')
         {
             let mut provided = if column.is_some() { 1 } else { 0 };
@@ -3321,6 +3325,12 @@ impl<'a> Parser<'a> {
             return Err(Error::new(format!(
                 "wrong number of arguments for function `{}`; expected: 2, provided: 1",
                 name.to_ascii_lowercase()
+            )));
+        }
+        if func == AggFunc::BoolAnd && column.is_none() {
+            let fname = name.to_ascii_lowercase();
+            return Err(Error::new(format!(
+                "function `{fname}` requires arguments: {fname}(BOOLEAN)"
             )));
         }
         if func != AggFunc::Count && column.is_none() {
