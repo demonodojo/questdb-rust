@@ -2380,7 +2380,16 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   iq_note "SELECT note in ('alpha', '') FROM sensors" \
   iq_loc "SELECT location in ('madrid', '東京') FROM sensors" \
   iq_dbl "SELECT reading in (1.5, 0) FROM sensors" \
-  iq_lim0 "SELECT id in (1, -1) FROM sensors LIMIT 0"
+  iq_lim0 "SELECT id in (1, -1) FROM sensors LIMIT 0" \
+  eq_all "SELECT id = 1 FROM sensors" \
+  eq_one "SELECT id = 1 FROM sensors WHERE id = 1" \
+  eq_two "SELECT id = 1 FROM sensors WHERE id = 2" \
+  eq_none "SELECT id = 1 FROM sensors WHERE id > 100" \
+  eq_null "SELECT id = null FROM sensors" \
+  eq_note "SELECT note = 'alpha' FROM sensors" \
+  eq_empty "SELECT note = '' FROM sensors" \
+  eq_zero "SELECT reading = 0 FROM sensors" \
+  eq_lim0 "SELECT id = 1 FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2661,7 +2670,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   bt_days "SELECT between(id, 1, 2) FROM days" \
   bt_days_one "SELECT between(id, 1, 2) FROM days WHERE id = 1" \
   iq_days "SELECT id in (1, -1) FROM days" \
-  iq_days_note "SELECT note in ('alpha', '') FROM days"
+  iq_days_note "SELECT note in ('alpha', '') FROM days" \
+  eq_days "SELECT id = 1 FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4989,6 +4999,15 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT location in ('madrid', '東京') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT reading in (1.5, 0) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT id in (1, -1) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT id = 1 FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id = 1 FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT id = 1 FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT id = 1 FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT id = null FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT note = 'alpha' FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT note = '' FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT reading = 0 FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id = 1 FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -5268,6 +5287,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT between(id, 1, 2) FROM days WHERE id = 1"),
     (os.environ["DIFF_H2"], "SELECT id in (1, -1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT note in ('alpha', '') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT id = 1 FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

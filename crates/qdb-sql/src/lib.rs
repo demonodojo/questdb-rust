@@ -59,7 +59,9 @@
 //! size-weighted midpoint of a bid and an ask as `DOUBLE`. `between` reports
 //! whether a timestamp or an integer lies inside a closed interval and returns
 //! `BOOLEAN`. `in` reports whether a value equals one listed constant and
-//! returns `BOOLEAN`. A null value is false. `strpos` and `position` return the 1-based index of the first
+//! returns `BOOLEAN`. A null value is false. `=` compares a column with one
+//! constant and returns `BOOLEAN`. Null equals null, and `-0.0` equals `0`.
+//! `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
 //! widest numeric argument and skips nulls. `to_str` formats a timestamp with a

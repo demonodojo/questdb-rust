@@ -290,6 +290,7 @@ pub enum Proj {
     Wmid(WmidExpr),
     Between(BetweenExpr),
     InList(InListExpr),
+    Eq(EqExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -842,6 +843,40 @@ pub struct InListExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `value = other` compares a column with one constant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EqExpr {
+    pub label: String,
+    pub value: String,
+    pub literal: Scalar,
+}
+
+fn eq_literal_label(literal: &Scalar) -> String {
+    match literal {
+        Scalar::Null => "null".to_string(),
+        Scalar::Boolean(true) => "true".to_string(),
+        Scalar::Boolean(false) => "false".to_string(),
+        Scalar::Long(number) if *number < 0 => format!("-({})", number.unsigned_abs()),
+        Scalar::Long(number) => number.to_string(),
+        Scalar::Double(number) if number.is_sign_negative() => {
+            format!("-({})", format_eq_magnitude(*number))
+        }
+        Scalar::Double(number) => format_eq_magnitude(*number),
+        Scalar::Text(text) => format!("'{}'", text.replace('\'', "''")),
+        Scalar::Char(unit) => format!("'{}'", char::from_u32(u32::from(*unit)).unwrap_or('\u{0}')),
+        other => format!("{other:?}"),
+    }
+}
+
+fn format_eq_magnitude(number: f64) -> String {
+    let text = format!("{}", number.abs());
+    if text.contains(['.', 'e', 'E']) {
+        text
+    } else {
+        format!("{text}.0")
+    }
+}
+
 /// `ln(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LnExpr {
@@ -1104,6 +1139,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.skip();
                 if parser.eat_keyword("in") {
                     column = parser.parse_in_list(column)?.label;
+                } else if parser.peek() == Some(b'=') {
+                    column = parser.parse_eq(column)?.label;
                 } else if parser.peek() == Some(b'(') {
                     column = parser.parse_order_call(column)?;
                     parser.skip();
@@ -1230,6 +1267,7 @@ enum SelectPiece {
     Wmid(WmidExpr),
     Between(BetweenExpr),
     InList(InListExpr),
+    Eq(EqExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -1501,6 +1539,8 @@ impl<'a> Parser<'a> {
                 self.skip();
                 if self.eat_keyword("in") {
                     pieces.push(SelectPiece::InList(self.parse_in_list(name)?));
+                } else if self.peek() == Some(b'=') {
+                    pieces.push(SelectPiece::Eq(self.parse_eq(name)?));
                 } else {
                     pieces.push(SelectPiece::Column(name));
                 }
@@ -1594,6 +1634,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Wmid(_)
                     | SelectPiece::Between(_)
                     | SelectPiece::InList(_)
+                    | SelectPiece::Eq(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
                     | SelectPiece::Exp(_)
@@ -1695,6 +1736,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Wmid(expr) => items.push(Proj::Wmid(expr)),
                     SelectPiece::Between(expr) => items.push(Proj::Between(expr)),
                     SelectPiece::InList(expr) => items.push(Proj::InList(expr)),
+                    SelectPiece::Eq(expr) => items.push(Proj::Eq(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
                     SelectPiece::Exp(expr) => items.push(Proj::Exp(expr)),
@@ -1816,6 +1858,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Wmid(_)
                 | SelectPiece::Between(_)
                 | SelectPiece::InList(_)
+                | SelectPiece::Eq(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
                 | SelectPiece::Exp(_)
@@ -2026,6 +2069,19 @@ impl<'a> Parser<'a> {
             label: format!("{name} in ({})", labels.join(", ")),
             value: name,
             args,
+        })
+    }
+
+    fn parse_eq(&mut self, name: String) -> Result<EqExpr, Error> {
+        self.skip();
+        if !self.eat(b'=') {
+            return Err(Error::new("unsupported: expected '='".to_string()));
+        }
+        let literal = self.parse_literal()?;
+        Ok(EqExpr {
+            label: format!("{name} = {}", eq_literal_label(&literal)),
+            value: name,
+            literal,
         })
     }
 

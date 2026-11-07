@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — igualdad
+
+`value = other` compara una columna con una constante y devuelve un `BOOLEAN`. Un nulo es igual a nulo y distinto de cualquier otro valor. `-0.0` es igual a `0`. `id = 1` es `true`, `false`, `false` y `false`. En `days` es `true`, `false`, `false` y `false`. `id = null` es `false`, `false`, `true` y `false`. `note = 'alpha'` es `true`, `false`, `false` y `false`. `note = ''` es `false`, `false`, `true` y `false`. `reading = 0` es `false`, `false`, `true` y `true`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — in
 
 `value in (lista)` dice si el valor es igual a alguna constante de la lista y devuelve un `BOOLEAN`. Un valor nulo devuelve `false`. `id in (1, -1)` es `true`, `false`, `false` y `true`. En `days` es `true`, `false`, `false` y `false`. `note in ('alpha', '')` es `true`, `false`, `true` y `false` en `sensors`, y `true`, `false`, `false` y `false` en `days`. `location in ('madrid', '東京')` es `true`, `false`, `true` y `true`. `reading in (1.5, 0)` es `true`, `false`, `true` y `true`, porque `-0.0` coincide con `0`. La lista vacía responde `too few arguments for 'in'`. Un `BOOLEAN` no tiene operador `in`. Se contrastó con `/exec` en `sensors` y `days`.
