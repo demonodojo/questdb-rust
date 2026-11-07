@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — cot()
+
+`cot(número)` devuelve `DOUBLE`. Es el recíproco de la tangente; si el resultado no es finito se imprime NULL. `cot(1)` es `0.6420926159343306`. `cot(0)` y `cot(-0.0)` se imprimen NULL. Un nulo sigue NULL. Un texto se convierte como en `sin`. `BOOLEAN` y `SYMBOL` no encajan. `cot(1.5707963267948966)` imprime `6.123233995736766E-17` en 10.1.0 y `6.123233995736766e-17` en Rust, así que esa consulta no se captura. Se contrastó el resto con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — radians()
 
 `radians(número)` convierte grados a radianes y devuelve `DOUBLE`. Un nulo sigue NULL. `radians(1)` es `0.017453292519943295`, `radians(180)` es π y `radians(-0.0)` es `-0.0`. Un texto se convierte como en `sin`. `BOOLEAN` y `SYMBOL` no encajan. `radians` del timestamp `2020-01-02T03:04:05.000000Z` imprime `2.754014795522087E13` en 10.1.0 y `27540147955220.87` en Rust. `radians` de la fecha `2020-01-02` imprime `2.753995518360499E10` y `27539955183.60499`. Esas consultas no se capturan. Se contrastó el resto con `/exec` en `sensors` y `days`.

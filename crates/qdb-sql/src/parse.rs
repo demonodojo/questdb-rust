@@ -143,6 +143,7 @@ pub enum Proj {
     Atan2(Atan2Expr),
     Degrees(DegreesExpr),
     Radians(RadiansExpr),
+    Cot(CotExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -583,6 +584,13 @@ pub struct RadiansExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `cot(radians)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CotExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `power(base, exponent)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerExpr {
@@ -785,6 +793,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_ceil()?.label
             } else if parser.starts_sign_call() {
                 parser.parse_sign()?.label
+            } else if parser.starts_cot_call() {
+                parser.parse_cot()?.label
             } else if parser.starts_radians_call() {
                 parser.parse_radians()?.label
             } else if parser.starts_degrees_call() {
@@ -932,6 +942,7 @@ enum SelectPiece {
     Atan2(Atan2Expr),
     Degrees(DegreesExpr),
     Radians(RadiansExpr),
+    Cot(CotExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -1135,6 +1146,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Ceil(self.parse_ceil()?));
             } else if self.starts_sign_call() {
                 pieces.push(SelectPiece::Sign(self.parse_sign()?));
+            } else if self.starts_cot_call() {
+                pieces.push(SelectPiece::Cot(self.parse_cot()?));
             } else if self.starts_radians_call() {
                 pieces.push(SelectPiece::Radians(self.parse_radians()?));
             } else if self.starts_degrees_call() {
@@ -1245,6 +1258,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Atan2(_)
                     | SelectPiece::Degrees(_)
                     | SelectPiece::Radians(_)
+                    | SelectPiece::Cot(_)
                     | SelectPiece::Power(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
@@ -1329,6 +1343,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Atan2(expr) => items.push(Proj::Atan2(expr)),
                     SelectPiece::Degrees(expr) => items.push(Proj::Degrees(expr)),
                     SelectPiece::Radians(expr) => items.push(Proj::Radians(expr)),
+                    SelectPiece::Cot(expr) => items.push(Proj::Cot(expr)),
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
@@ -1435,6 +1450,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Atan2(_)
                 | SelectPiece::Degrees(_)
                 | SelectPiece::Radians(_)
+                | SelectPiece::Cot(_)
                 | SelectPiece::Power(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
@@ -1602,6 +1618,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(PowerExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_cot_call(&self) -> bool {
+        self.starts_named_call("cot")
+    }
+
+    fn parse_cot(&mut self) -> Result<CotExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `cot` requires arguments: cot(DOUBLE)".to_string(),
+            ));
+        }
+        Ok(CotExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

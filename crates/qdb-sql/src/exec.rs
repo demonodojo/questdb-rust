@@ -1,7 +1,7 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AggFunc,
     AggregateExpr, AsinExpr, Atan2Expr, AtanExpr, CastExpr, CeilExpr, CmpOp, CoalesceExpr,
-    ConcatArg, CosExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr,
+    ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr,
     DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, ExpExpr, ExtractExpr, Filter,
     FloorExpr, GreatestExpr, GroupedSelect, HourExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr,
     LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr,
@@ -264,6 +264,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Atan2 { label, .. }
             | ResolvedProj::Degrees { label, .. }
             | ResolvedProj::Radians { label, .. }
+            | ResolvedProj::Cot { label, .. }
             | ResolvedProj::Power { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
@@ -581,6 +582,10 @@ enum ResolvedProj {
         label: String,
         input: SinInput,
     },
+    Cot {
+        label: String,
+        input: SinInput,
+    },
     Power {
         label: String,
         base: SqrtInput,
@@ -747,6 +752,7 @@ impl ResolvedProj {
             | Self::Atan2 { label, .. }
             | Self::Degrees { label, .. }
             | Self::Radians { label, .. }
+            | Self::Cot { label, .. }
             | Self::Power { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
@@ -806,6 +812,7 @@ impl ResolvedProj {
             | Self::Atan2 { .. }
             | Self::Degrees { .. }
             | Self::Radians { .. }
+            | Self::Cot { .. }
             | Self::Power { .. }
             | Self::Ln { .. }
             | Self::Log { .. }
@@ -914,6 +921,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Atan2(expr) => resolve_atan2(table, expr),
         Proj::Degrees(expr) => resolve_degrees(table, expr),
         Proj::Radians(expr) => resolve_radians(table, expr),
+        Proj::Cot(expr) => resolve_cot(table, expr),
         Proj::Power(expr) => resolve_power(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
@@ -1433,6 +1441,13 @@ fn resolve_radians(table: &Table, expr: &RadiansExpr) -> Result<ResolvedProj, Er
     Ok(ResolvedProj::Radians {
         label: expr.label.clone(),
         input: resolve_real_arg(table, "radians", &expr.args)?,
+    })
+}
+
+fn resolve_cot(table: &Table, expr: &CotExpr) -> Result<ResolvedProj, Error> {
+    Ok(ResolvedProj::Cot {
+        label: expr.label.clone(),
+        input: resolve_real_arg(table, "cot", &expr.args)?,
     })
 }
 
@@ -5549,6 +5564,7 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         ResolvedProj::Atan2 { y, x, .. } => atan2_scalar(table, row, y, x),
         ResolvedProj::Degrees { input, .. } => degrees_scalar(table, row, input),
         ResolvedProj::Radians { input, .. } => radians_scalar(table, row, input),
+        ResolvedProj::Cot { input, .. } => cot_scalar(table, row, input),
         _ => Ok(eval_resolved(table, row, item)),
     }
 }
@@ -5650,6 +5666,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Err(_) => Scalar::Null,
         },
         ResolvedProj::Radians { input, .. } => match radians_scalar(table, row, input) {
+            Ok(value) => value,
+            Err(_) => Scalar::Null,
+        },
+        ResolvedProj::Cot { input, .. } => match cot_scalar(table, row, input) {
             Ok(value) => value,
             Err(_) => Scalar::Null,
         },
@@ -6007,6 +6027,19 @@ fn radians_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar,
 
 fn radians_of(degrees: f64) -> f64 {
     degrees.to_radians()
+}
+
+fn cot_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar, Error> {
+    real_apply(table, row, input, cot_of)
+}
+
+fn cot_of(radians: f64) -> f64 {
+    let result = 1.0 / radians.tan();
+    if result.is_finite() {
+        result
+    } else {
+        f64::NAN
+    }
 }
 
 fn atan2_scalar(table: &Table, row: usize, y: &SinInput, x: &SinInput) -> Result<Scalar, Error> {
@@ -17072,6 +17105,222 @@ mod tests {
             err.message
         );
         let result = execute(&sensors, "SELECT radians(note) FROM sensors LIMIT 0").unwrap();
+        assert_eq!(result.rows.len(), 0);
+    }
+
+    #[test]
+    fn cot_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT cot(0) FROM sensors LIMIT 1",
+                "expected/ct_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(1) FROM sensors LIMIT 1",
+                "expected/ct_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(-1) FROM sensors LIMIT 1",
+                "expected/ct_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(-0.0) FROM sensors LIMIT 1",
+                "expected/ct_neg0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(0.5) FROM sensors LIMIT 1",
+                "expected/ct_half.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(2) FROM sensors LIMIT 1",
+                "expected/ct_two.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(null) FROM sensors LIMIT 1",
+                "expected/ct_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(id) FROM sensors",
+                "expected/ct_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(reading) FROM sensors",
+                "expected/ct_read.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(score) FROM sensors",
+                "expected/ct_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(b) FROM sensors",
+                "expected/ct_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(code) FROM sensors",
+                "expected/ct_short.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(flags) FROM sensors",
+                "expected/ct_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(ts) FROM sensors LIMIT 1",
+                "expected/ct_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot('1') FROM sensors LIMIT 1",
+                "expected/ct_text.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot('1.5d') FROM sensors LIMIT 1",
+                "expected/ct_suffix.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(' 1') FROM sensors LIMIT 1",
+                "expected/ct_ws.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot('NaN') FROM sensors LIMIT 1",
+                "expected/ct_nan.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT COT(1) FROM sensors LIMIT 1",
+                "expected/ct_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(note) FROM sensors WHERE id = 2",
+                "expected/ct_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(id) FROM sensors WHERE id = 1",
+                "expected/ct_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(id) FROM sensors ORDER BY cot(id)",
+                "expected/ct_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(id) FROM sensors LIMIT 0",
+                "expected/ct_lim0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT cot(ch) FROM sensors LIMIT 0",
+                "expected/ct_ch0.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT cot(id) FROM days ORDER BY ts",
+                "expected/ct_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT cot(ts) FROM days ORDER BY ts",
+                "expected/ct_days_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT cot() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `cot` requires arguments: cot(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT cot(1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("wrong number of arguments for function `cot`; expected: 1, provided: 2"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT cot(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `cot` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT cot(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `cot` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT cot('nope') FROM sensors LIMIT 0").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `nope` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT cot('') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT cot('A') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT cot(note) FROM sensors LIMIT 1").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT cot(ch) FROM sensors WHERE id = 2").unwrap_err();
+        assert!(
+            err.message.contains("[CHAR -> DOUBLE]") && err.message.contains('\0'),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT cot(tag) FROM sensors LIMIT 1").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let result = execute(&sensors, "SELECT cot(note) FROM sensors LIMIT 0").unwrap();
         assert_eq!(result.rows.len(), 0);
     }
 

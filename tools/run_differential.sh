@@ -1434,7 +1434,31 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ra_where "SELECT radians(id) FROM sensors WHERE id = 1" \
   ra_order "SELECT radians(id) FROM sensors ORDER BY radians(id)" \
   ra_lim0 "SELECT radians(id) FROM sensors LIMIT 0" \
-  ra_ch0 "SELECT radians(ch) FROM sensors LIMIT 0"
+  ra_ch0 "SELECT radians(ch) FROM sensors LIMIT 0" \
+  ct_zero "SELECT cot(0) FROM sensors LIMIT 1" \
+  ct_one "SELECT cot(1) FROM sensors LIMIT 1" \
+  ct_neg "SELECT cot(-1) FROM sensors LIMIT 1" \
+  ct_neg0 "SELECT cot(-0.0) FROM sensors LIMIT 1" \
+  ct_half "SELECT cot(0.5) FROM sensors LIMIT 1" \
+  ct_two "SELECT cot(2) FROM sensors LIMIT 1" \
+  ct_null "SELECT cot(null) FROM sensors LIMIT 1" \
+  ct_id "SELECT cot(id) FROM sensors" \
+  ct_read "SELECT cot(reading) FROM sensors" \
+  ct_score "SELECT cot(score) FROM sensors" \
+  ct_byte "SELECT cot(b) FROM sensors" \
+  ct_short "SELECT cot(code) FROM sensors" \
+  ct_flags "SELECT cot(flags) FROM sensors" \
+  ct_ts "SELECT cot(ts) FROM sensors LIMIT 1" \
+  ct_text "SELECT cot('1') FROM sensors LIMIT 1" \
+  ct_suffix "SELECT cot('1.5d') FROM sensors LIMIT 1" \
+  ct_ws "SELECT cot(' 1') FROM sensors LIMIT 1" \
+  ct_nan "SELECT cot('NaN') FROM sensors LIMIT 1" \
+  ct_case "SELECT COT(1) FROM sensors LIMIT 1" \
+  ct_note "SELECT cot(note) FROM sensors WHERE id = 2" \
+  ct_where "SELECT cot(id) FROM sensors WHERE id = 1" \
+  ct_order "SELECT cot(id) FROM sensors ORDER BY cot(id)" \
+  ct_lim0 "SELECT cot(id) FROM sensors LIMIT 0" \
+  ct_ch0 "SELECT cot(ch) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1588,7 +1612,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   at_days "SELECT atan(id) FROM days ORDER BY ts" \
   a2_days "SELECT atan2(id, 1) FROM days ORDER BY ts" \
   dg_days "SELECT degrees(id) FROM days ORDER BY ts" \
-  ra_days "SELECT radians(id) FROM days ORDER BY ts"
+  ra_days "SELECT radians(id) FROM days ORDER BY ts" \
+  ct_days "SELECT cot(id) FROM days ORDER BY ts" \
+  ct_days_ts "SELECT cot(ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2970,6 +2996,30 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT radians(id) FROM sensors ORDER BY radians(id)"),
     (os.environ["DIFF_H1"], "SELECT radians(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT radians(ch) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT cot(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot(-0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot(0.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot(2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cot(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cot(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cot(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cot(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cot(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cot(ts) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot('1') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot('1.5d') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot(' 1') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot('NaN') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT COT(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cot(note) FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT cot(id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT cot(id) FROM sensors ORDER BY cot(id)"),
+    (os.environ["DIFF_H1"], "SELECT cot(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT cot(ch) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3122,6 +3172,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT atan2(id, 1) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT degrees(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT radians(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT cot(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT cot(ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
