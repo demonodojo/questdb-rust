@@ -72,6 +72,7 @@ pub enum AggFunc {
     RegrR2,
     BoolAnd,
     BoolOr,
+    IsOrdered,
     FirstNotNull,
     LastNotNull,
     BitAnd,
@@ -3173,6 +3174,7 @@ impl<'a> Parser<'a> {
                 | "regr_r2"
                 | "bool_and"
                 | "bool_or"
+                | "isordered"
                 | "first_not_null"
                 | "last_not_null"
                 | "bit_and"
@@ -3249,6 +3251,7 @@ impl<'a> Parser<'a> {
             "regr_r2" => AggFunc::RegrR2,
             "bool_and" => AggFunc::BoolAnd,
             "bool_or" => AggFunc::BoolOr,
+            "isordered" => AggFunc::IsOrdered,
             "first_not_null" => AggFunc::FirstNotNull,
             "last_not_null" => AggFunc::LastNotNull,
             "bit_and" => AggFunc::BitAnd,
@@ -3651,6 +3654,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::BitOr
                 | AggFunc::BitXor
                 | AggFunc::Mode
+                | AggFunc::IsOrdered
         ) && self.peek() == Some(b',')
         {
             self.pos += 1;
@@ -3775,6 +3779,9 @@ impl<'a> Parser<'a> {
                 "wrong number of arguments for function `{}`; expected: 2, provided: 1",
                 name.to_ascii_lowercase()
             )));
+        }
+        if func == AggFunc::IsOrdered && column.is_none() {
+            return Err(Error::new("function `isOrdered` requires arguments"));
         }
         if matches!(func, AggFunc::BoolAnd | AggFunc::BoolOr) && column.is_none() {
             let fname = name.to_ascii_lowercase();

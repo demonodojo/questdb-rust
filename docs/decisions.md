@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — isOrdered()
+
+`isOrdered(value)` devuelve `BOOLEAN`: cada valor convertido a `LONG` es mayor o igual que el anterior. Sin filas el resultado es `true`. Un `LONG` nulo cuenta como el mínimo de 64 bits y un `INT` nulo como el mínimo de 32 bits. Un texto nulo también cuenta como el mínimo. Un texto que no es entero se rechaza, igual que un `CHAR` que no es un dígito. `FLOAT`, `DOUBLE`, `BOOLEAN` y `SYMBOL` no tienen función. `isOrdered(ts)` es `true` e `isOrdered(id)` es `false`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — weighted_stddev_rel()
 
 `weighted_stddev_rel(value, weight)` es el mismo cálculo de fiabilidad que `weighted_stddev` y devuelve `DOUBLE`. `weighted_stddev_rel(reading, flags)` es `1.060660171779821`. Una sola fila o un grupo sin dos pesos positivos devuelve NULL. Un peso negativo anula el agregado. `weighted_stddev_rel(day, flags)` sale en notación científica con `E` mayúscula y queda fuera del TSV capturado. `weighted_stddev_rel(reading, 1)` es `0.8660254037844386` en 10.1.0; este paso solo acepta una columna como peso. Se contrastó con `/exec` en `sensors` y `days`.

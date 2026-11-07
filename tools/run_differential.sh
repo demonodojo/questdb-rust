@@ -2146,7 +2146,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   wr_grp "SELECT weighted_stddev_rel(reading, flags) FROM sensors GROUP BY location ORDER BY location" \
   wr_lim0 "SELECT weighted_stddev_rel(reading, flags) FROM sensors LIMIT 0" \
   wr_case "SELECT WEIGHTED_STDDEV_REL(reading, flags) FROM sensors" \
-  wr_pos "SELECT weighted_stddev_rel(reading, flags) FROM sensors WHERE flags > 0"
+  wr_pos "SELECT weighted_stddev_rel(reading, flags) FROM sensors WHERE flags > 0" \
+  io_ts "SELECT isOrdered(ts) FROM sensors" \
+  io_id "SELECT isOrdered(id) FROM sensors" \
+  io_flags "SELECT isOrdered(flags) FROM sensors" \
+  io_day "SELECT isOrdered(day) FROM sensors" \
+  io_byte "SELECT isOrdered(b) FROM sensors" \
+  io_code "SELECT isOrdered(code) FROM sensors" \
+  io_one "SELECT isOrdered(id) FROM sensors WHERE id = 1" \
+  io_none "SELECT isOrdered(id) FROM sensors WHERE id > 100" \
+  io_null "SELECT isOrdered(note) FROM sensors WHERE id = 2" \
+  io_flag1 "SELECT isOrdered(flags) FROM sensors WHERE id = 1" \
+  io_madrid "SELECT isOrdered(id) FROM sensors WHERE location = 'madrid'" \
+  io_day_mad "SELECT isOrdered(day) FROM sensors WHERE location = 'madrid'" \
+  io_digit "SELECT isOrdered(ch) FROM sensors WHERE ch = '1'" \
+  io_grp "SELECT isOrdered(id) FROM sensors GROUP BY location ORDER BY location" \
+  io_grp_ts "SELECT isOrdered(ts) FROM sensors GROUP BY location ORDER BY location" \
+  io_lim0 "SELECT isOrdered(id) FROM sensors LIMIT 0" \
+  io_case "SELECT ISORDERED(ts) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2388,7 +2405,10 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   wf_days "SELECT weighted_stddev_freq(id, id) FROM days" \
   wf_days_grp "SELECT weighted_stddev_freq(id, id) FROM days GROUP BY location ORDER BY location" \
   wr_days "SELECT weighted_stddev_rel(id, id) FROM days" \
-  wr_days_grp "SELECT weighted_stddev_rel(id, id) FROM days GROUP BY location ORDER BY location"
+  wr_days_grp "SELECT weighted_stddev_rel(id, id) FROM days GROUP BY location ORDER BY location" \
+  io_days "SELECT isOrdered(id) FROM days" \
+  io_days_ts "SELECT isOrdered(ts) FROM days" \
+  io_days_grp "SELECT isOrdered(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4482,6 +4502,23 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT weighted_stddev_rel(reading, flags) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT WEIGHTED_STDDEV_REL(reading, flags) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT weighted_stddev_rel(reading, flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(id) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(note) FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(id) FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(day) FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(ch) FROM sensors WHERE ch = '1'"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(ts) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT isOrdered(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT ISORDERED(ts) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4722,6 +4759,9 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT weighted_stddev_freq(id, id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT weighted_stddev_rel(id, id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT weighted_stddev_rel(id, id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT isOrdered(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT isOrdered(ts) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT isOrdered(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

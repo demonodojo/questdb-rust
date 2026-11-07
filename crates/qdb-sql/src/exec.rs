@@ -7365,6 +7365,10 @@ enum Accumulator {
         value: bool,
         count: i64,
     },
+    IsOrdered {
+        ordered: bool,
+        previous: Option<i64>,
+    },
     BitAnd {
         bits: Option<i64>,
         tag: i32,
@@ -7565,6 +7569,10 @@ impl Accumulator {
                 value: false,
                 count: 0,
             },
+            AggFunc::IsOrdered => Self::IsOrdered {
+                ordered: true,
+                previous: None,
+            },
         }
     }
 
@@ -7753,6 +7761,7 @@ impl Accumulator {
                     Scalar::Boolean(*value)
                 }
             }
+            Self::IsOrdered { ordered, .. } => Scalar::Boolean(*ordered),
         }
     }
 }
@@ -7855,6 +7864,35 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
         {
             return Err(Error::new(format!(
                 "there is no matching function `{fname}` with the argument types: ({})",
+                qdb_types::type_name(tag)
+            )));
+        }
+    }
+    if aggregate.func == AggFunc::IsOrdered {
+        if let Some(extra) = &aggregate.extra {
+            let second = match extra {
+                AggregateExtra::Type(kind) => kind.clone(),
+                AggregateExtra::Column(name) => {
+                    let other = table
+                        .column_index(name)
+                        .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+                    qdb_types::type_name(table.meta.columns[other].tag).to_string()
+                }
+            };
+            return Err(Error::new(format!(
+                "there is no matching function `isOrdered` with the argument types: ({}, {second})",
+                qdb_types::type_name(tag)
+            )));
+        }
+        if matches!(
+            tag,
+            qdb_types::TAG_BOOLEAN
+                | qdb_types::TAG_FLOAT
+                | qdb_types::TAG_DOUBLE
+                | qdb_types::TAG_SYMBOL
+        ) {
+            return Err(Error::new(format!(
+                "there is no matching function `isOrdered` with the argument types: ({})",
                 qdb_types::type_name(tag)
             )));
         }
@@ -8044,7 +8082,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::ApproxMedian | AggFunc::ApproxPercentile => qdb_types::TAG_DOUBLE,
         AggFunc::ArgMax => arg_max_result_tag(input.tag, input.pair_tag),
         AggFunc::ArgMin => arg_min_result_tag(input.tag, input.pair_tag),
-        AggFunc::BoolAnd | AggFunc::BoolOr => qdb_types::TAG_BOOLEAN,
+        AggFunc::BoolAnd | AggFunc::BoolOr | AggFunc::IsOrdered => qdb_types::TAG_BOOLEAN,
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
             if matches!(input.tag, qdb_types::TAG_BYTE | qdb_types::TAG_SHORT) =>
@@ -8132,7 +8170,8 @@ fn contribution(
         | AggFunc::WeightedStdDev
         | AggFunc::WeightedStdDevRel
         | AggFunc::WeightedStdDevFreq
-        | AggFunc::Twap => Ok(None),
+        | AggFunc::Twap
+        | AggFunc::IsOrdered => Ok(None),
     }
 }
 
@@ -8294,6 +8333,10 @@ fn feed(
     }
     if matches!(input.func, AggFunc::ArgMax | AggFunc::ArgMin) {
         update_arg_max(accumulator, columns, row, input)?;
+        return Ok(());
+    }
+    if input.func == AggFunc::IsOrdered {
+        update_is_ordered(accumulator, columns, row, input)?;
         return Ok(());
     }
     absorb(accumulator, contribution(columns, row, input)?, input.func);
@@ -10094,6 +10137,7 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
         | Accumulator::WeightedAvg { .. }
         | Accumulator::WeightedStdDev { .. }
         | Accumulator::Twap { .. } => {}
+        Accumulator::IsOrdered { .. } => {}
         Accumulator::BoolAnd { value, count } => {
             let Scalar::Boolean(bit) = next else {
                 return;
@@ -10358,6 +10402,102 @@ fn cmp_f64(left: f64, right: f64) -> Result<Ordering, Error> {
 
 fn cmp_text(left: &str, right: &str) -> Result<Ordering, Error> {
     Ok(left.cmp(right))
+}
+
+fn update_is_ordered(
+    accumulator: &mut Accumulator,
+    columns: &[Vec<Scalar>],
+    row: usize,
+    input: &AggColumn,
+) -> Result<(), Error> {
+    let Accumulator::IsOrdered { ordered, previous } = accumulator else {
+        return Err(Error::new("internal: isOrdered accumulator"));
+    };
+    if !*ordered {
+        return Ok(());
+    }
+    let index = input
+        .index
+        .ok_or_else(|| Error::new("internal: isOrdered column"))?;
+    let current = ordered_long(&columns[index][row], input)?;
+    if let Some(prev) = *previous {
+        if current < prev {
+            *ordered = false;
+        } else {
+            *previous = Some(current);
+        }
+    } else {
+        *previous = Some(current);
+    }
+    Ok(())
+}
+
+fn ordered_long(value: &Scalar, input: &AggColumn) -> Result<i64, Error> {
+    match input.tag {
+        qdb_types::TAG_LONG => match value {
+            Scalar::Long(number) => Ok(*number),
+            Scalar::Null => Ok(i64::MIN),
+            _ => Err(Error::new("internal: long column value")),
+        },
+        qdb_types::TAG_DATE => match value {
+            Scalar::Date(millis) => Ok(*millis),
+            Scalar::Null => Ok(i64::MIN),
+            _ => Err(Error::new("internal: date column value")),
+        },
+        qdb_types::TAG_TIMESTAMP => match value {
+            Scalar::Timestamp(micros) => Ok(*micros),
+            Scalar::Null => Ok(i64::MIN),
+            _ => Err(Error::new("internal: timestamp column value")),
+        },
+        qdb_types::TAG_INT => match value {
+            Scalar::Int(number) => Ok(i64::from(*number)),
+            Scalar::Null => Ok(i64::from(i32::MIN)),
+            _ => Err(Error::new("internal: int column value")),
+        },
+        qdb_types::TAG_BYTE => match value {
+            Scalar::Byte(number) => Ok(i64::from(*number)),
+            Scalar::Null => Ok(0),
+            _ => Err(Error::new("internal: byte column value")),
+        },
+        qdb_types::TAG_SHORT => match value {
+            Scalar::Short(number) => Ok(i64::from(*number)),
+            Scalar::Null => Ok(0),
+            _ => Err(Error::new("internal: short column value")),
+        },
+        qdb_types::TAG_CHAR => {
+            let Scalar::Char(unit) = value else {
+                return Err(Error::new("internal: char column value"));
+            };
+            let delta = i32::from(*unit) - i32::from(u16::from(b'0'));
+            let narrowed = delta as i8;
+            if narrowed > -1 && narrowed < 10 {
+                Ok(i64::from(narrowed))
+            } else {
+                let shown = char::from_u32(u32::from(*unit)).unwrap_or('\u{FFFD}');
+                Err(Error::new(format!(
+                    "inconvertible value: {shown} [CHAR -> LONG]"
+                )))
+            }
+        }
+        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR => {
+            if value.is_null() {
+                return Ok(i64::MIN);
+            }
+            let text = scalar_text(value);
+            if let Some(number) = parse_integer_text(&text) {
+                Ok(number)
+            } else {
+                let kind = qdb_types::type_name(input.tag);
+                Err(Error::new(format!(
+                    "inconvertible value: `{text}` [{kind} -> LONG]"
+                )))
+            }
+        }
+        _ => Err(Error::new(format!(
+            "there is no matching function `isOrdered` with the argument types: ({})",
+            qdb_types::type_name(input.tag)
+        ))),
+    }
 }
 
 fn as_i64(value: &Scalar) -> Result<i64, Error> {
@@ -26082,6 +26222,218 @@ mod tests {
         assert!(
             err.message
                 .contains("unsupported: weighted_stddev_rel expects a column"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn is_ordered_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT isOrdered(ts) FROM sensors",
+                "expected/io_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(id) FROM sensors",
+                "expected/io_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(flags) FROM sensors",
+                "expected/io_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(day) FROM sensors",
+                "expected/io_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(b) FROM sensors",
+                "expected/io_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(code) FROM sensors",
+                "expected/io_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(id) FROM sensors WHERE id = 1",
+                "expected/io_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(id) FROM sensors WHERE id > 100",
+                "expected/io_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(note) FROM sensors WHERE id = 2",
+                "expected/io_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(flags) FROM sensors WHERE id = 1",
+                "expected/io_flag1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(id) FROM sensors WHERE location = 'madrid'",
+                "expected/io_madrid.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(day) FROM sensors WHERE location = 'madrid'",
+                "expected/io_day_mad.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(ch) FROM sensors WHERE ch = '1'",
+                "expected/io_digit.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(id) FROM sensors GROUP BY location ORDER BY location",
+                "expected/io_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(ts) FROM sensors GROUP BY location ORDER BY location",
+                "expected/io_grp_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT isOrdered(id) FROM sensors LIMIT 0",
+                "expected/io_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ISORDERED(ts) FROM sensors",
+                "expected/io_case.tsv",
+            ),
+            (
+                &days,
+                "SELECT isOrdered(id) FROM days",
+                "expected/io_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT isOrdered(ts) FROM days",
+                "expected/io_days_ts.tsv",
+            ),
+            (
+                &days,
+                "SELECT isOrdered(id) FROM days GROUP BY location ORDER BY location",
+                "expected/io_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT isOrdered() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `isOrdered` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT isOrdered(id, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `isOrdered` with the argument types: (LONG, LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT isOrdered(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `isOrdered` with the argument types: (DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT isOrdered(score) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `isOrdered` with the argument types: (FLOAT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT isOrdered(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `isOrdered` with the argument types: (BOOLEAN)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT isOrdered(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `isOrdered` with the argument types: (SYMBOL)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT isOrdered(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT isOrdered(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT isOrdered(ch) FROM sensors WHERE id = 2").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: \0 [CHAR -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT isOrdered(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT isOrdered(note) FROM sensors WHERE note = ''",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `` [STRING -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT isOrdered(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT isOrdered(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );
