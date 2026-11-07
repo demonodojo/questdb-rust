@@ -7306,6 +7306,8 @@ enum Accumulator {
         text: String,
         delimiter: char,
         has_value: bool,
+        distinct: bool,
+        seen: Vec<String>,
     },
     Covar {
         mean_y: f64,
@@ -7459,10 +7461,12 @@ impl Accumulator {
                 compensation: 0.0,
                 count: 0,
             },
-            AggFunc::StringAgg => Self::StringAgg {
+            AggFunc::StringAgg | AggFunc::StringDistinctAgg => Self::StringAgg {
                 text: String::new(),
                 delimiter: '\0',
                 has_value: false,
+                distinct: func == AggFunc::StringDistinctAgg,
+                seen: Vec::new(),
             },
             AggFunc::CovarPop | AggFunc::CovarSamp => Self::Covar {
                 mean_y: 0.0,
@@ -7765,8 +7769,16 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     if aggregate.func == AggFunc::ApproxCountDistinct {
         reject_approx_count_distinct(tag, aggregate)?;
     }
-    let delimiter = if aggregate.func == AggFunc::StringAgg {
-        string_agg_delimiter(table, tag, aggregate)?
+    let delimiter = if matches!(
+        aggregate.func,
+        AggFunc::StringAgg | AggFunc::StringDistinctAgg
+    ) {
+        let fname = if aggregate.func == AggFunc::StringDistinctAgg {
+            "string_distinct_agg"
+        } else {
+            "string_agg"
+        };
+        string_agg_delimiter(table, tag, aggregate, fname)?
     } else {
         '\0'
     };
@@ -7850,8 +7862,10 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::Count | AggFunc::CountDistinct | AggFunc::ApproxCountDistinct => {
             qdb_types::TAG_LONG
         }
-        AggFunc::StringAgg if input.tag == qdb_types::TAG_VARCHAR => qdb_types::TAG_VARCHAR,
-        AggFunc::StringAgg => qdb_types::TAG_STRING,
+        AggFunc::StringAgg | AggFunc::StringDistinctAgg if input.tag == qdb_types::TAG_VARCHAR => {
+            qdb_types::TAG_VARCHAR
+        }
+        AggFunc::StringAgg | AggFunc::StringDistinctAgg => qdb_types::TAG_STRING,
         AggFunc::Sum if input.tag == qdb_types::TAG_FLOAT => qdb_types::TAG_FLOAT,
         AggFunc::Sum if input.tag == qdb_types::TAG_DOUBLE => qdb_types::TAG_DOUBLE,
         AggFunc::Sum => qdb_types::TAG_LONG,
@@ -7919,7 +7933,9 @@ fn contribution(
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::CountDistinct => Ok(Some(value.clone())),
         AggFunc::ApproxCountDistinct => approx_distinct_value(value, input),
-        AggFunc::StringAgg => Ok(Some(Scalar::Text(scalar_text(value)))),
+        AggFunc::StringAgg | AggFunc::StringDistinctAgg => {
+            Ok(Some(Scalar::Text(scalar_text(value))))
+        }
         AggFunc::Min | AggFunc::Max if input.tag == qdb_types::TAG_BOOLEAN => {
             let Scalar::Boolean(bit) = value else {
                 return Ok(None);
@@ -8271,14 +8287,19 @@ fn start_accumulator(aggregate: &AggregateExpr, input: &AggColumn) -> Accumulato
     accumulator
 }
 
-fn string_agg_delimiter(table: &Table, tag: i32, aggregate: &AggregateExpr) -> Result<char, Error> {
+fn string_agg_delimiter(
+    table: &Table,
+    tag: i32,
+    aggregate: &AggregateExpr,
+    fname: &str,
+) -> Result<char, Error> {
     if let Some(column) = &aggregate.separator_column {
         let other = table
             .column_index(column)
             .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
         let other_tag = table.meta.columns[other].tag;
         return Err(Error::new(format!(
-            "there is no matching function `string_agg` with the argument types: ({}, {})",
+            "there is no matching function `{fname}` with the argument types: ({}, {})",
             qdb_types::type_name(tag),
             qdb_types::type_name(other_tag)
         )));
@@ -8290,14 +8311,14 @@ fn string_agg_delimiter(table: &Table, tag: i32, aggregate: &AggregateExpr) -> R
             .map(separator_type_name)
             .unwrap_or("CHAR");
         return Err(Error::new(format!(
-            "there is no matching function `string_agg` with the argument types: ({}, {second}, {})",
+            "there is no matching function `{fname}` with the argument types: ({}, {second}, {})",
             qdb_types::type_name(tag),
             separator_type_name(more)
         )));
     }
     let Some(separator) = &aggregate.separator else {
         return Err(Error::new(format!(
-            "there is no matching function `string_agg` with the argument types: ({})",
+            "there is no matching function `{fname}` with the argument types: ({})",
             qdb_types::type_name(tag)
         )));
     };
@@ -8311,7 +8332,7 @@ fn string_agg_delimiter(table: &Table, tag: i32, aggregate: &AggregateExpr) -> R
     );
     if !supported || second != "CHAR" {
         return Err(Error::new(format!(
-            "there is no matching function `string_agg` with the argument types: ({}, {second})",
+            "there is no matching function `{fname}` with the argument types: ({}, {second})",
             qdb_types::type_name(tag)
         )));
     }
@@ -9506,10 +9527,18 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             text,
             delimiter,
             has_value,
+            distinct,
+            seen,
         } => {
             let Scalar::Text(piece) = next else {
                 return;
             };
+            if *distinct && seen.iter().any(|item| item == &piece) {
+                return;
+            }
+            if *distinct {
+                seen.push(piece.clone());
+            }
             if *has_value {
                 text.push(*delimiter);
             }
@@ -21088,6 +21117,230 @@ mod tests {
             err.message.contains(
                 "there is no matching function `approx_count_distinct` with the argument types: (LONG, INT, INT)"
             ),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn string_distinct_agg_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(note, ',') FROM sensors",
+                "expected/ud_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(tag, ',') FROM sensors",
+                "expected/ud_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(location, ',') FROM sensors",
+                "expected/ud_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(ch, ',') FROM sensors",
+                "expected/ud_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(note, ',') FROM sensors WHERE id = 1",
+                "expected/ud_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(note, ',') FROM sensors WHERE id > 100",
+                "expected/ud_none.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(note, ',') FROM sensors WHERE id = -1",
+                "expected/ud_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(note, ',') FROM sensors WHERE note = ''",
+                "expected/ud_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT STRING_DISTINCT_AGG(note, ',') FROM sensors",
+                "expected/ud_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(note, ',') FROM sensors LIMIT 0",
+                "expected/ud_lim0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(note, ',') FROM sensors GROUP BY location ORDER BY location",
+                "expected/ud_grp.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(location, ',') FROM sensors GROUP BY note ORDER BY note",
+                "expected/ud_by_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(note, '|') FROM sensors",
+                "expected/ud_pipe.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(note, 'β') FROM sensors",
+                "expected/ud_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(note, '') FROM sensors",
+                "expected/ud_nul.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(note, null) FROM sensors",
+                "expected/ud_nullsep.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT string_distinct_agg(location, ',') FROM sensors WHERE location = 'madrid'",
+                "expected/ud_madrid.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT string_distinct_agg(note, ',') FROM days",
+                "expected/ud_days.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT string_distinct_agg(location, ',') FROM days",
+                "expected/ud_days_loc.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT string_distinct_agg(note, ',') FROM days GROUP BY location ORDER BY location",
+                "expected/ud_days_grp.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT string_distinct_agg(location, ',') FROM days GROUP BY id ORDER BY id",
+                "expected/ud_days_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT string_distinct_agg() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `string_distinct_agg` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_distinct_agg(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_distinct_agg` with the argument types: (STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_distinct_agg(flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_distinct_agg` with the argument types: (INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT string_distinct_agg(id, ',') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_distinct_agg` with the argument types: (LONG, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT string_distinct_agg(ok, ',') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_distinct_agg` with the argument types: (BOOLEAN, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT string_distinct_agg(reading, ',') FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_distinct_agg` with the argument types: (DOUBLE, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT string_distinct_agg(note, 'ab') FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_distinct_agg` with the argument types: (STRING, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT string_distinct_agg(note, ch) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_distinct_agg` with the argument types: (STRING, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT string_distinct_agg(note, ',', ',') FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `string_distinct_agg` with the argument types: (STRING, CHAR, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT string_distinct_agg(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT string_distinct_agg(missing, ',') FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );

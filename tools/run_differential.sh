@@ -1987,7 +1987,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   im_lim0 "SELECT arg_min(reading, flags) FROM sensors LIMIT 0" \
   im_case "SELECT ARG_MIN(reading, flags) FROM sensors" \
   im_score1 "SELECT arg_min(score, id) FROM sensors WHERE id = 1" \
-  im_day_id "SELECT arg_min(day, id) FROM sensors"
+  im_day_id "SELECT arg_min(day, id) FROM sensors" \
+  ud_note "SELECT string_distinct_agg(note, ',') FROM sensors" \
+  ud_tag "SELECT string_distinct_agg(tag, ',') FROM sensors" \
+  ud_location "SELECT string_distinct_agg(location, ',') FROM sensors" \
+  ud_ch "SELECT string_distinct_agg(ch, ',') FROM sensors" \
+  ud_one "SELECT string_distinct_agg(note, ',') FROM sensors WHERE id = 1" \
+  ud_none "SELECT string_distinct_agg(note, ',') FROM sensors WHERE id > 100" \
+  ud_neg "SELECT string_distinct_agg(note, ',') FROM sensors WHERE id = -1" \
+  ud_empty "SELECT string_distinct_agg(note, ',') FROM sensors WHERE note = ''" \
+  ud_case "SELECT STRING_DISTINCT_AGG(note, ',') FROM sensors" \
+  ud_lim0 "SELECT string_distinct_agg(note, ',') FROM sensors LIMIT 0" \
+  ud_grp "SELECT string_distinct_agg(note, ',') FROM sensors GROUP BY location ORDER BY location" \
+  ud_by_note "SELECT string_distinct_agg(location, ',') FROM sensors GROUP BY note ORDER BY note" \
+  ud_pipe "SELECT string_distinct_agg(note, '|') FROM sensors" \
+  ud_beta "SELECT string_distinct_agg(note, 'β') FROM sensors" \
+  ud_nul "SELECT string_distinct_agg(note, '') FROM sensors" \
+  ud_nullsep "SELECT string_distinct_agg(note, null) FROM sensors" \
+  ud_madrid "SELECT string_distinct_agg(location, ',') FROM sensors WHERE location = 'madrid'"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2207,7 +2224,11 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   im_days "SELECT arg_min(id, id) FROM days" \
   im_days_loc "SELECT arg_min(location, id) FROM days" \
   im_days_grp "SELECT arg_min(id, id) FROM days GROUP BY location ORDER BY location" \
-  im_days_ts "SELECT arg_min(ts, id) FROM days"
+  im_days_ts "SELECT arg_min(ts, id) FROM days" \
+  ud_days "SELECT string_distinct_agg(note, ',') FROM days" \
+  ud_days_loc "SELECT string_distinct_agg(location, ',') FROM days" \
+  ud_days_grp "SELECT string_distinct_agg(note, ',') FROM days GROUP BY location ORDER BY location" \
+  ud_days_id "SELECT string_distinct_agg(location, ',') FROM days GROUP BY id ORDER BY id"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4142,6 +4163,23 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT ARG_MIN(reading, flags) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT arg_min(score, id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT arg_min(day, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, ',') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(tag, ',') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(location, ',') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(ch, ',') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, ',') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, ',') FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, ',') FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, ',') FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT STRING_DISTINCT_AGG(note, ',') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, ',') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, ',') FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(location, ',') FROM sensors GROUP BY note ORDER BY note"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, '|') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, 'β') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, '') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(note, null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT string_distinct_agg(location, ',') FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4360,6 +4398,10 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT arg_min(location, id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT arg_min(id, id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT arg_min(ts, id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT string_distinct_agg(note, ',') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT string_distinct_agg(location, ',') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT string_distinct_agg(note, ',') FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT string_distinct_agg(location, ',') FROM days GROUP BY id ORDER BY id"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

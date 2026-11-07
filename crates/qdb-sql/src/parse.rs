@@ -57,6 +57,7 @@ pub enum AggFunc {
     NSum,
     ApproxCountDistinct,
     StringAgg,
+    StringDistinctAgg,
     CovarPop,
     CovarSamp,
     Corr,
@@ -3097,6 +3098,7 @@ impl<'a> Parser<'a> {
                 | "arg_min"
                 | "approx_count_distinct"
                 | "string_agg"
+                | "string_distinct_agg"
                 | "covar_pop"
                 | "covar_samp"
                 | "corr"
@@ -3163,6 +3165,7 @@ impl<'a> Parser<'a> {
             "arg_min" => AggFunc::ArgMin,
             "approx_count_distinct" => AggFunc::ApproxCountDistinct,
             "string_agg" => AggFunc::StringAgg,
+            "string_distinct_agg" => AggFunc::StringDistinctAgg,
             "covar_pop" => AggFunc::CovarPop,
             "covar_samp" => AggFunc::CovarSamp,
             "corr" => AggFunc::Corr,
@@ -3229,7 +3232,9 @@ impl<'a> Parser<'a> {
         let mut separator_label = None;
         let mut pair = None;
         let mut extra = None;
-        if func == AggFunc::StringAgg && self.peek() == Some(b',') {
+        if matches!(func, AggFunc::StringAgg | AggFunc::StringDistinctAgg)
+            && self.peek() == Some(b',')
+        {
             self.pos += 1;
             self.skip();
             let start = self.pos;
@@ -3243,9 +3248,10 @@ impl<'a> Parser<'a> {
                     separator_column = Some(word);
                 }
             } else {
-                return Err(Error::new(
-                    "unsupported: string_agg separator must be a literal",
-                ));
+                return Err(Error::new(format!(
+                    "unsupported: {} separator must be a literal",
+                    name.to_ascii_lowercase()
+                )));
             }
             separator_label = Some(
                 std::str::from_utf8(&self.src[start..self.pos])
@@ -3267,9 +3273,10 @@ impl<'a> Parser<'a> {
                     };
                 }
                 if self.pos == more_start {
-                    return Err(Error::new(
-                        "unsupported: string_agg separator must be a literal",
-                    ));
+                    return Err(Error::new(format!(
+                        "unsupported: {} separator must be a literal",
+                        name.to_ascii_lowercase()
+                    )));
                 }
                 self.skip();
             }
