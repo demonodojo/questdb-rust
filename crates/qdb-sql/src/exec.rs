@@ -386,6 +386,7 @@ enum ResolvedProj {
         value: ResolvedArg,
         pattern: IlikePattern,
         negated: bool,
+        regex: Option<Vec<RegexTerm>>,
     },
     Switch {
         label: String,
@@ -6679,6 +6680,9 @@ fn switch_eq(key: &Scalar, case: &Scalar) -> bool {
 }
 
 fn resolve_like(table: &Table, expr: &LikeExpr) -> Result<ResolvedProj, Error> {
+    if expr.regex {
+        return resolve_regex(table, expr);
+    }
     if expr.args.len() < 2 {
         return Err(Error::new(format!(
             "too few arguments for 'like' [found={},expected=2]",
@@ -6707,6 +6711,33 @@ fn resolve_like(table: &Table, expr: &LikeExpr) -> Result<ResolvedProj, Error> {
         value: resolve_concat_arg(table, &expr.args[0])?,
         pattern,
         negated: expr.negated,
+        regex: None,
+    })
+}
+
+fn resolve_regex(table: &Table, expr: &LikeExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(
+            "not implemented: dynamic pattern would be very slow to execute".to_string(),
+        ));
+    }
+    if matches!(expr.args[1], ConcatArg::Column(_)) {
+        return Err(Error::new(
+            "not implemented: dynamic pattern would be very slow to execute".to_string(),
+        ));
+    }
+    let ConcatArg::Literal(Scalar::Text(text)) = &expr.args[1] else {
+        return ilike_operator_error(table, &expr.args, "~");
+    };
+    if !replace_text_ok(table, &expr.args[0]) {
+        return ilike_operator_error(table, &expr.args, "~");
+    }
+    Ok(ResolvedProj::Like {
+        label: expr.label.clone(),
+        value: resolve_concat_arg(table, &expr.args[0])?,
+        pattern: IlikePattern::Never,
+        negated: expr.negated,
+        regex: Some(compile_regex(text)?),
     })
 }
 
@@ -6721,6 +6752,91 @@ fn ilike_operator_error(
     Err(Error::new(format!(
         "there is no matching operator `{name}` with the argument types: {left} {name} {right}"
     )))
+}
+
+#[derive(Clone, Copy)]
+enum RegexAtom {
+    Lit(char),
+    Any,
+}
+
+#[derive(Clone, Copy)]
+enum RegexTerm {
+    Atom(RegexAtom),
+    Star(RegexAtom),
+}
+
+fn compile_regex(pattern: &str) -> Result<Vec<RegexTerm>, Error> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut terms = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let atom = match chars[index] {
+            '\\' => {
+                index += 1;
+                let Some(escaped) = chars.get(index).copied() else {
+                    return Err(Error::new(
+                        "regular expression must not end with an escape".to_string(),
+                    ));
+                };
+                RegexAtom::Lit(escaped)
+            }
+            '.' => RegexAtom::Any,
+            '*' => {
+                return Err(Error::new("dangling meta character '*'".to_string()));
+            }
+            ch => RegexAtom::Lit(ch),
+        };
+        index += 1;
+        if chars.get(index) == Some(&'*') {
+            terms.push(RegexTerm::Star(atom));
+            index += 1;
+        } else {
+            terms.push(RegexTerm::Atom(atom));
+        }
+    }
+    Ok(terms)
+}
+
+fn regex_search(text: &str, terms: &[RegexTerm]) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    (0..=chars.len()).any(|start| regex_at(&chars, start, terms, 0))
+}
+
+fn regex_at(chars: &[char], pos: usize, terms: &[RegexTerm], index: usize) -> bool {
+    if index == terms.len() {
+        return true;
+    }
+    match terms[index] {
+        RegexTerm::Atom(atom) => {
+            pos < chars.len()
+                && regex_atom_eq(chars[pos], atom)
+                && regex_at(chars, pos + 1, terms, index + 1)
+        }
+        RegexTerm::Star(atom) => {
+            let mut end = pos;
+            while end < chars.len() && regex_atom_eq(chars[end], atom) {
+                end += 1;
+            }
+            let mut cursor = end;
+            loop {
+                if regex_at(chars, cursor, terms, index + 1) {
+                    return true;
+                }
+                if cursor == pos {
+                    return false;
+                }
+                cursor -= 1;
+            }
+        }
+    }
+}
+
+fn regex_atom_eq(ch: char, atom: RegexAtom) -> bool {
+    match atom {
+        RegexAtom::Any => ch != '\n' && ch != '\r',
+        RegexAtom::Lit(lit) => ch == lit,
+    }
 }
 
 fn like_row(
@@ -7856,9 +7972,14 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             value,
             pattern,
             negated,
+            regex,
             ..
         } => {
-            let matched = like_row(table, row, value, pattern, false);
+            let matched = if let Some(terms) = regex {
+                text_of(table, row, value).is_some_and(|text| regex_search(&text, terms))
+            } else {
+                like_row(table, row, value, pattern, false)
+            };
             Scalar::Boolean(if *negated { !matched } else { matched })
         }
         ResolvedProj::Switch {
@@ -16680,6 +16801,56 @@ mod tests {
         let err = execute(&sensors, "SELECT note NOT ILIKE note FROM sensors").unwrap_err();
         assert!(
             err.message.contains("use constant or bind variable"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn td_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT note ~ 'a.*' FROM sensors",
+                "expected/td_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note ~ 'a.*' FROM sensors WHERE id = 1",
+                "expected/td_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note ~ 'a.*' FROM sensors WHERE id > 100",
+                "expected/td_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note ~ '.*eta' FROM sensors",
+                "expected/td_eta.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT location ~ 'mad.*' FROM sensors",
+                "expected/td_loc.tsv",
+            ),
+            (
+                &days,
+                "SELECT note ~ 'a.*' FROM days",
+                "expected/rg_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT note ~ note FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("not implemented: dynamic pattern would be very slow to execute"),
             "{}",
             err.message
         );

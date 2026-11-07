@@ -388,6 +388,7 @@ pub struct LikeExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
     pub negated: bool,
+    pub regex: bool,
 }
 
 /// `switch(key, case, result, ..., [else])` picks a result by key equality.
@@ -1652,6 +1653,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::Ilike(self.parse_not_ilike(name)?));
                 } else if self.starts_ilike_infix() {
                     pieces.push(SelectPiece::Ilike(self.parse_ilike_op(name)?));
+                } else if self.starts_regex_infix() {
+                    pieces.push(SelectPiece::Like(self.parse_regex_op(name)?));
                 } else if self.starts_not_between() {
                     pieces.push(SelectPiece::Between(self.parse_not_between(name)?));
                 } else if self.starts_between_infix() {
@@ -3799,6 +3802,7 @@ impl<'a> Parser<'a> {
             label: format!("{name} like {pattern_label}"),
             args: vec![ConcatArg::Column(name), pattern],
             negated: false,
+            regex: false,
         })
     }
 
@@ -3819,6 +3823,34 @@ impl<'a> Parser<'a> {
             label,
             args,
             negated: false,
+            regex: false,
+        })
+    }
+
+    fn starts_regex_infix(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        self.src.get(pos) == Some(&b'~') && self.src.get(pos + 1) != Some(&b'=')
+    }
+
+    fn parse_regex_op(&mut self, name: String) -> Result<LikeExpr, Error> {
+        while self.pos < self.src.len() && self.src[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+        if self.pos >= self.src.len() || self.src[self.pos] != b'~' {
+            return Err(Error::new(
+                "unsupported: expected ~ after column".to_string(),
+            ));
+        }
+        self.pos += 1;
+        let (pattern_label, pattern) = self.parse_call_arg(true)?;
+        Ok(LikeExpr {
+            label: format!("{name} ~ {pattern_label}"),
+            args: vec![ConcatArg::Column(name), pattern],
+            negated: false,
+            regex: true,
         })
     }
 

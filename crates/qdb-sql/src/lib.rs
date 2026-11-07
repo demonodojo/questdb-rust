@@ -47,6 +47,8 @@
 //! `value LIKE pattern` is that function. `NOT LIKE` negates it and names
 //! the column `not(value like pattern)`. `value ILIKE pattern` is `ilike`.
 //! `NOT ILIKE` negates it and names the column `not(value ilike pattern)`.
+//! `value ~ pattern` matches a constant regular expression. A null text is
+//! false.
 //! `switch`
 //! picks a result whose constant case equals the key. An even argument count
 //! makes the last value the else branch. An unmatched key is NULL when there
