@@ -2082,7 +2082,7 @@ impl<'a> Parser<'a> {
         rest.starts_with(b"=")
             || rest.starts_with(b"!=")
             || rest.starts_with(b"<>")
-            || (rest.starts_with(b"<") && !rest.starts_with(b"<=") && !rest.starts_with(b"<>"))
+            || (rest.starts_with(b"<") && !rest.starts_with(b"<>"))
             || rest.starts_with(b">")
     }
 
@@ -2108,7 +2108,9 @@ impl<'a> Parser<'a> {
             "!=".to_string()
         } else if rest.starts_with(b"<>") {
             "<>".to_string()
-        } else if rest.starts_with(b"<") && !rest.starts_with(b"<=") {
+        } else if rest.starts_with(b"<=") {
+            "<=".to_string()
+        } else if rest.starts_with(b"<") {
             "<".to_string()
         } else if rest.starts_with(b">=") {
             ">=".to_string()
