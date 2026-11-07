@@ -1,9 +1,9 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
-    CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, DateDiffExpr, DayExpr,
-    DayOfWeekExpr, ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr, LeastExpr,
-    LengthExpr, LnExpr, LogExpr, LowerExpr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr,
-    NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
+    CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, DateDiffExpr, DateTruncExpr,
+    DayExpr, DayOfWeekExpr, ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr,
+    LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, MicrosExpr, MillisExpr, MinuteExpr,
+    MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
     RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr,
     SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
     TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
@@ -217,6 +217,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Micros { label, .. }
             | ResolvedProj::DayOfWeek { label, .. }
             | ResolvedProj::WeekOfYear { label, .. }
+            | ResolvedProj::DateTrunc { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -419,6 +420,11 @@ enum ResolvedProj {
         label: String,
         value: DateDiffSide,
     },
+    DateTrunc {
+        label: String,
+        unit: &'static str,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -571,6 +577,7 @@ impl ResolvedProj {
             | Self::Micros { label, .. }
             | Self::DayOfWeek { label, .. }
             | Self::WeekOfYear { label, .. }
+            | Self::DateTrunc { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -608,6 +615,7 @@ impl ResolvedProj {
             | Self::Micros { .. }
             | Self::DayOfWeek { .. }
             | Self::WeekOfYear { .. } => qdb_types::TAG_INT,
+            Self::DateTrunc { .. } => qdb_types::TAG_TIMESTAMP,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -691,6 +699,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Micros(expr) => resolve_micros(table, expr),
         Proj::DayOfWeek(expr) => resolve_day_of_week(table, expr),
         Proj::WeekOfYear(expr) => resolve_week_of_year(table, expr),
+        Proj::DateTrunc(expr) => resolve_date_trunc(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1345,6 +1354,139 @@ enum DateDiffSide {
     Micros(i64),
     Column { index: usize },
     Null,
+}
+
+fn resolve_date_trunc(table: &Table, expr: &DateTruncExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `date_trunc`; expected: 2, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::DateTrunc {
+        label: expr.label.clone(),
+        unit: date_trunc_unit(table, &expr.args[0])?,
+        value: date_trunc_timestamp(table, &expr.args[1])?,
+    })
+}
+
+fn date_trunc_unit(table: &Table, arg: &ConcatArg) -> Result<&'static str, Error> {
+    let text = match arg {
+        ConcatArg::Literal(Scalar::Null) => return Err(Error::new("invalid unit 'null'")),
+        ConcatArg::Literal(Scalar::Text(text)) => text.clone(),
+        ConcatArg::Literal(Scalar::Char(unit)) => char::from_u32(u32::from(*unit))
+            .unwrap_or('\u{0}')
+            .to_string(),
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            let actual = qdb_types::type_name(table.meta.columns[index].tag);
+            let expected = if actual == "STRING" {
+                "STRING constant"
+            } else {
+                "STRING"
+            };
+            return Err(Error::new(format!(
+                "expression type mismatch, expected: {expected}, actual: {actual}"
+            )));
+        }
+        ConcatArg::Literal(other) => {
+            return Err(Error::new(format!(
+                "expression type mismatch, expected: STRING, actual: {}",
+                literal_sql_type(other)
+            )));
+        }
+    };
+    date_trunc_kind(&text).ok_or_else(|| Error::new(format!("invalid unit '{text}'")))
+}
+
+fn literal_sql_type(value: &Scalar) -> &'static str {
+    match value {
+        Scalar::Long(number) if i32::try_from(*number).is_ok() => "INT",
+        Scalar::Long(_) => "LONG",
+        Scalar::Double(_) => "DOUBLE",
+        Scalar::Text(_) | Scalar::Char(_) => "STRING",
+        Scalar::Boolean(_) => "BOOLEAN",
+        _ => "UNSUPPORTED",
+    }
+}
+
+fn date_trunc_kind(unit: &str) -> Option<&'static str> {
+    if unit == "century" || unit == "centuries" {
+        return Some("century");
+    }
+    const NAMES: &[&str] = &[
+        "nanosecond",
+        "microsecond",
+        "millisecond",
+        "second",
+        "minute",
+        "hour",
+        "day",
+        "week",
+        "month",
+        "quarter",
+        "year",
+        "decade",
+        "millennium",
+    ];
+    NAMES.iter().copied().find(|name| {
+        unit == *name
+            || (unit.len() == name.len() + 1 && unit.starts_with(name) && unit.ends_with('s'))
+    })
+}
+
+fn date_trunc_timestamp(table: &Table, arg: &ConcatArg) -> Result<DateDiffSide, Error> {
+    if let ConcatArg::Column(name) = arg {
+        if let Some(index) = table.column_index(name) {
+            if table.meta.columns[index].tag == qdb_types::TAG_STRING {
+                let sample = match table.columns[index].first() {
+                    Some(Scalar::Text(text)) => text.as_str(),
+                    _ => "",
+                };
+                return Err(Error::new(format!(
+                    "inconvertible value: `{sample}` [STRING -> TIMESTAMP_NS]"
+                )));
+            }
+        }
+    }
+    datediff_side(table, arg, "date_trunc", 2)
+}
+
+fn date_trunc_micros(unit: &str, micros: i64) -> i64 {
+    let floor_step = |step: i64| micros - micros.rem_euclid(step);
+    match unit {
+        "nanosecond" | "microsecond" => micros,
+        "millisecond" => floor_step(1_000),
+        "second" => floor_step(1_000_000),
+        "minute" => floor_step(60 * 1_000_000),
+        "hour" => floor_step(3_600 * 1_000_000),
+        "day" => micros.div_euclid(DATEADD_DAY) * DATEADD_DAY,
+        "week" => {
+            let days = micros.div_euclid(DATEADD_DAY);
+            let weekday = i64::from(weekday_monday(micros));
+            (days - (weekday - 1)) * DATEADD_DAY
+        }
+        "month" | "quarter" | "year" | "decade" | "century" | "millennium" => {
+            let (mut year, mut month, _, _) = dateadd_parts(micros);
+            match unit {
+                "quarter" => month = ((month - 1) / 3) * 3 + 1,
+                "year" | "decade" | "century" | "millennium" => {
+                    month = 1;
+                    year = match unit {
+                        "decade" => (year / 10) * 10,
+                        "century" => (((year + 99) / 100) * 100) - 99,
+                        "millennium" => (((year + 999) / 1000) * 1000) - 999,
+                        _ => year,
+                    };
+                }
+                _ => {}
+            }
+            qdb_types::unix_days_from_civil(year, month, 1).unwrap_or(0) * DATEADD_DAY
+        }
+        _ => micros,
+    }
 }
 
 fn resolve_week_of_year(table: &Table, expr: &WeekOfYearExpr) -> Result<ResolvedProj, Error> {
@@ -3550,6 +3692,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::WeekOfYear { value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Int(iso_week(micros)),
+            None => Scalar::Null,
+        },
+        ResolvedProj::DateTrunc { unit, value, .. } => match datediff_micros(table, row, value) {
+            Some(micros) => Scalar::Timestamp(date_trunc_micros(unit, micros)),
             None => Scalar::Null,
         },
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
@@ -12414,6 +12560,156 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn date_trunc_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT date_trunc('day', ts) FROM sensors",
+                "expected/dt_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT date_trunc('year', id) FROM sensors",
+                "expected/dt_year.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT date_trunc('minute', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1",
+                "expected/dt_minute.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT date_trunc('week', id) FROM sensors",
+                "expected/dt_week.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT date_trunc('millennium', ts) FROM sensors LIMIT 1",
+                "expected/dt_mill.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT date_trunc('century', '2008-01-01T04:15:11.123000Z') FROM sensors LIMIT 1",
+                "expected/dt_cent.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT date_trunc('decade', '2008-01-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/dt_dec.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT date_trunc('quarter', '2020-05-15T12:30:00.000000Z') FROM sensors LIMIT 1",
+                "expected/dt_q.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT date_trunc('millisecond', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1",
+                "expected/dt_ms.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT DATE_TRUNC('day', TS) FROM sensors LIMIT 1",
+                "expected/dt_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT date_trunc('hour', id) FROM sensors ORDER BY date_trunc('hour', id)",
+                "expected/dt_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT date_trunc('day', ts) FROM sensors WHERE id = 1",
+                "expected/dt_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT date_trunc('day', ts) FROM sensors LIMIT 0",
+                "expected/dt_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT date_trunc('hour', ts) FROM days ORDER BY ts",
+                "expected/dt_hour.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let plural = execute(&sensors, "SELECT date_trunc('days', ts) FROM sensors").unwrap();
+        assert!(
+            render_tsv(&plural).contains("2020-01-02T00:00:00.000000Z"),
+            "{}",
+            render_tsv(&plural)
+        );
+        let err = execute(&sensors, "SELECT date_trunc() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `date_trunc` requires arguments: date_trunc(STRING constant, TIMESTAMP)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT date_trunc('day') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `date_trunc`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT date_trunc('DAY', ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid unit 'DAY'"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT date_trunc(null, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid unit 'null'"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT date_trunc(note, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: STRING constant, actual: STRING"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT date_trunc(id, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: STRING, actual: LONG"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT date_trunc('day', note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT date_trunc('day', missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT date_trunc('day', 'nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
             "{}",

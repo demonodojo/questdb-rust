@@ -116,6 +116,7 @@ pub enum Proj {
     Micros(MicrosExpr),
     DayOfWeek(DayOfWeekExpr),
     WeekOfYear(WeekOfYearExpr),
+    DateTrunc(DateTruncExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -370,6 +371,13 @@ pub struct WeekOfYearExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `date_trunc(unit, timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DateTruncExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -564,6 +572,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_day_of_week()?.label
             } else if parser.starts_week_of_year_call() {
                 parser.parse_week_of_year()?.label
+            } else if parser.starts_date_trunc_call() {
+                parser.parse_date_trunc()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -674,6 +684,7 @@ enum SelectPiece {
     Micros(MicrosExpr),
     DayOfWeek(DayOfWeekExpr),
     WeekOfYear(WeekOfYearExpr),
+    DateTrunc(DateTruncExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -843,6 +854,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::DayOfWeek(self.parse_day_of_week()?));
             } else if self.starts_week_of_year_call() {
                 pieces.push(SelectPiece::WeekOfYear(self.parse_week_of_year()?));
+            } else if self.starts_date_trunc_call() {
+                pieces.push(SelectPiece::DateTrunc(self.parse_date_trunc()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -916,6 +929,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Micros(_)
                     | SelectPiece::DayOfWeek(_)
                     | SelectPiece::WeekOfYear(_)
+                    | SelectPiece::DateTrunc(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -975,6 +989,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Micros(expr) => items.push(Proj::Micros(expr)),
                     SelectPiece::DayOfWeek(expr) => items.push(Proj::DayOfWeek(expr)),
                     SelectPiece::WeekOfYear(expr) => items.push(Proj::WeekOfYear(expr)),
+                    SelectPiece::DateTrunc(expr) => items.push(Proj::DateTrunc(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -1058,6 +1073,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Micros(_)
                 | SelectPiece::DayOfWeek(_)
                 | SelectPiece::WeekOfYear(_)
+                | SelectPiece::DateTrunc(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1304,6 +1320,25 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_date_trunc_call(&self) -> bool {
+        self.starts_named_call("date_trunc")
+    }
+
+    fn parse_date_trunc(&mut self) -> Result<DateTruncExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `date_trunc` requires arguments: date_trunc(STRING constant, TIMESTAMP)"
+                    .to_string(),
+            ));
+        }
+        Ok(DateTruncExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

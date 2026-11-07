@@ -1019,7 +1019,20 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   wy_case "SELECT WEEK_OF_YEAR(TS) FROM sensors" \
   wy_order "SELECT week_of_year(id) FROM sensors ORDER BY week_of_year(id)" \
   wy_where "SELECT week_of_year(ts) FROM sensors WHERE id = 1" \
-  wy_limit_zero "SELECT week_of_year(ts) FROM sensors LIMIT 0"
+  wy_limit_zero "SELECT week_of_year(ts) FROM sensors LIMIT 0" \
+  dt_day "SELECT date_trunc('day', ts) FROM sensors" \
+  dt_year "SELECT date_trunc('year', id) FROM sensors" \
+  dt_minute "SELECT date_trunc('minute', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1" \
+  dt_week "SELECT date_trunc('week', id) FROM sensors" \
+  dt_mill "SELECT date_trunc('millennium', ts) FROM sensors LIMIT 1" \
+  dt_cent "SELECT date_trunc('century', '2008-01-01T04:15:11.123000Z') FROM sensors LIMIT 1" \
+  dt_dec "SELECT date_trunc('decade', '2008-01-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  dt_q "SELECT date_trunc('quarter', '2020-05-15T12:30:00.000000Z') FROM sensors LIMIT 1" \
+  dt_ms "SELECT date_trunc('millisecond', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1" \
+  dt_case "SELECT DATE_TRUNC('day', TS) FROM sensors LIMIT 1" \
+  dt_order "SELECT date_trunc('hour', id) FROM sensors ORDER BY date_trunc('hour', id)" \
+  dt_where "SELECT date_trunc('day', ts) FROM sensors WHERE id = 1" \
+  dt_zero "SELECT date_trunc('day', ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1147,7 +1160,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ms_ts "SELECT millis(ts) FROM days ORDER BY ts" \
   mc_ts "SELECT micros(ts) FROM days ORDER BY ts" \
   dw_ts "SELECT day_of_week(ts) FROM days ORDER BY ts" \
-  wy_ts "SELECT week_of_year(ts) FROM days ORDER BY ts"
+  wy_ts "SELECT week_of_year(ts) FROM days ORDER BY ts" \
+  dt_hour "SELECT date_trunc('hour', ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2114,6 +2128,19 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT week_of_year(id) FROM sensors ORDER BY week_of_year(id)"),
     (os.environ["DIFF_H1"], "SELECT week_of_year(ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT week_of_year(ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('day', ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('year', id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('minute', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('week', id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('millennium', ts) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('century', '2008-01-01T04:15:11.123000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('decade', '2008-01-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('quarter', '2020-05-15T12:30:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('millisecond', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT DATE_TRUNC('day', TS) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('hour', id) FROM sensors ORDER BY date_trunc('hour', id)"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('day', ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT date_trunc('day', ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2240,6 +2267,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT micros(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT day_of_week(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT week_of_year(ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT date_trunc('hour', ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — date_trunc()
+
+`date_trunc(unidad, instante)` devuelve `TIMESTAMP`. La unidad es una constante en minúsculas y admite el plural con `s`, más `centuries`. Recorta a nanosegundo, microsegundo, milisegundo, segundo, minuto, hora, día, semana (lunes), mes, trimestre, año, década, siglo y milenio. El siglo y el milenio empiezan en el año 01: 2020 cae en 2001. Un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — week_of_year()
 
 `week_of_year(instante)` devuelve `INT` con la semana ISO. El jueves decide el año: el 29 de diciembre de 2019 es la semana 52, el 31 de diciembre de 2020 es la 53 y el 1 de enero de 2021 sigue en la 53. En `sensors` y `days` los timestamps caen en la semana 1. Un `LONG` se lee como microsegundos y aquí también da 1, salvo el nulo. Una cadena con fecha UTC se acepta. Se contrastó con `/exec` en `sensors` y `days`.

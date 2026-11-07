@@ -41,7 +41,8 @@
 //! non-null text. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
-//! widest numeric argument and skips nulls. `week_of_year` returns the ISO week.
+//! widest numeric argument and skips nulls. `date_trunc` floors a timestamp to a
+//! named unit. `week_of_year` returns the ISO week.
 //! `day_of_week` counts Monday as 1 and
 //! Sunday as 7. `micros` returns the UTC microsecond
 //! within the millisecond. `millis` returns the UTC millisecond of
