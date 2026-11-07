@@ -40,7 +40,8 @@
 //! boolean. A null text or prefix is false, and an empty prefix matches any
 //! non-null text. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
-//! null. `sign` keeps the numeric type. A `DOUBLE` of `-0.0` becomes `0.0`.
+//! null. `sqrt` returns `DOUBLE`. A negative value becomes NULL and `-0.0`
+//! keeps its sign. `sign` keeps the numeric type. A `DOUBLE` of `-0.0` becomes `0.0`.
 //! A null literal becomes the byte `0`. `ceil` and `ceiling` return `FLOAT` for `BYTE`, `SHORT`, `INT` and
 //! `FLOAT`, and `DOUBLE` for `LONG` and `DOUBLE`. `-0.0` keeps its sign.
 //! `floor` returns `FLOAT` for `BYTE`, `SHORT`, `INT` and `FLOAT`, and

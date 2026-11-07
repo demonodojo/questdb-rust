@@ -2,8 +2,8 @@ use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CeilExpr, CmpOp, ConcatArg, Filter, FloorExpr, GroupedSelect, LengthExpr, LowerExpr, PadExpr,
     Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SignExpr,
-    SizePrettyExpr, SplitPartExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr,
-    UpperExpr,
+    SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd,
+    TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -198,7 +198,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Round { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
-            | ResolvedProj::Sign { label, .. } => label.clone(),
+            | ResolvedProj::Sign { label, .. }
+            | ResolvedProj::Sqrt { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -323,6 +324,17 @@ enum ResolvedProj {
         input: SignInput,
         result_tag: i32,
     },
+    Sqrt {
+        label: String,
+        input: SqrtInput,
+    },
+}
+
+enum SqrtInput {
+    Null,
+    Long(i64),
+    Double(f64),
+    Column { index: usize },
 }
 
 enum SignInput {
@@ -403,7 +415,8 @@ impl ResolvedProj {
             | Self::Round { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
-            | Self::Sign { label, .. } => Some(label),
+            | Self::Sign { label, .. }
+            | Self::Sqrt { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -414,6 +427,7 @@ impl ResolvedProj {
             Self::Abs { result_tag, .. } => *result_tag,
             Self::Round { .. } => qdb_types::TAG_DOUBLE,
             Self::Sign { result_tag, .. } => *result_tag,
+            Self::Sqrt { .. } => qdb_types::TAG_DOUBLE,
             Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
                 if *wide {
                     qdb_types::TAG_DOUBLE
@@ -474,6 +488,58 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
+        Proj::Sqrt(expr) => resolve_sqrt(table, expr),
+    }
+}
+
+fn resolve_sqrt(table: &Table, expr: &SqrtExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `sqrt`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let input = sqrt_input(table, &expr.args[0])?;
+    Ok(ResolvedProj::Sqrt {
+        label: expr.label.clone(),
+        input,
+    })
+}
+
+fn sqrt_input(table: &Table, arg: &ConcatArg) -> Result<SqrtInput, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok(SqrtInput::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(SqrtInput::Long(*number)),
+        ConcatArg::Literal(Scalar::Double(number)) => Ok(SqrtInput::Double(*number)),
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            let tag = table.meta.columns[index].tag;
+            if matches!(
+                tag,
+                qdb_types::TAG_BYTE
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_LONG
+                    | qdb_types::TAG_FLOAT
+                    | qdb_types::TAG_DOUBLE
+            ) {
+                Ok(SqrtInput::Column { index })
+            } else {
+                Err(sqrt_type_error(table, arg))
+            }
+        }
+        ConcatArg::Literal(_) => Err(sqrt_type_error(table, arg)),
+    }
+}
+
+fn sqrt_type_error(table: &Table, arg: &ConcatArg) -> Error {
+    match concat_arg_type(table, arg) {
+        Ok(actual) => Error::new(format!(
+            "argument type mismatch for function `sqrt` at #1 expected: DOUBLE, actual: {actual}"
+        )),
+        Err(err) => err,
     }
 }
 
@@ -1386,6 +1452,17 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Floor { input, wide, .. } => floor_value(table, row, input, *wide),
         ResolvedProj::Ceil { input, wide, .. } => ceil_value(table, row, input, *wide),
         ResolvedProj::Sign { input, .. } => sign_value(table, row, input),
+        ResolvedProj::Sqrt { input, .. } => match sqrt_number(table, row, input) {
+            Some(value) => {
+                let result = value.sqrt();
+                if result.is_nan() {
+                    Scalar::Null
+                } else {
+                    Scalar::Double(result)
+                }
+            }
+            None => Scalar::Null,
+        },
         ResolvedProj::Round { input, scale, .. } => match round_row(table, row, input, scale) {
             Some(value) => Scalar::Double(value),
             None => Scalar::Null,
@@ -1487,6 +1564,24 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Trim { arg, end, .. } => match text_of(table, row, arg) {
             Some(text) => Scalar::Text(trim_ascii_space(&text, *end)),
             None => Scalar::Null,
+        },
+    }
+}
+
+fn sqrt_number(table: &Table, row: usize, input: &SqrtInput) -> Option<f64> {
+    match input {
+        SqrtInput::Null => None,
+        SqrtInput::Long(number) => Some(*number as f64),
+        SqrtInput::Double(number) => Some(*number),
+        SqrtInput::Column { index } => match &table.columns[*index][row] {
+            Scalar::Null => None,
+            Scalar::Byte(number) => Some(f64::from(*number)),
+            Scalar::Short(number) => Some(f64::from(*number)),
+            Scalar::Int(number) => Some(f64::from(*number)),
+            Scalar::Long(number) => Some(*number as f64),
+            Scalar::Float(number) => Some(f64::from(*number)),
+            Scalar::Double(number) => Some(*number),
+            _ => None,
         },
     }
 }
@@ -7584,6 +7679,136 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT sign(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn sqrt_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT sqrt(reading) FROM sensors",
+                "expected/sq_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(score) FROM sensors",
+                "expected/sq_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(id) FROM sensors",
+                "expected/sq_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(flags) FROM sensors",
+                "expected/sq_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(b) FROM sensors",
+                "expected/sq_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(code) FROM sensors",
+                "expected/sq_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(4) FROM sensors LIMIT 1",
+                "expected/sq_four.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(-1) FROM sensors LIMIT 1",
+                "expected/sq_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(null) FROM sensors LIMIT 1",
+                "expected/sq_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT SQRT(READING) FROM sensors",
+                "expected/sq_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(id) FROM sensors ORDER BY sqrt(id)",
+                "expected/sq_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(reading) FROM sensors ORDER BY sqrt(reading)",
+                "expected/sq_reading_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, sqrt(id) FROM sensors ORDER BY sqrt(id)",
+                "expected/sq_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(id) FROM sensors WHERE id = 1",
+                "expected/sq_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT sqrt(id) FROM sensors LIMIT 0",
+                "expected/sq_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT sqrt(id) FROM days ORDER BY ts",
+                "expected/sq_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT sqrt() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `sqrt` requires arguments: sqrt(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sqrt(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `sqrt` at #1 expected: DOUBLE, actual: STRING"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sqrt(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `sqrt` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sqrt(id, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `sqrt`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT sqrt(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

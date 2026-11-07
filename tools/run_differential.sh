@@ -608,7 +608,22 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sg_reading_order "SELECT sign(reading) FROM sensors ORDER BY sign(reading)" \
   sg_with_id "SELECT id, sign(id) FROM sensors ORDER BY sign(id)" \
   sg_where "SELECT sign(id) FROM sensors WHERE id = -1" \
-  sg_limit_zero "SELECT sign(id) FROM sensors LIMIT 0"
+  sg_limit_zero "SELECT sign(id) FROM sensors LIMIT 0" \
+  sq_reading "SELECT sqrt(reading) FROM sensors" \
+  sq_score "SELECT sqrt(score) FROM sensors" \
+  sq_id "SELECT sqrt(id) FROM sensors" \
+  sq_flags "SELECT sqrt(flags) FROM sensors" \
+  sq_byte "SELECT sqrt(b) FROM sensors" \
+  sq_code "SELECT sqrt(code) FROM sensors" \
+  sq_four "SELECT sqrt(4) FROM sensors LIMIT 1" \
+  sq_neg "SELECT sqrt(-1) FROM sensors LIMIT 1" \
+  sq_null "SELECT sqrt(null) FROM sensors LIMIT 1" \
+  sq_case "SELECT SQRT(READING) FROM sensors" \
+  sq_order "SELECT sqrt(id) FROM sensors ORDER BY sqrt(id)" \
+  sq_reading_order "SELECT sqrt(reading) FROM sensors ORDER BY sqrt(reading)" \
+  sq_with_id "SELECT id, sqrt(id) FROM sensors ORDER BY sqrt(id)" \
+  sq_where "SELECT sqrt(id) FROM sensors WHERE id = 1" \
+  sq_limit_zero "SELECT sqrt(id) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -707,7 +722,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   rd_id "SELECT round(id) FROM days ORDER BY ts" \
   fl_id "SELECT floor(id) FROM days ORDER BY ts" \
   ce_id "SELECT ceil(id) FROM days ORDER BY ts" \
-  sg_id "SELECT sign(id) FROM days ORDER BY ts"
+  sg_id "SELECT sign(id) FROM days ORDER BY ts" \
+  sq_id "SELECT sqrt(id) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1263,6 +1279,21 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, sign(id) FROM sensors ORDER BY sign(id)"),
     (os.environ["DIFF_H1"], "SELECT sign(id) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT sign(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(4) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT SQRT(READING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(id) FROM sensors ORDER BY sqrt(id)"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(reading) FROM sensors ORDER BY sqrt(reading)"),
+    (os.environ["DIFF_H1"], "SELECT id, sqrt(id) FROM sensors ORDER BY sqrt(id)"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1360,6 +1391,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT floor(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT ceil(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT sign(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT sqrt(id) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
