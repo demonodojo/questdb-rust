@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — regr_slope()
+
+`regr_slope(y, x)` usa las mismas sumas que `corr` y divide la suma de productos cruzados por la suma de cuadrados de `x`. Sin parejas, o si esa suma es cero, el resultado es NULL. `regr_slope(reading, score)` es `0.5274725274725275`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. `regr_slope(day, id)` imprime `-7.1505E9` en 10.1.0 y `-7150500000.0` en Rust. `regr_slope(flags, code)` imprime `7.932260878679345E-4` y `0.0007932260878679345`. `regr_slope(id, ts)` en `days` imprime `2.085448153480154E-11` y `2.085448153480154e-11`. El grupo `madrid` imprime `2.6541039081680048E-11` y `2.6541039081680048e-11`. Esas consultas no se capturan. Se contrastó el resto con `/exec` en `sensors`.
+
 ## 2026-11-07 — corr()
 
 `corr(y, x)` devuelve la correlación de Pearson como `DOUBLE`: la suma de productos cruzados dividida por la raíz del producto de las dos sumas de cuadrados. Con menos de dos parejas, o con denominador cero, el resultado es NULL. El cociente se recorta a `[-1, 1]`. `corr(reading, score)` es `0.8386278693775346`. `BOOLEAN` y `SYMBOL` no encajan. Un texto que no es número se rechaza en la fila. Se contrastó con `/exec` en `sensors` y `days`.

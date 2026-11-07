@@ -1660,7 +1660,22 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   cr_lim0 "SELECT corr(reading, score) FROM sensors LIMIT 0" \
   cr_grp "SELECT corr(reading, score) FROM sensors GROUP BY location ORDER BY location" \
   cr_grp_id "SELECT corr(reading, id) FROM sensors GROUP BY location ORDER BY location" \
-  cr_where "SELECT corr(reading, score) FROM sensors WHERE location = 'madrid'"
+  cr_where "SELECT corr(reading, score) FROM sensors WHERE location = 'madrid'" \
+  rs_read "SELECT regr_slope(reading, score) FROM sensors" \
+  rs_id "SELECT regr_slope(reading, id) FROM sensors" \
+  rs_flags "SELECT regr_slope(id, flags) FROM sensors" \
+  rs_byte "SELECT regr_slope(b, code) FROM sensors" \
+  rs_score "SELECT regr_slope(score, flags) FROM sensors" \
+  rs_ts "SELECT regr_slope(ts, id) FROM sensors" \
+  rs_one "SELECT regr_slope(reading, score) FROM sensors WHERE id = 1" \
+  rs_none "SELECT regr_slope(reading, score) FROM sensors WHERE id > 100" \
+  rs_neg "SELECT regr_slope(reading, score) FROM sensors WHERE id = -1" \
+  rs_null "SELECT regr_slope(reading, score) FROM sensors WHERE id = NULL" \
+  rs_case "SELECT REGR_SLOPE(reading, score) FROM sensors" \
+  rs_lim0 "SELECT regr_slope(reading, score) FROM sensors LIMIT 0" \
+  rs_grp "SELECT regr_slope(reading, score) FROM sensors GROUP BY location ORDER BY location" \
+  rs_grp_id "SELECT regr_slope(reading, id) FROM sensors GROUP BY location ORDER BY location" \
+  rs_where "SELECT regr_slope(reading, score) FROM sensors WHERE location = 'madrid'"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3448,6 +3463,21 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT corr(reading, score) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT corr(reading, id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT corr(reading, score) FROM sensors WHERE location = 'madrid'"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(reading, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(b, code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(score, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(ts, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(reading, score) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(reading, score) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(reading, score) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(reading, score) FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT REGR_SLOPE(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(reading, score) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(reading, score) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(reading, id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT regr_slope(reading, score) FROM sensors WHERE location = 'madrid'"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
