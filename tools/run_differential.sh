@@ -316,7 +316,29 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   right_where_empty "SELECT right(note, 2) FROM sensors WHERE note = ''" \
   left_limit_zero "SELECT left(note, 2) FROM sensors LIMIT 0" \
   left_symbol "SELECT left(note, location) FROM sensors" \
-  left_byte "SELECT left(note, b) FROM sensors"
+  left_byte "SELECT left(note, b) FROM sensors" \
+  sub_note "SELECT substring(note, 1, 2) FROM sensors" \
+  sub_zero_start "SELECT substring(note, 0, 2) FROM sensors" \
+  sub_long "SELECT substring(note, 1, 10) FROM sensors" \
+  sub_neg "SELECT substring(note, -1, 4) FROM sensors" \
+  sub_before "SELECT substring(note, -2, 2) FROM sensors" \
+  sub_zero_len "SELECT substring(note, 0, 0) FROM sensors" \
+  sub_past "SELECT substring(note, 6, 2) FROM sensors" \
+  sub_beta "SELECT substring('βeta', 1, 2) FROM sensors LIMIT 1" \
+  sub_null "SELECT substring(null, 1, 2) FROM sensors LIMIT 1" \
+  sub_empty "SELECT substring('', 1, 2) FROM sensors LIMIT 1" \
+  sub_case "SELECT SUBSTRING(NOTE, 1, 1) FROM sensors" \
+  sub_ch "SELECT substring(ch, 1, 1) FROM sensors" \
+  sub_tag "SELECT substring(tag, 2, 3) FROM sensors" \
+  sub_location "SELECT substring(location, 1, 3) FROM sensors" \
+  sub_order "SELECT substring(note, 2, 4) FROM sensors ORDER BY substring(note, 2, 4)" \
+  sub_with_id "SELECT id, substring(note, 1, 1) FROM sensors ORDER BY substring(note, 1, 1)" \
+  sub_where_empty "SELECT substring(note, 1, 2) FROM sensors WHERE note = ''" \
+  sub_limit_zero "SELECT substring(note, 1, 2) FROM sensors LIMIT 0" \
+  sub_symbol "SELECT substring(note, location, 2) FROM sensors" \
+  sub_flags "SELECT substring(note, flags, 2) FROM sensors" \
+  sub_null_start "SELECT substring(note, null, 2) FROM sensors" \
+  sub_code "SELECT substring(note, code, 1) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -387,7 +409,10 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   upper_location "SELECT upper(location) FROM days ORDER BY ts" \
   left_note "SELECT left(note, 2) FROM days" \
   right_note "SELECT right(note, 2) FROM days" \
-  left_location "SELECT left(location, 3) FROM days ORDER BY ts"
+  left_location "SELECT left(location, 3) FROM days ORDER BY ts" \
+  sub_note "SELECT substring(note, 2, 4) FROM days" \
+  sub_neg "SELECT substring(note, -1, 4) FROM days" \
+  sub_location "SELECT substring(location, 2, 3) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -651,6 +676,28 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT left(note, 2) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT left(note, location) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT left(note, b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, 1, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, 0, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, 1, 10) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, -1, 4) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, -2, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, 0, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, 6, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring('βeta', 1, 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT substring(null, 1, 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT substring('', 1, 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT SUBSTRING(NOTE, 1, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(ch, 1, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(tag, 2, 3) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(location, 1, 3) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, 2, 4) FROM sensors ORDER BY substring(note, 2, 4)"),
+    (os.environ["DIFF_H1"], "SELECT id, substring(note, 1, 1) FROM sensors ORDER BY substring(note, 1, 1)"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, 1, 2) FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, 1, 2) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, location, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, flags, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, null, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT substring(note, code, 1) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -720,6 +767,9 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT left(note, 2) FROM days"),
     (os.environ["DIFF_H2"], "SELECT right(note, 2) FROM days"),
     (os.environ["DIFF_H2"], "SELECT left(location, 3) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT substring(note, 2, 4) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT substring(note, -1, 4) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT substring(location, 2, 3) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

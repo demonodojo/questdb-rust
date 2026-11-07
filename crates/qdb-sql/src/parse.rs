@@ -87,6 +87,7 @@ pub enum Proj {
     Lower(LowerExpr),
     Upper(UpperExpr),
     Side(SideExpr),
+    Substr(SubstrExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +114,13 @@ pub struct SideExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
     pub from_right: bool,
+}
+
+/// `substring(text, start, length)`. `start` is 1-based.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubstrExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,6 +184,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_upper()?.label
             } else if parser.starts_side_call() {
                 parser.parse_side()?.label
+            } else if parser.starts_substr_call() {
+                parser.parse_substr()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -233,6 +243,7 @@ enum SelectPiece {
     Lower(LowerExpr),
     Upper(UpperExpr),
     Side(SideExpr),
+    Substr(SubstrExpr),
 }
 
 struct Parser<'a> {
@@ -335,6 +346,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Upper(self.parse_upper()?));
             } else if self.starts_side_call() {
                 pieces.push(SelectPiece::Side(self.parse_side()?));
+            } else if self.starts_substr_call() {
+                pieces.push(SelectPiece::Substr(self.parse_substr()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -355,6 +368,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Lower(_)
                     | SelectPiece::Upper(_)
                     | SelectPiece::Side(_)
+                    | SelectPiece::Substr(_)
             )
         });
         if counts > 0 && projected {
@@ -374,6 +388,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Lower(expr) => items.push(Proj::Lower(expr)),
                     SelectPiece::Upper(expr) => items.push(Proj::Upper(expr)),
                     SelectPiece::Side(expr) => items.push(Proj::Side(expr)),
+                    SelectPiece::Substr(expr) => items.push(Proj::Substr(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -416,7 +431,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Length(_)
                 | SelectPiece::Lower(_)
                 | SelectPiece::Upper(_)
-                | SelectPiece::Side(_) => {
+                | SelectPiece::Side(_)
+                | SelectPiece::Substr(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -455,6 +471,25 @@ impl<'a> Parser<'a> {
 
     fn starts_side_call(&self) -> bool {
         self.starts_named_call("left") || self.starts_named_call("right")
+    }
+
+    fn starts_substr_call(&self) -> bool {
+        self.starts_named_call("substring")
+    }
+
+    fn parse_substr(&mut self) -> Result<SubstrExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(SubstrExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn parse_side(&mut self) -> Result<SideExpr, Error> {

@@ -1,7 +1,7 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
     ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, SelectList, SideExpr,
-    UpperExpr,
+    SubstrExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -122,6 +122,11 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
         }
         row_ids.push(row);
     }
+    for row in &row_ids {
+        for item in &resolved {
+            reject_negative_substring(table, *row, item)?;
+        }
+    }
     if !query.order_by.is_empty() {
         let mut keys = Vec::with_capacity(query.order_by.len());
         for order in &query.order_by {
@@ -177,7 +182,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Length { label, .. }
             | ResolvedProj::Lower { label, .. }
             | ResolvedProj::Upper { label, .. }
-            | ResolvedProj::Side { label, .. } => label.clone(),
+            | ResolvedProj::Side { label, .. }
+            | ResolvedProj::Substr { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -231,6 +237,20 @@ enum ResolvedProj {
         text: ResolvedArg,
         count: CountArg,
     },
+    Substr {
+        label: String,
+        mode: SubstrMode,
+    },
+}
+
+enum SubstrMode {
+    Null,
+    Empty,
+    Slice {
+        text: ResolvedArg,
+        start: CountArg,
+        len: CountArg,
+    },
 }
 
 impl ResolvedProj {
@@ -240,7 +260,8 @@ impl ResolvedProj {
             | Self::Length { label, .. }
             | Self::Lower { label, .. }
             | Self::Upper { label, .. }
-            | Self::Side { label, .. } => Some(label),
+            | Self::Side { label, .. }
+            | Self::Substr { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -286,7 +307,78 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Lower(expr) => resolve_lower(table, expr),
         Proj::Upper(expr) => resolve_upper(table, expr),
         Proj::Side(expr) => resolve_side(table, expr),
+        Proj::Substr(expr) => resolve_substr(table, expr),
     }
+}
+
+fn resolve_substr(table: &Table, expr: &SubstrExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 3 {
+        return Err(side_type_error(table, "substring", &expr.args));
+    }
+    let text = resolve_concat_arg(table, &expr.args[0])?;
+    if !side_text_arg(&expr.args[0], &text) {
+        return Err(side_type_error(table, "substring", &expr.args));
+    }
+    let start = match resolve_i32_count(table, &expr.args[1]) {
+        Ok(count) => count,
+        Err(()) => return Err(side_type_error(table, "substring", &expr.args)),
+    };
+    let len = match resolve_i32_count(table, &expr.args[2]) {
+        Ok(count) => count,
+        Err(()) => return Err(side_type_error(table, "substring", &expr.args)),
+    };
+    let mode = if matches!(expr.args[0], ConcatArg::Literal(Scalar::Null))
+        || matches!(start, CountArg::Null)
+        || matches!(len, CountArg::Null)
+    {
+        SubstrMode::Null
+    } else if let CountArg::Fixed(len_value) = len {
+        if len_value < 0 {
+            return Err(Error::new("negative substring length is not allowed"));
+        }
+        if len_value == 0 {
+            SubstrMode::Empty
+        } else if let CountArg::Fixed(start_value) = start {
+            let start_i = i32::try_from(start_value).unwrap_or(i32::MAX);
+            let len_i = i32::try_from(len_value).unwrap_or(i32::MAX);
+            if start_i.wrapping_add(len_i) < 1 {
+                SubstrMode::Null
+            } else {
+                SubstrMode::Slice { text, start, len }
+            }
+        } else {
+            SubstrMode::Slice { text, start, len }
+        }
+    } else {
+        SubstrMode::Slice { text, start, len }
+    };
+    Ok(ResolvedProj::Substr {
+        label: expr.label.clone(),
+        mode,
+    })
+}
+
+fn resolve_i32_count(table: &Table, arg: &ConcatArg) -> Result<CountArg, ()> {
+    match resolve_count(table, arg)? {
+        CountArg::Fixed(number) if i32::try_from(number).is_err() => Err(()),
+        CountArg::ColumnInt { index } if table.meta.columns[index].tag == qdb_types::TAG_LONG => {
+            Err(())
+        }
+        count => Ok(count),
+    }
+}
+
+fn reject_negative_substring(table: &Table, row: usize, item: &ResolvedProj) -> Result<(), Error> {
+    if let ResolvedProj::Substr {
+        mode: SubstrMode::Slice { len, .. },
+        ..
+    } = item
+    {
+        if count_of(table, row, len).is_some_and(|len| len < 0) {
+            return Err(Error::new("negative substring length is not allowed"));
+        }
+    }
+    Ok(())
 }
 
 fn resolve_side(table: &Table, expr: &SideExpr) -> Result<ResolvedProj, Error> {
@@ -535,7 +627,46 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             (Some(text), Some(count)) => Scalar::Text(take_chars(&text, count, *from_right)),
             _ => Scalar::Null,
         },
+        ResolvedProj::Substr { mode, .. } => match mode {
+            SubstrMode::Null => Scalar::Null,
+            SubstrMode::Empty => Scalar::Text(String::new()),
+            SubstrMode::Slice { text, start, len } => {
+                match (
+                    text_of(table, row, text),
+                    count_of(table, row, start),
+                    count_of(table, row, len),
+                ) {
+                    (Some(text), Some(start), Some(len)) => {
+                        Scalar::Text(substring_utf16(&text, start, len))
+                    }
+                    _ => Scalar::Null,
+                }
+            }
+        },
     }
+}
+
+fn substring_utf16(text: &str, raw_start: i64, len: i64) -> String {
+    let Ok(raw_start) = i32::try_from(raw_start) else {
+        return String::new();
+    };
+    let Ok(len) = i32::try_from(len) else {
+        return String::new();
+    };
+    if len <= 0 {
+        return String::new();
+    }
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let start = raw_start.wrapping_sub(1);
+    let start = if start < 0 { 0 } else { start };
+    let end = raw_start.wrapping_add(len).wrapping_sub(1);
+    let str_len = i32::try_from(units.len()).unwrap_or(i32::MAX);
+    let end = if end > str_len { str_len } else { end };
+    if start >= end {
+        return String::new();
+    }
+    let slice = &units[start as usize..end as usize];
+    String::from_utf16(slice).unwrap_or_else(|_| String::from_utf16_lossy(slice))
 }
 
 fn count_of(table: &Table, row: usize, count: &CountArg) -> Option<i64> {
@@ -3619,6 +3750,202 @@ mod tests {
         let err = execute(&sensors, "SELECT left(missing, 1) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn substring_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT substring(note, 1, 2) FROM sensors",
+                "expected/sub_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, 0, 2) FROM sensors",
+                "expected/sub_zero_start.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, 1, 10) FROM sensors",
+                "expected/sub_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, -1, 4) FROM sensors",
+                "expected/sub_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, -2, 2) FROM sensors",
+                "expected/sub_before.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, 0, 0) FROM sensors",
+                "expected/sub_zero_len.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, 6, 2) FROM sensors",
+                "expected/sub_past.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring('βeta', 1, 2) FROM sensors LIMIT 1",
+                "expected/sub_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(null, 1, 2) FROM sensors LIMIT 1",
+                "expected/sub_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring('', 1, 2) FROM sensors LIMIT 1",
+                "expected/sub_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT SUBSTRING(NOTE, 1, 1) FROM sensors",
+                "expected/sub_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(ch, 1, 1) FROM sensors",
+                "expected/sub_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(tag, 2, 3) FROM sensors",
+                "expected/sub_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(location, 1, 3) FROM sensors",
+                "expected/sub_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, 2, 4) FROM sensors ORDER BY substring(note, 2, 4)",
+                "expected/sub_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, substring(note, 1, 1) FROM sensors ORDER BY substring(note, 1, 1)",
+                "expected/sub_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, 1, 2) FROM sensors WHERE note = ''",
+                "expected/sub_where_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, 1, 2) FROM sensors LIMIT 0",
+                "expected/sub_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, location, 2) FROM sensors",
+                "expected/sub_symbol.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, flags, 2) FROM sensors",
+                "expected/sub_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, null, 2) FROM sensors",
+                "expected/sub_null_start.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT substring(note, code, 1) FROM sensors",
+                "expected/sub_code.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT substring(note, 2, 4) FROM days",
+                "expected/sub_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT substring(note, -1, 4) FROM days",
+                "expected/sub_neg.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT substring(location, 2, 3) FROM days ORDER BY ts",
+                "expected/sub_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT substring() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT substring(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `substring` with the argument types: (STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT substring(id, 1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `substring` with the argument types: (LONG, INT, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT substring(note, 1.5, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `substring` with the argument types: (STRING, DOUBLE, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT substring(note, id, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `substring` with the argument types: (STRING, LONG, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT substring(missing, 1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT substring(note, 1, -1) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("negative substring length is not allowed"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT substring(note, 1, b) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("negative substring length is not allowed"),
             "{}",
             err.message
         );

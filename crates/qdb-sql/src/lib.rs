@@ -31,7 +31,9 @@
 //! the text is null. `upper` returns the text in uppercase, or NULL when the
 //! text is null. `left` and `right` keep that many characters. A negative
 //! count drops characters from the other end, and a null text or count stays
-//! NULL. An aggregate without `GROUP BY` returns one
+//! NULL. `substring` takes a 1-based start and a length. A constant length of 0
+//! is empty, and a constant start that ends before the text is NULL. A negative
+//! length is rejected. An aggregate without `GROUP BY` returns one
 //! row, or none when `LIMIT` removes it.
 //! `GROUP BY` of one column returns one row per distinct value, in first-seen
 //! order until `ORDER BY` sorts it. `-0.0` and `0.0` stay in different groups.
