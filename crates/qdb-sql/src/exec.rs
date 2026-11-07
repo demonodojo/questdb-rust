@@ -1,6 +1,6 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
-    CeilExpr, CmpOp, ConcatArg, ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect,
+    CeilExpr, CmpOp, ConcatArg, ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, LeastExpr,
     LengthExpr, LnExpr, LogExpr, LowerExpr, PadExpr, PiExpr, PowerExpr, Proj, Query,
     QuoteIdentExpr, ReplaceExpr, RoundExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr,
     SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
@@ -205,7 +205,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Log { label, .. }
             | ResolvedProj::Exp { label, .. }
             | ResolvedProj::Pi { label, .. }
-            | ResolvedProj::Greatest { label, .. } => label.clone(),
+            | ResolvedProj::Greatest { label, .. }
+            | ResolvedProj::Least { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -359,6 +360,11 @@ enum ResolvedProj {
         args: Vec<GreatestArg>,
         result_tag: i32,
     },
+    Least {
+        label: String,
+        args: Vec<GreatestArg>,
+        result_tag: i32,
+    },
 }
 
 enum SqrtInput {
@@ -453,7 +459,8 @@ impl ResolvedProj {
             | Self::Log { label, .. }
             | Self::Exp { label, .. }
             | Self::Pi { label, .. }
-            | Self::Greatest { label, .. } => Some(label),
+            | Self::Greatest { label, .. }
+            | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -470,7 +477,7 @@ impl ResolvedProj {
             | Self::Log { .. }
             | Self::Exp { .. }
             | Self::Pi { .. } => qdb_types::TAG_DOUBLE,
-            Self::Greatest { result_tag, .. } => *result_tag,
+            Self::Greatest { result_tag, .. } | Self::Least { result_tag, .. } => *result_tag,
             Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
                 if *wide {
                     qdb_types::TAG_DOUBLE
@@ -538,6 +545,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Exp(expr) => resolve_exp(table, expr),
         Proj::Pi(expr) => resolve_pi(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
+        Proj::Least(expr) => resolve_least(table, expr),
     }
 }
 
@@ -548,9 +556,27 @@ enum GreatestArg {
     Column { index: usize },
 }
 
+fn resolve_least(table: &Table, expr: &LeastExpr) -> Result<ResolvedProj, Error> {
+    let args = resolve_numeric_args(table, &expr.args)?;
+    Ok(ResolvedProj::Least {
+        label: expr.label.clone(),
+        result_tag: greatest_tag(table, &args),
+        args,
+    })
+}
+
 fn resolve_greatest(table: &Table, expr: &GreatestExpr) -> Result<ResolvedProj, Error> {
-    let mut args = Vec::with_capacity(expr.args.len());
-    for arg in &expr.args {
+    let args = resolve_numeric_args(table, &expr.args)?;
+    Ok(ResolvedProj::Greatest {
+        label: expr.label.clone(),
+        result_tag: greatest_tag(table, &args),
+        args,
+    })
+}
+
+fn resolve_numeric_args(table: &Table, inputs: &[ConcatArg]) -> Result<Vec<GreatestArg>, Error> {
+    let mut args = Vec::with_capacity(inputs.len());
+    for arg in inputs {
         match arg {
             ConcatArg::Column(name) => {
                 let Some(index) = table.column_index(name) else {
@@ -600,11 +626,7 @@ fn resolve_greatest(table: &Table, expr: &GreatestExpr) -> Result<ResolvedProj, 
             }
         }
     }
-    Ok(ResolvedProj::Greatest {
-        label: expr.label.clone(),
-        result_tag: greatest_tag(table, &args),
-        args,
-    })
+    Ok(args)
 }
 
 fn greatest_tag(table: &Table, args: &[GreatestArg]) -> i32 {
@@ -752,6 +774,90 @@ fn greatest_i64(table: &Table, row: usize, arg: &GreatestArg) -> i64 {
                 _ => i64::MIN,
             },
             _ => i64::MIN,
+        },
+    }
+}
+
+fn least_value(table: &Table, row: usize, args: &[GreatestArg], result_tag: i32) -> Scalar {
+    if result_tag == qdb_types::TAG_STRING {
+        return Scalar::Null;
+    }
+    if matches!(result_tag, qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE) {
+        return least_real(table, row, args, result_tag);
+    }
+    least_integer(table, row, args, result_tag)
+}
+
+fn least_real(table: &Table, row: usize, args: &[GreatestArg], result_tag: i32) -> Scalar {
+    let mut value = f64::INFINITY;
+    for arg in args {
+        if let Some(next) = greatest_f64(table, row, arg) {
+            value = java_min(value, next);
+        }
+    }
+    if result_tag == qdb_types::TAG_FLOAT {
+        if !value.is_finite() || value > f32::MAX as f64 || value < -(f32::MAX as f64) {
+            Scalar::Null
+        } else {
+            Scalar::Float(value as f32)
+        }
+    } else {
+        Scalar::Double(value)
+    }
+}
+
+fn java_min(left: f64, right: f64) -> f64 {
+    if left.is_nan() {
+        return left;
+    }
+    if left == 0.0 && right == 0.0 && right.is_sign_negative() {
+        return right;
+    }
+    if left <= right {
+        left
+    } else {
+        right
+    }
+}
+
+fn least_integer(table: &Table, row: usize, args: &[GreatestArg], result_tag: i32) -> Scalar {
+    let mut value = i64::MAX;
+    let mut found = false;
+    for arg in args {
+        if let Some(next) = least_i64(table, row, arg) {
+            found = true;
+            value = value.min(next);
+        }
+    }
+    if !found {
+        return Scalar::Null;
+    }
+    match result_tag {
+        qdb_types::TAG_BYTE if (i8::MIN as i64..=i8::MAX as i64).contains(&value) => {
+            Scalar::Byte(value as i8)
+        }
+        qdb_types::TAG_SHORT if (i16::MIN as i64..=i16::MAX as i64).contains(&value) => {
+            Scalar::Short(value as i16)
+        }
+        qdb_types::TAG_INT if value > i32::MIN as i64 && value <= i32::MAX as i64 => {
+            Scalar::Int(value as i32)
+        }
+        qdb_types::TAG_LONG if value != i64::MIN => Scalar::Long(value),
+        _ => Scalar::Null,
+    }
+}
+
+fn least_i64(table: &Table, row: usize, arg: &GreatestArg) -> Option<i64> {
+    match arg {
+        GreatestArg::Null => None,
+        GreatestArg::Number { value, .. } => Some(*value),
+        GreatestArg::Real { value } => Some(*value as i64),
+        GreatestArg::Column { index } => match &table.columns[*index][row] {
+            Scalar::Byte(value) => Some(i64::from(*value)),
+            Scalar::Short(value) => Some(i64::from(*value)),
+            Scalar::Int(value) => Some(i64::from(*value)),
+            Scalar::Long(value) => Some(*value),
+            _ => None,
         },
     }
 }
@@ -1866,6 +1972,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
+        ResolvedProj::Least {
+            args, result_tag, ..
+        } => least_value(table, row, args, *result_tag),
         ResolvedProj::Ln { input, .. } => log_value(table, row, input, f64::ln),
         ResolvedProj::Sqrt { input, .. } => match sqrt_number(table, row, input) {
             Some(value) => {
@@ -9070,6 +9179,181 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT greatest(ok, missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn least_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT least(id, flags) FROM sensors",
+                "expected/ls_id_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(reading, score) FROM sensors",
+                "expected/ls_reading_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(code, b) FROM sensors",
+                "expected/ls_code_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(id) FROM sensors",
+                "expected/ls_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(id, flags, reading) FROM sensors",
+                "expected/ls_three.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(null, id) FROM sensors",
+                "expected/ls_null_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(null, null) FROM sensors LIMIT 1",
+                "expected/ls_nulls.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(-0.0, 0.0) FROM sensors LIMIT 1",
+                "expected/ls_negzero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(0.0, -0.0) FROM sensors LIMIT 1",
+                "expected/ls_poszero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(-1.5, -0.0) FROM sensors LIMIT 1",
+                "expected/ls_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(code, 1) FROM sensors",
+                "expected/ls_code_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(1.5, 2) FROM sensors LIMIT 1",
+                "expected/ls_double_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(3000000000, 1) FROM sensors LIMIT 1",
+                "expected/ls_long_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(score, 1) FROM sensors",
+                "expected/ls_score_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(b, code, flags) FROM sensors",
+                "expected/ls_mix.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(flags, 0) FROM sensors",
+                "expected/ls_flags_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(id, 10) FROM sensors",
+                "expected/ls_id_ten.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT LEAST(ID, FLAGS) FROM sensors",
+                "expected/ls_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(id, flags) FROM sensors ORDER BY least(id, flags)",
+                "expected/ls_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(reading) FROM sensors ORDER BY least(reading)",
+                "expected/ls_reading_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(score) FROM sensors ORDER BY least(score)",
+                "expected/ls_score_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(flags) FROM sensors ORDER BY least(flags)",
+                "expected/ls_flags_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(id, flags) FROM sensors WHERE id = -1",
+                "expected/ls_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT least(id, flags) FROM sensors LIMIT 0",
+                "expected/ls_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT least(id, 2) FROM days ORDER BY ts",
+                "expected/ls_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT least() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("at least one argument is required by LEAST(V)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT least(ok, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("unsupported type: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT least(note, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("unsupported type: STRING"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT least(ch, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("unsupported type: CHAR"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT least(location, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("unsupported type: SYMBOL"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT least(ok, missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

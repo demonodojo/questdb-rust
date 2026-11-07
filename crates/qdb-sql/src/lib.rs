@@ -41,7 +41,8 @@
 //! non-null text. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
-//! widest numeric argument and skips nulls. `exp` returns `DOUBLE`. A huge input overflows to infinity and prints as
+//! widest numeric argument and skips nulls. `least` returns the narrowest and
+//! also skips nulls. `exp` returns `DOUBLE`. A huge input overflows to infinity and prints as
 //! NULL. `log` is the base-10 logarithm and follows the same null and zero rules
 //! as `ln`. `ln` returns `DOUBLE`. A negative input is NULL. `ln(0)` is negative
 //! infinity, which sorts before finite values and prints as NULL. `power` returns `DOUBLE`. A non-finite result is NULL, and a null base

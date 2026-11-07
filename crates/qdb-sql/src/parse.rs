@@ -108,6 +108,7 @@ pub enum Proj {
     Exp(ExpExpr),
     Pi(PiExpr),
     Greatest(GreatestExpr),
+    Least(LeastExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -294,6 +295,13 @@ pub struct GreatestExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `least(number, ...)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeastExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -397,6 +405,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_pi()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
+            } else if parser.starts_least_call() {
+                parser.parse_least()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -475,6 +485,7 @@ enum SelectPiece {
     Exp(ExpExpr),
     Pi(PiExpr),
     Greatest(GreatestExpr),
+    Least(LeastExpr),
 }
 
 struct Parser<'a> {
@@ -619,6 +630,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Pi(self.parse_pi()?));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
+            } else if self.starts_least_call() {
+                pieces.push(SelectPiece::Least(self.parse_least()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -660,6 +673,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Exp(_)
                     | SelectPiece::Pi(_)
                     | SelectPiece::Greatest(_)
+                    | SelectPiece::Least(_)
             )
         });
         if counts > 0 && projected {
@@ -700,6 +714,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Exp(expr) => items.push(Proj::Exp(expr)),
                     SelectPiece::Pi(expr) => items.push(Proj::Pi(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
+                    SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -763,7 +778,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Log(_)
                 | SelectPiece::Exp(_)
                 | SelectPiece::Pi(_)
-                | SelectPiece::Greatest(_) => {
+                | SelectPiece::Greatest(_)
+                | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -806,6 +822,24 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_least_call(&self) -> bool {
+        self.starts_named_call("least")
+    }
+
+    fn parse_least(&mut self) -> Result<LeastExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "at least one argument is required by LEAST(V)".to_string(),
+            ));
+        }
+        Ok(LeastExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_greatest_call(&self) -> bool {

@@ -722,7 +722,31 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   gt_score_order "SELECT greatest(score) FROM sensors ORDER BY greatest(score)" \
   gt_flags_order "SELECT greatest(flags) FROM sensors ORDER BY greatest(flags)" \
   gt_where "SELECT greatest(id, flags) FROM sensors WHERE id = -1" \
-  gt_limit_zero "SELECT greatest(id, flags) FROM sensors LIMIT 0"
+  gt_limit_zero "SELECT greatest(id, flags) FROM sensors LIMIT 0" \
+  ls_id_flags "SELECT least(id, flags) FROM sensors" \
+  ls_reading_score "SELECT least(reading, score) FROM sensors" \
+  ls_code_byte "SELECT least(code, b) FROM sensors" \
+  ls_id "SELECT least(id) FROM sensors" \
+  ls_three "SELECT least(id, flags, reading) FROM sensors" \
+  ls_null_id "SELECT least(null, id) FROM sensors" \
+  ls_nulls "SELECT least(null, null) FROM sensors LIMIT 1" \
+  ls_negzero "SELECT least(-0.0, 0.0) FROM sensors LIMIT 1" \
+  ls_poszero "SELECT least(0.0, -0.0) FROM sensors LIMIT 1" \
+  ls_neg "SELECT least(-1.5, -0.0) FROM sensors LIMIT 1" \
+  ls_code_one "SELECT least(code, 1) FROM sensors" \
+  ls_double_lit "SELECT least(1.5, 2) FROM sensors LIMIT 1" \
+  ls_long_lit "SELECT least(3000000000, 1) FROM sensors LIMIT 1" \
+  ls_score_one "SELECT least(score, 1) FROM sensors" \
+  ls_mix "SELECT least(b, code, flags) FROM sensors" \
+  ls_flags_zero "SELECT least(flags, 0) FROM sensors" \
+  ls_id_ten "SELECT least(id, 10) FROM sensors" \
+  ls_case "SELECT LEAST(ID, FLAGS) FROM sensors" \
+  ls_order "SELECT least(id, flags) FROM sensors ORDER BY least(id, flags)" \
+  ls_reading_order "SELECT least(reading) FROM sensors ORDER BY least(reading)" \
+  ls_score_order "SELECT least(score) FROM sensors ORDER BY least(score)" \
+  ls_flags_order "SELECT least(flags) FROM sensors ORDER BY least(flags)" \
+  ls_where "SELECT least(id, flags) FROM sensors WHERE id = -1" \
+  ls_limit_zero "SELECT least(id, flags) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -828,7 +852,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   lg_id "SELECT log(id) FROM days ORDER BY ts" \
   ex_id "SELECT exp(id) FROM days ORDER BY ts" \
   pi_id "SELECT pi() FROM days ORDER BY ts" \
-  gt_id "SELECT greatest(id, 2) FROM days ORDER BY ts"
+  gt_id "SELECT greatest(id, 2) FROM days ORDER BY ts" \
+  ls_id "SELECT least(id, 2) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1498,6 +1523,30 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT greatest(flags) FROM sensors ORDER BY greatest(flags)"),
     (os.environ["DIFF_H1"], "SELECT greatest(id, flags) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT greatest(id, flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT least(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT least(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT least(code, b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT least(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT least(id, flags, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT least(null, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT least(null, null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT least(-0.0, 0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT least(0.0, -0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT least(-1.5, -0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT least(code, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT least(1.5, 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT least(3000000000, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT least(score, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT least(b, code, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT least(flags, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT least(id, 10) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT LEAST(ID, FLAGS) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT least(id, flags) FROM sensors ORDER BY least(id, flags)"),
+    (os.environ["DIFF_H1"], "SELECT least(reading) FROM sensors ORDER BY least(reading)"),
+    (os.environ["DIFF_H1"], "SELECT least(score) FROM sensors ORDER BY least(score)"),
+    (os.environ["DIFF_H1"], "SELECT least(flags) FROM sensors ORDER BY least(flags)"),
+    (os.environ["DIFF_H1"], "SELECT least(id, flags) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT least(id, flags) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1602,6 +1651,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT exp(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT pi() FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT greatest(id, 2) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT least(id, 2) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
