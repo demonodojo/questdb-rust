@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `&`
+
+`left & right` es el AND bit a bit de dos columnas enteras. El encabezado es `id & id` y el tipo es `LONG`. Un operando nulo es `NULL`. `id & id` es `1`, `2`, `NULL` y `-1`. En `days` es `1`, `2`, `3` y `NULL`. `id & flags` y `flags & id` son `0`, `NULL`, `NULL` y `42`. Una columna ausente se rechaza con `Invalid column: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `!~`
 
 `value !~ pattern` niega `~` y el encabezado es `note !~ 'a.*'`. El tipo es `BOOLEAN`. `note !~ 'a.*'` es `false`, `true`, `true` y `false`. En `days` es `false`, `true`, `false` y `true`. `note !~ '.*eta'` es `true`, `true`, `true` y `false`. `location !~ 'mad.*'` es `false`, `true`, `false` y `true`. Un patrón que es columna se rechaza con `there is no matching operator `!~` with the argument types: STRING !~ STRING`. Se contrastó con `/exec` en `sensors` y `days`.
