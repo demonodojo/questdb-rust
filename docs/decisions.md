@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `!=`
+
+`left != right` compara dos columnas y devuelve `BOOLEAN`. El encabezado es `id != id`. Un nulo no es distinto de un nulo. `id != id` es `false`, `false`, `false` y `false`. En `days` es `false`, `false`, `false` y `false`. `id != flags` y `flags != id` son `true`, `true`, `true` y `true`. `note != note` es `false`, `false`, `false` y `false`. Una columna ausente se rechaza con `Invalid column: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `<=`
 
 `left <= right` compara dos columnas y devuelve `BOOLEAN`. El encabezado es `id <= id`. Un nulo es menor o igual que un nulo y no es menor o igual que un valor. `id <= id` es `true`, `true`, `true` y `true`. En `days` es `true`, `true`, `true` y `true`. `id <= flags` es `true`, `false`, `false` y `true`. `flags <= id` es `false`, `false`, `false` y `false`. `note <= note` es `true`, `true`, `true` y `true`. Una columna ausente se rechaza con `Invalid column: missing`. Se contrastó con `/exec` en `sensors` y `days`.
