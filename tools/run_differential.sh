@@ -906,7 +906,25 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   cs_lower "SELECT cast(id as int) FROM sensors" \
   cs_order "SELECT cast(id AS INT) FROM sensors ORDER BY cast(id AS INT)" \
   cs_where "SELECT cast(id AS INT) FROM sensors WHERE id = 1" \
-  cs_limit_zero "SELECT cast(id AS INT) FROM sensors LIMIT 0"
+  cs_limit_zero "SELECT cast(id AS INT) FROM sensors LIMIT 0" \
+  da_day "SELECT dateadd('d', 1, ts) FROM sensors" \
+  da_hour "SELECT dateadd('h', -1, ts) FROM sensors" \
+  da_month "SELECT dateadd('M', 1, ts) FROM sensors" \
+  da_month_back "SELECT dateadd('M', -1, ts) FROM sensors" \
+  da_year "SELECT dateadd('y', 1, ts) FROM sensors" \
+  da_minute "SELECT dateadd('m', 1, ts) FROM sensors" \
+  da_week "SELECT dateadd('w', 1, ts) FROM sensors" \
+  da_second "SELECT dateadd('s', 1, ts) FROM sensors" \
+  da_nano "SELECT dateadd('n', 1500, ts) FROM sensors" \
+  da_hour_upper "SELECT dateadd('H', 1, ts) FROM sensors" \
+  da_milli "SELECT dateadd('T', 1, ts) FROM sensors" \
+  da_micro "SELECT dateadd('u', 1, ts) FROM sensors" \
+  da_flags "SELECT dateadd('d', flags, ts) FROM sensors" \
+  da_case "SELECT DATEADD('d', 1, ts) FROM sensors" \
+  da_order "SELECT dateadd('d', 1, ts) FROM sensors ORDER BY dateadd('d', 1, ts)" \
+  da_flags_order "SELECT dateadd('d', flags, ts) FROM sensors ORDER BY dateadd('d', flags, ts)" \
+  da_where "SELECT dateadd('d', 1, ts) FROM sensors WHERE id = 1" \
+  da_limit_zero "SELECT dateadd('d', 1, ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1022,7 +1040,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ni_note "SELECT nullif(note, 'x') FROM days ORDER BY ts" \
   ni_id "SELECT nullif(id, 2) FROM days ORDER BY ts" \
   cs_id_int "SELECT cast(id AS INT) FROM days ORDER BY ts" \
-  cs_note "SELECT cast(note AS STRING) FROM days ORDER BY ts"
+  cs_note "SELECT cast(note AS STRING) FROM days ORDER BY ts" \
+  da_day "SELECT dateadd('d', 1, ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1876,6 +1895,24 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT cast(id AS INT) FROM sensors ORDER BY cast(id AS INT)"),
     (os.environ["DIFF_H1"], "SELECT cast(id AS INT) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT cast(id AS INT) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('d', 1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('h', -1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('M', 1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('M', -1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('y', 1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('m', 1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('w', 1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('s', 1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('n', 1500, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('H', 1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('T', 1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('u', 1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('d', flags, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT DATEADD('d', 1, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('d', 1, ts) FROM sensors ORDER BY dateadd('d', 1, ts)"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('d', flags, ts) FROM sensors ORDER BY dateadd('d', flags, ts)"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('d', 1, ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT dateadd('d', 1, ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1990,6 +2027,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT nullif(id, 2) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT cast(id AS INT) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT cast(note AS STRING) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT dateadd('d', 1, ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

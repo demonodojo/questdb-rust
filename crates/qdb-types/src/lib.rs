@@ -264,7 +264,7 @@ fn parse_utc_scaled(text: &str, scale: i64) -> Option<i64> {
     seconds.checked_mul(scale)?.checked_add(frac_units)
 }
 
-fn unix_days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
+pub fn unix_days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
     if month == 0 || month > 12 || day == 0 || day > 31 {
         return None;
     }

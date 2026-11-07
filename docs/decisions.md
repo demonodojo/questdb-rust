@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — dateadd()
+
+`dateadd(periodo, stride, timestamp)` devuelve `TIMESTAMP`. El periodo es un carácter: `n`, `u`, `T`, `s`, `m`, `h`/`H`, `d`, `w`, `M` y `y`. `M` suma meses de calendario y `m` suma minutos. El stride tiene que ser `INT`. Un literal nulo se rechaza con `` `null` is not a valid stride ``. Un nulo de columna deja esa fila en NULL. El día se recorta al añadir meses o años. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — cast()
 
 `cast(columna AS tipo)` etiqueta la columna como `columna::tipo` y conserva la grafía del tipo. Cubre los tipos de las fixtures: enteros, `BOOLEAN`, `CHAR`, `FLOAT`, `DOUBLE`, `STRING`, `SYMBOL`, `VARCHAR`, `DATE` y `TIMESTAMP`. Un nulo de `LONG` truncado a `INT` sigue siendo NULL; truncado a `SHORT` o `BYTE` es 0. `-0.0` pasado a entero es 0 y pasado a `FLOAT` conserva el signo. Un texto que no es número queda en NULL. `cast(ch AS INT)` rompe la respuesta HTTP y no entra en el diferencial. Se contrastó con `/exec` en `sensors` y `days`.

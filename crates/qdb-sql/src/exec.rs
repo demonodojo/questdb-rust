@@ -1,8 +1,8 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
-    CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, ExpExpr, Filter, FloorExpr, GreatestExpr,
-    GroupedSelect, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, NullIfExpr, PadExpr, PiExpr,
-    PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
+    CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, ExpExpr, Filter, FloorExpr,
+    GreatestExpr, GroupedSelect, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, NullIfExpr,
+    PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
     RoundHalfEvenExpr, RoundUpExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr,
     SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
@@ -203,6 +203,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Coalesce { label, .. }
             | ResolvedProj::NullIf { label, .. }
             | ResolvedProj::Cast { label, .. }
+            | ResolvedProj::DateAdd { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -353,6 +354,12 @@ enum ResolvedProj {
         index: usize,
         type_tag: i32,
     },
+    DateAdd {
+        label: String,
+        period: char,
+        stride: DateAddStride,
+        timestamp: usize,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -493,6 +500,7 @@ impl ResolvedProj {
             | Self::Coalesce { label, .. }
             | Self::NullIf { label, .. }
             | Self::Cast { label, .. }
+            | Self::DateAdd { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -518,6 +526,7 @@ impl ResolvedProj {
             | Self::RoundHalfEven { .. } => qdb_types::TAG_DOUBLE,
             Self::Coalesce { result_tag, .. } | Self::NullIf { result_tag, .. } => *result_tag,
             Self::Cast { type_tag, .. } => *type_tag,
+            Self::DateAdd { .. } => qdb_types::TAG_TIMESTAMP,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -589,6 +598,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Coalesce(expr) => resolve_coalesce(table, expr),
         Proj::NullIf(expr) => resolve_nullif(table, expr),
         Proj::Cast(expr) => resolve_cast(table, expr),
+        Proj::DateAdd(expr) => resolve_dateadd(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1237,6 +1247,219 @@ fn floor_input(table: &Table, arg: &ConcatArg) -> Result<(FloorInput, bool), ()>
         }
         ConcatArg::Literal(_) => Err(()),
     }
+}
+
+enum DateAddStride {
+    Fixed(i32),
+    Column { index: usize },
+}
+
+fn resolve_dateadd(table: &Table, expr: &DateAddExpr) -> Result<ResolvedProj, Error> {
+    let mut kinds = Vec::with_capacity(expr.args.len());
+    for arg in &expr.args {
+        kinds.push(dateadd_kind(table, arg)?);
+    }
+    if kinds.len() != 3 {
+        return Err(dateadd_mismatch(&kinds));
+    }
+    let period = match &kinds[0] {
+        DateAddKind::Char(period) => *period,
+        _ => return Err(dateadd_mismatch(&kinds)),
+    };
+    if dateadd_unit(period).is_none() && !matches!(period, 'M' | 'y') {
+        return Err(Error::new(format!("invalid time period [unit={period}]")));
+    }
+    let stride = match &kinds[1] {
+        DateAddKind::Null => return Err(Error::new("`null` is not a valid stride".to_string())),
+        DateAddKind::Int(number) => DateAddStride::Fixed(*number),
+        DateAddKind::IntColumn { index } => DateAddStride::Column { index: *index },
+        _ => return Err(dateadd_mismatch(&kinds)),
+    };
+    let DateAddKind::TimestampColumn { index } = &kinds[2] else {
+        return Err(dateadd_mismatch(&kinds));
+    };
+    Ok(ResolvedProj::DateAdd {
+        label: expr.label.clone(),
+        period,
+        stride,
+        timestamp: *index,
+    })
+}
+
+enum DateAddKind {
+    Char(char),
+    Null,
+    Int(i32),
+    IntColumn { index: usize },
+    TimestampColumn { index: usize },
+    Other(i32),
+}
+
+fn dateadd_kind(table: &Table, arg: &ConcatArg) -> Result<DateAddKind, Error> {
+    match arg {
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            let tag = table.meta.columns[index].tag;
+            Ok(match tag {
+                qdb_types::TAG_INT => DateAddKind::IntColumn { index },
+                qdb_types::TAG_TIMESTAMP => DateAddKind::TimestampColumn { index },
+                _ => DateAddKind::Other(tag),
+            })
+        }
+        ConcatArg::Literal(Scalar::Null) => Ok(DateAddKind::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => match i32::try_from(*number) {
+            Ok(number) => Ok(DateAddKind::Int(number)),
+            Err(_) => Ok(DateAddKind::Other(qdb_types::TAG_LONG)),
+        },
+        ConcatArg::Literal(Scalar::Double(_)) => Ok(DateAddKind::Other(qdb_types::TAG_DOUBLE)),
+        ConcatArg::Literal(Scalar::Text(text)) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) => Ok(DateAddKind::Char(ch)),
+                _ => Ok(DateAddKind::Other(qdb_types::TAG_STRING)),
+            }
+        }
+        ConcatArg::Literal(_) => Ok(DateAddKind::Other(-1)),
+    }
+}
+
+fn dateadd_mismatch(kinds: &[DateAddKind]) -> Error {
+    let names = kinds
+        .iter()
+        .map(|kind| match kind {
+            DateAddKind::Char(_) => "CHAR",
+            DateAddKind::Null => "NULL",
+            DateAddKind::Int(_) | DateAddKind::IntColumn { .. } => "INT",
+            DateAddKind::TimestampColumn { .. } => "TIMESTAMP",
+            DateAddKind::Other(tag) => qdb_types::type_name(*tag),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Error::new(format!(
+        "there is no matching function `dateadd` with the argument types: ({names})"
+    ))
+}
+
+fn dateadd_value(
+    table: &Table,
+    row: usize,
+    period: char,
+    stride: &DateAddStride,
+    timestamp: usize,
+) -> Scalar {
+    let stride = match stride {
+        DateAddStride::Fixed(number) => *number,
+        DateAddStride::Column { index } => match table.columns[*index][row] {
+            Scalar::Int(number) => number,
+            Scalar::Null => return Scalar::Null,
+            _ => return Scalar::Null,
+        },
+    };
+    let Scalar::Timestamp(micros) = table.columns[timestamp][row] else {
+        return Scalar::Null;
+    };
+    Scalar::Timestamp(dateadd_shift(micros, period, stride))
+}
+
+fn dateadd_unit(period: char) -> Option<i64> {
+    const SECOND: i64 = 1_000_000;
+    const MINUTE: i64 = 60 * SECOND;
+    const HOUR: i64 = 60 * MINUTE;
+    const DAY: i64 = 24 * HOUR;
+    Some(match period {
+        'n' => return Some(0),
+        'u' | 'U' => 1,
+        'T' => 1_000,
+        's' => SECOND,
+        'm' => MINUTE,
+        'h' | 'H' => HOUR,
+        'd' => DAY,
+        'w' => 7 * DAY,
+        _ => return None,
+    })
+}
+
+fn dateadd_shift(micros: i64, period: char, stride: i32) -> i64 {
+    if period == 'n' {
+        return micros.wrapping_add(i64::from(stride) / 1_000);
+    }
+    if let Some(unit) = dateadd_unit(period) {
+        return micros.wrapping_add(i64::from(stride).wrapping_mul(unit));
+    }
+    if period == 'M' {
+        return dateadd_months(micros, stride);
+    }
+    if period == 'y' {
+        return dateadd_years(micros, stride);
+    }
+    micros
+}
+
+const DATEADD_DAY: i64 = 86_400 * 1_000_000;
+
+fn dateadd_months(micros: i64, months: i32) -> i64 {
+    if months == 0 {
+        return micros;
+    }
+    let (year, month, day, time) = dateadd_parts(micros);
+    let shifted = month as i32 - 1 + months;
+    let (year, month) = if shifted > -1 {
+        (
+            year + shifted / 12,
+            u32::try_from(shifted % 12).unwrap_or(0) + 1,
+        )
+    } else {
+        let mut year = year + shifted / 12 - 1;
+        let mut month = -shifted % 12;
+        if month == 0 {
+            month = 12;
+        }
+        month = 12 - month + 1;
+        if month == 1 {
+            year += 1;
+        }
+        (year, u32::try_from(month).unwrap_or(1))
+    };
+    let day = day.min(dateadd_days_in_month(year, month));
+    dateadd_join(year, month, day, time)
+}
+
+fn dateadd_years(micros: i64, years: i32) -> i64 {
+    if years == 0 {
+        return micros;
+    }
+    let (year, month, day, time) = dateadd_parts(micros);
+    let year = year + years;
+    let day = day.min(dateadd_days_in_month(year, month));
+    dateadd_join(year, month, day, time)
+}
+
+fn dateadd_parts(micros: i64) -> (i32, u32, u32, i64) {
+    let days = micros.div_euclid(DATEADD_DAY);
+    let time = micros.rem_euclid(DATEADD_DAY);
+    let (year, month, day) = qdb_types::civil_from_unix_days(days);
+    (year, month, day, time)
+}
+
+fn dateadd_join(year: i32, month: u32, day: u32, time: i64) -> i64 {
+    let days = qdb_types::unix_days_from_civil(year, month, day).unwrap_or(0);
+    days.wrapping_mul(DATEADD_DAY).wrapping_add(time)
+}
+
+fn dateadd_days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if dateadd_leap(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn dateadd_leap(year: i32) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
 fn resolve_cast(table: &Table, expr: &CastExpr) -> Result<ResolvedProj, Error> {
@@ -2859,6 +3082,12 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Cast {
             index, type_tag, ..
         } => cast_scalar(&table.columns[*index][row], *type_tag),
+        ResolvedProj::DateAdd {
+            period,
+            stride,
+            timestamp,
+            ..
+        } => dateadd_value(table, row, *period, stride, *timestamp),
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
         ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
             Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
@@ -11411,6 +11640,171 @@ mod tests {
         let err = execute(&sensors, "SELECT cast(id AS GEOHASH) FROM sensors").unwrap_err();
         assert!(err.message.contains("unsupported cast"), "{}", err.message);
         let err = execute(&sensors, "SELECT cast(missing AS INT) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn dateadd_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT dateadd('d', 1, ts) FROM sensors",
+                "expected/da_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('h', -1, ts) FROM sensors",
+                "expected/da_hour.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('M', 1, ts) FROM sensors",
+                "expected/da_month.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('M', -1, ts) FROM sensors",
+                "expected/da_month_back.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('y', 1, ts) FROM sensors",
+                "expected/da_year.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('m', 1, ts) FROM sensors",
+                "expected/da_minute.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('w', 1, ts) FROM sensors",
+                "expected/da_week.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('s', 1, ts) FROM sensors",
+                "expected/da_second.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('n', 1500, ts) FROM sensors",
+                "expected/da_nano.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('H', 1, ts) FROM sensors",
+                "expected/da_hour_upper.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('T', 1, ts) FROM sensors",
+                "expected/da_milli.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('u', 1, ts) FROM sensors",
+                "expected/da_micro.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('d', flags, ts) FROM sensors",
+                "expected/da_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT DATEADD('d', 1, ts) FROM sensors",
+                "expected/da_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('d', 1, ts) FROM sensors ORDER BY dateadd('d', 1, ts)",
+                "expected/da_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('d', flags, ts) FROM sensors ORDER BY dateadd('d', flags, ts)",
+                "expected/da_flags_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('d', 1, ts) FROM sensors WHERE id = 1",
+                "expected/da_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT dateadd('d', 1, ts) FROM sensors LIMIT 0",
+                "expected/da_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT dateadd('d', 1, ts) FROM days ORDER BY ts",
+                "expected/da_day.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT dateadd() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `dateadd` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT dateadd('d', 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `dateadd` with the argument types: (CHAR, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT dateadd('x', 1, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid time period [unit=x]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT dateadd('d', null, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("`null` is not a valid stride"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT dateadd('day', 1, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("there is no matching function `dateadd` with the argument types: (STRING, INT, TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT dateadd('d', 1.5, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("there is no matching function `dateadd` with the argument types: (CHAR, DOUBLE, TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT dateadd('d', id, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("there is no matching function `dateadd` with the argument types: (CHAR, LONG, TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT dateadd('d', 1, missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT dateadd(missing, 1, ts) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

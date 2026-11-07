@@ -104,6 +104,7 @@ pub enum Proj {
     Coalesce(CoalesceExpr),
     NullIf(NullIfExpr),
     Cast(CastExpr),
+    DateAdd(DateAddExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -272,6 +273,13 @@ pub struct CastExpr {
     pub label: String,
     pub column: String,
     pub type_name: String,
+}
+
+/// `dateadd(period, stride, timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DateAddExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
 }
 
 /// `floor(number)`.
@@ -444,6 +452,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_nullif()?.label
             } else if parser.starts_cast_call() {
                 parser.parse_cast()?.label
+            } else if parser.starts_dateadd_call() {
+                parser.parse_dateadd()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -542,6 +552,7 @@ enum SelectPiece {
     Coalesce(CoalesceExpr),
     NullIf(NullIfExpr),
     Cast(CastExpr),
+    DateAdd(DateAddExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -687,6 +698,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::NullIf(self.parse_nullif()?));
             } else if self.starts_cast_call() {
                 pieces.push(SelectPiece::Cast(self.parse_cast()?));
+            } else if self.starts_dateadd_call() {
+                pieces.push(SelectPiece::DateAdd(self.parse_dateadd()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -748,6 +761,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Coalesce(_)
                     | SelectPiece::NullIf(_)
                     | SelectPiece::Cast(_)
+                    | SelectPiece::DateAdd(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -795,6 +809,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Coalesce(expr) => items.push(Proj::Coalesce(expr)),
                     SelectPiece::NullIf(expr) => items.push(Proj::NullIf(expr)),
                     SelectPiece::Cast(expr) => items.push(Proj::Cast(expr)),
+                    SelectPiece::DateAdd(expr) => items.push(Proj::DateAdd(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -866,6 +881,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Coalesce(_)
                 | SelectPiece::NullIf(_)
                 | SelectPiece::Cast(_)
+                | SelectPiece::DateAdd(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1112,6 +1128,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_dateadd_call(&self) -> bool {
+        self.starts_named_call("dateadd")
+    }
+
+    fn parse_dateadd(&mut self) -> Result<DateAddExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `dateadd` requires arguments".to_string(),
+            ));
+        }
+        Ok(DateAddExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
