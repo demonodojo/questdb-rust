@@ -96,6 +96,7 @@ pub enum Proj {
     Pad(PadExpr),
     QuoteIdent(QuoteIdentExpr),
     SizePretty(SizePrettyExpr),
+    Abs(AbsExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,6 +199,13 @@ pub struct SizePrettyExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `abs(number)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbsExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -277,6 +285,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_quote_ident()?.label
             } else if parser.starts_size_pretty_call() {
                 parser.parse_size_pretty()?.label
+            } else if parser.starts_abs_call() {
+                parser.parse_abs()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -343,6 +353,7 @@ enum SelectPiece {
     Pad(PadExpr),
     QuoteIdent(QuoteIdentExpr),
     SizePretty(SizePrettyExpr),
+    Abs(AbsExpr),
 }
 
 struct Parser<'a> {
@@ -463,6 +474,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::QuoteIdent(self.parse_quote_ident()?));
             } else if self.starts_size_pretty_call() {
                 pieces.push(SelectPiece::SizePretty(self.parse_size_pretty()?));
+            } else if self.starts_abs_call() {
+                pieces.push(SelectPiece::Abs(self.parse_abs()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -492,6 +505,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Pad(_)
                     | SelectPiece::QuoteIdent(_)
                     | SelectPiece::SizePretty(_)
+                    | SelectPiece::Abs(_)
             )
         });
         if counts > 0 && projected {
@@ -520,6 +534,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Pad(expr) => items.push(Proj::Pad(expr)),
                     SelectPiece::QuoteIdent(expr) => items.push(Proj::QuoteIdent(expr)),
                     SelectPiece::SizePretty(expr) => items.push(Proj::SizePretty(expr)),
+                    SelectPiece::Abs(expr) => items.push(Proj::Abs(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -571,7 +586,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::SplitPart(_)
                 | SelectPiece::Pad(_)
                 | SelectPiece::QuoteIdent(_)
-                | SelectPiece::SizePretty(_) => {
+                | SelectPiece::SizePretty(_)
+                | SelectPiece::Abs(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -614,6 +630,25 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_abs_call(&self) -> bool {
+        self.starts_named_call("abs")
+    }
+
+    fn parse_abs(&mut self) -> Result<AbsExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(AbsExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_size_pretty_call(&self) -> bool {
@@ -928,11 +963,15 @@ impl<'a> Parser<'a> {
         {
             let start = self.pos;
             let value = self.parse_number()?;
+            let raw = std::str::from_utf8(&self.src[start..self.pos])
+                .unwrap()
+                .to_string();
             let label = match &value {
                 Scalar::Long(number) if *number < 0 => format!("-({})", number.unsigned_abs()),
-                _ => std::str::from_utf8(&self.src[start..self.pos])
-                    .unwrap()
-                    .to_string(),
+                Scalar::Double(number) if number.is_sign_negative() => {
+                    format!("-({})", raw.trim_start_matches('-'))
+                }
+                _ => raw,
             };
             return Ok((label, ConcatArg::Literal(value)));
         }

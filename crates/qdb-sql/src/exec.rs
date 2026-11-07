@@ -1,5 +1,5 @@
 use crate::parse::{
-    date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
+    date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr, CmpOp,
     ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, PadExpr, Proj, Query, QuoteIdentExpr,
     ReplaceExpr, SelectList, SideExpr, SizePrettyExpr, SplitPartExpr, StartsWithExpr, StrPosExpr,
     SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
@@ -192,7 +192,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::SplitPart { label, .. }
             | ResolvedProj::Pad { label, .. }
             | ResolvedProj::QuoteIdent { label, .. }
-            | ResolvedProj::SizePretty { label, .. } => label.clone(),
+            | ResolvedProj::SizePretty { label, .. }
+            | ResolvedProj::Abs { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -292,6 +293,18 @@ enum ResolvedProj {
         label: String,
         size: CountArg,
     },
+    Abs {
+        label: String,
+        input: AbsInput,
+        result_tag: i32,
+    },
+}
+
+enum AbsInput {
+    Null,
+    Long(i64),
+    Double(f64),
+    Column { index: usize },
 }
 
 enum ReplaceMode {
@@ -331,7 +344,8 @@ impl ResolvedProj {
             | Self::SplitPart { label, .. }
             | Self::Pad { label, .. }
             | Self::QuoteIdent { label, .. }
-            | Self::SizePretty { label, .. } => Some(label),
+            | Self::SizePretty { label, .. }
+            | Self::Abs { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -339,6 +353,7 @@ impl ResolvedProj {
     fn expr_tag(&self) -> i32 {
         match self {
             Self::Length { .. } | Self::StrPos { .. } => qdb_types::TAG_INT,
+            Self::Abs { result_tag, .. } => *result_tag,
             Self::StartsWith { .. } => qdb_types::TAG_BOOLEAN,
             _ => qdb_types::TAG_STRING,
         }
@@ -387,7 +402,62 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Pad(expr) => resolve_pad(table, expr),
         Proj::QuoteIdent(expr) => resolve_quote_ident(table, expr),
         Proj::SizePretty(expr) => resolve_size_pretty(table, expr),
+        Proj::Abs(expr) => resolve_abs(table, expr),
     }
+}
+
+fn resolve_abs(table: &Table, expr: &AbsExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(abs_type_error(table, &expr.args));
+    }
+    let (input, result_tag) = match &expr.args[0] {
+        ConcatArg::Literal(Scalar::Null) => (AbsInput::Null, qdb_types::TAG_INT),
+        ConcatArg::Literal(Scalar::Long(number)) => (
+            AbsInput::Long(*number),
+            if i32::try_from(*number).is_ok() {
+                qdb_types::TAG_INT
+            } else {
+                qdb_types::TAG_LONG
+            },
+        ),
+        ConcatArg::Literal(Scalar::Double(number)) => {
+            (AbsInput::Double(*number), qdb_types::TAG_DOUBLE)
+        }
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            let tag = table.meta.columns[index].tag;
+            let result_tag = match tag {
+                qdb_types::TAG_BYTE | qdb_types::TAG_SHORT => qdb_types::TAG_SHORT,
+                qdb_types::TAG_INT => qdb_types::TAG_INT,
+                qdb_types::TAG_LONG => qdb_types::TAG_LONG,
+                qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE => qdb_types::TAG_DOUBLE,
+                _ => return Err(abs_type_error(table, &expr.args)),
+            };
+            (AbsInput::Column { index }, result_tag)
+        }
+        ConcatArg::Literal(_) => return Err(abs_type_error(table, &expr.args)),
+    };
+    Ok(ResolvedProj::Abs {
+        label: expr.label.clone(),
+        input,
+        result_tag,
+    })
+}
+
+fn abs_type_error(table: &Table, args: &[ConcatArg]) -> Error {
+    let mut types = Vec::new();
+    for arg in args {
+        match concat_arg_type(table, arg) {
+            Ok(type_name) => types.push(type_name),
+            Err(err) => return err,
+        }
+    }
+    Error::new(format!(
+        "there is no matching function `abs` with the argument types: ({})",
+        types.join(", ")
+    ))
 }
 
 fn resolve_size_pretty(table: &Table, expr: &SizePrettyExpr) -> Result<ResolvedProj, Error> {
@@ -1038,6 +1108,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 }
             }
         },
+        ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
         ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
             Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
             _ => Scalar::Null,
@@ -1134,6 +1205,27 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Trim { arg, end, .. } => match text_of(table, row, arg) {
             Some(text) => Scalar::Text(trim_ascii_space(&text, *end)),
             None => Scalar::Null,
+        },
+    }
+}
+
+fn abs_value(table: &Table, row: usize, input: &AbsInput) -> Scalar {
+    match input {
+        AbsInput::Null => Scalar::Null,
+        AbsInput::Long(number) => match i32::try_from(*number) {
+            Ok(number) => Scalar::Int(number.wrapping_abs()),
+            Err(_) => Scalar::Long(number.wrapping_abs()),
+        },
+        AbsInput::Double(number) => Scalar::Double(number.abs()),
+        AbsInput::Column { index, .. } => match &table.columns[*index][row] {
+            Scalar::Null => Scalar::Null,
+            Scalar::Byte(number) => Scalar::Short(i16::from(*number).wrapping_abs()),
+            Scalar::Short(number) => Scalar::Short(number.wrapping_abs()),
+            Scalar::Int(number) => Scalar::Int(number.wrapping_abs()),
+            Scalar::Long(number) => Scalar::Long(number.wrapping_abs()),
+            Scalar::Float(number) => Scalar::Double(f64::from(number.abs())),
+            Scalar::Double(number) => Scalar::Double(number.abs()),
+            _ => Scalar::Null,
         },
     }
 }
@@ -6274,6 +6366,133 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT size_pretty(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn abs_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT abs(id) FROM sensors",
+                "expected/abs_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(reading) FROM sensors",
+                "expected/abs_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(score) FROM sensors",
+                "expected/abs_score.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(b) FROM sensors",
+                "expected/abs_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(code) FROM sensors",
+                "expected/abs_code.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(flags) FROM sensors",
+                "expected/abs_flags.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(-1.5) FROM sensors LIMIT 1",
+                "expected/abs_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(-1) FROM sensors LIMIT 1",
+                "expected/abs_int.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(null) FROM sensors LIMIT 1",
+                "expected/abs_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ABS(ID) FROM sensors",
+                "expected/abs_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(id) FROM sensors ORDER BY abs(id)",
+                "expected/abs_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, abs(id) FROM sensors ORDER BY abs(id)",
+                "expected/abs_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(reading) FROM sensors ORDER BY abs(reading)",
+                "expected/abs_reading_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(id) FROM sensors WHERE id = -1",
+                "expected/abs_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT abs(id) FROM sensors LIMIT 0",
+                "expected/abs_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT abs(id) FROM days ORDER BY ts",
+                "expected/abs_id.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT abs() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("function `abs` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT abs(id, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `abs` with the argument types: (LONG, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT abs(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `abs` with the argument types: (STRING)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT abs(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `abs` with the argument types: (BOOLEAN)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT abs(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

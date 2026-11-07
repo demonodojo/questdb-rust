@@ -517,7 +517,22 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sz_order "SELECT size_pretty(id) FROM sensors ORDER BY size_pretty(id)" \
   sz_with_id "SELECT id, size_pretty(id) FROM sensors ORDER BY size_pretty(id)" \
   sz_where "SELECT size_pretty(id) FROM sensors WHERE id = 1" \
-  sz_limit_zero "SELECT size_pretty(id) FROM sensors LIMIT 0"
+  sz_limit_zero "SELECT size_pretty(id) FROM sensors LIMIT 0" \
+  abs_id "SELECT abs(id) FROM sensors" \
+  abs_reading "SELECT abs(reading) FROM sensors" \
+  abs_score "SELECT abs(score) FROM sensors" \
+  abs_byte "SELECT abs(b) FROM sensors" \
+  abs_code "SELECT abs(code) FROM sensors" \
+  abs_flags "SELECT abs(flags) FROM sensors" \
+  abs_neg "SELECT abs(-1.5) FROM sensors LIMIT 1" \
+  abs_int "SELECT abs(-1) FROM sensors LIMIT 1" \
+  abs_null "SELECT abs(null) FROM sensors LIMIT 1" \
+  abs_case "SELECT ABS(ID) FROM sensors" \
+  abs_order "SELECT abs(id) FROM sensors ORDER BY abs(id)" \
+  abs_with_id "SELECT id, abs(id) FROM sensors ORDER BY abs(id)" \
+  abs_reading_order "SELECT abs(reading) FROM sensors ORDER BY abs(reading)" \
+  abs_where "SELECT abs(id) FROM sensors WHERE id = -1" \
+  abs_limit_zero "SELECT abs(id) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -611,7 +626,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   qi_location "SELECT quote_ident(location) FROM days ORDER BY ts" \
   qi_note "SELECT quote_ident(note) FROM days" \
   lb_note "SELECT length_bytes(note) FROM days" \
-  sz_id "SELECT size_pretty(id) FROM days ORDER BY ts"
+  sz_id "SELECT size_pretty(id) FROM days ORDER BY ts" \
+  abs_id "SELECT abs(id) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1076,6 +1092,21 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, size_pretty(id) FROM sensors ORDER BY size_pretty(id)"),
     (os.environ["DIFF_H1"], "SELECT size_pretty(id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT size_pretty(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT abs(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT abs(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT abs(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT abs(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT abs(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT abs(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT abs(-1.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT abs(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT abs(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT ABS(ID) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT abs(id) FROM sensors ORDER BY abs(id)"),
+    (os.environ["DIFF_H1"], "SELECT id, abs(id) FROM sensors ORDER BY abs(id)"),
+    (os.environ["DIFF_H1"], "SELECT abs(reading) FROM sensors ORDER BY abs(reading)"),
+    (os.environ["DIFF_H1"], "SELECT abs(id) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT abs(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1168,6 +1199,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT quote_ident(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT length_bytes(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT size_pretty(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT abs(id) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
