@@ -111,6 +111,7 @@ pub enum Proj {
     Day(DayExpr),
     Hour(HourExpr),
     Minute(MinuteExpr),
+    Second(SecondExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -330,6 +331,13 @@ pub struct MinuteExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `second(timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecondExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -514,6 +522,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_hour()?.label
             } else if parser.starts_minute_call() {
                 parser.parse_minute()?.label
+            } else if parser.starts_second_call() {
+                parser.parse_second()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -619,6 +629,7 @@ enum SelectPiece {
     Day(DayExpr),
     Hour(HourExpr),
     Minute(MinuteExpr),
+    Second(SecondExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -778,6 +789,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Hour(self.parse_hour()?));
             } else if self.starts_minute_call() {
                 pieces.push(SelectPiece::Minute(self.parse_minute()?));
+            } else if self.starts_second_call() {
+                pieces.push(SelectPiece::Second(self.parse_second()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -846,6 +859,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Day(_)
                     | SelectPiece::Hour(_)
                     | SelectPiece::Minute(_)
+                    | SelectPiece::Second(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -900,6 +914,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Day(expr) => items.push(Proj::Day(expr)),
                     SelectPiece::Hour(expr) => items.push(Proj::Hour(expr)),
                     SelectPiece::Minute(expr) => items.push(Proj::Minute(expr)),
+                    SelectPiece::Second(expr) => items.push(Proj::Second(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -978,6 +993,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Day(_)
                 | SelectPiece::Hour(_)
                 | SelectPiece::Minute(_)
+                | SelectPiece::Second(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1224,6 +1240,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_second_call(&self) -> bool {
+        self.starts_named_call("second")
+    }
+
+    fn parse_second(&mut self) -> Result<SecondExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `second` requires arguments: second(TIMESTAMP)".to_string(),
+            ));
+        }
+        Ok(SecondExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

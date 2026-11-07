@@ -976,7 +976,15 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   mi_case "SELECT MINUTE(TS) FROM sensors" \
   mi_order "SELECT minute(id) FROM sensors ORDER BY minute(id)" \
   mi_where "SELECT minute(ts) FROM sensors WHERE id = 1" \
-  mi_limit_zero "SELECT minute(ts) FROM sensors LIMIT 0"
+  mi_limit_zero "SELECT minute(ts) FROM sensors LIMIT 0" \
+  se_ts "SELECT second(ts) FROM sensors" \
+  se_id "SELECT second(id) FROM sensors" \
+  se_lit "SELECT second('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
+  se_prev "SELECT second('2019-12-31T23:59:59.000000Z') FROM sensors LIMIT 1" \
+  se_case "SELECT SECOND(TS) FROM sensors" \
+  se_order "SELECT second(id) FROM sensors ORDER BY second(id)" \
+  se_where "SELECT second(ts) FROM sensors WHERE id = 1" \
+  se_limit_zero "SELECT second(ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1099,7 +1107,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   mo_ts "SELECT month(ts) FROM days ORDER BY ts" \
   dy_ts "SELECT day(ts) FROM days ORDER BY ts" \
   hr_ts "SELECT hour(ts) FROM days ORDER BY ts" \
-  mi_ts "SELECT minute(ts) FROM days ORDER BY ts"
+  mi_ts "SELECT minute(ts) FROM days ORDER BY ts" \
+  se_ts "SELECT second(ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2023,6 +2032,14 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT minute(id) FROM sensors ORDER BY minute(id)"),
     (os.environ["DIFF_H1"], "SELECT minute(ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT minute(ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT second(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT second(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT second('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT second('2019-12-31T23:59:59.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT SECOND(TS) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT second(id) FROM sensors ORDER BY second(id)"),
+    (os.environ["DIFF_H1"], "SELECT second(ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT second(ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2144,6 +2161,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT day(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT hour(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT minute(ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT second(ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

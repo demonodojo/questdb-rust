@@ -4,8 +4,8 @@ use crate::parse::{
     ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr, LeastExpr, LengthExpr,
     LnExpr, LogExpr, LowerExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr,
     Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
-    RoundUpExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr, YearExpr,
+    RoundUpExpr, SecondExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr,
+    SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -211,6 +211,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Day { label, .. }
             | ResolvedProj::Hour { label, .. }
             | ResolvedProj::Minute { label, .. }
+            | ResolvedProj::Second { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -393,6 +394,10 @@ enum ResolvedProj {
         label: String,
         value: DateDiffSide,
     },
+    Second {
+        label: String,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -540,6 +545,7 @@ impl ResolvedProj {
             | Self::Day { label, .. }
             | Self::Hour { label, .. }
             | Self::Minute { label, .. }
+            | Self::Second { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -571,7 +577,8 @@ impl ResolvedProj {
             | Self::Month { .. }
             | Self::Day { .. }
             | Self::Hour { .. }
-            | Self::Minute { .. } => qdb_types::TAG_INT,
+            | Self::Minute { .. }
+            | Self::Second { .. } => qdb_types::TAG_INT,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -650,6 +657,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Day(expr) => resolve_day(table, expr),
         Proj::Hour(expr) => resolve_hour(table, expr),
         Proj::Minute(expr) => resolve_minute(table, expr),
+        Proj::Second(expr) => resolve_second(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1304,6 +1312,19 @@ enum DateDiffSide {
     Micros(i64),
     Column { index: usize },
     Null,
+}
+
+fn resolve_second(table: &Table, expr: &SecondExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `second`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::Second {
+        label: expr.label.clone(),
+        value: datediff_side(table, &expr.args[0], "second", 1)?,
+    })
 }
 
 fn resolve_minute(table: &Table, expr: &MinuteExpr) -> Result<ResolvedProj, Error> {
@@ -3402,6 +3423,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::Minute { value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Int(((dateadd_parts(micros).3 / (60 * 1_000_000)) % 60) as i32),
+            None => Scalar::Null,
+        },
+        ResolvedProj::Second { value, .. } => match datediff_micros(table, row, value) {
+            Some(micros) => Scalar::Int(((dateadd_parts(micros).3 / 1_000_000) % 60) as i32),
             None => Scalar::Null,
         },
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
@@ -12266,6 +12291,91 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn second_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT second(ts) FROM sensors",
+                "expected/se_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT second(id) FROM sensors",
+                "expected/se_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT second('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1",
+                "expected/se_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT second('2019-12-31T23:59:59.000000Z') FROM sensors LIMIT 1",
+                "expected/se_prev.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT SECOND(TS) FROM sensors",
+                "expected/se_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT second(id) FROM sensors ORDER BY second(id)",
+                "expected/se_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT second(ts) FROM sensors WHERE id = 1",
+                "expected/se_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT second(ts) FROM sensors LIMIT 0",
+                "expected/se_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT second(ts) FROM days ORDER BY ts",
+                "expected/se_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT second() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `second` requires arguments: second(TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT second(ts, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `second`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT second(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT second('nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
             "{}",
