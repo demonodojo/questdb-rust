@@ -1409,7 +1409,32 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   dg_where "SELECT degrees(id) FROM sensors WHERE id = 1" \
   dg_order "SELECT degrees(id) FROM sensors ORDER BY degrees(id)" \
   dg_lim0 "SELECT degrees(id) FROM sensors LIMIT 0" \
-  dg_ch0 "SELECT degrees(ch) FROM sensors LIMIT 0"
+  dg_ch0 "SELECT degrees(ch) FROM sensors LIMIT 0" \
+  ra_zero "SELECT radians(0) FROM sensors LIMIT 1" \
+  ra_one "SELECT radians(1) FROM sensors LIMIT 1" \
+  ra_neg "SELECT radians(-1) FROM sensors LIMIT 1" \
+  ra_half "SELECT radians(0.5) FROM sensors LIMIT 1" \
+  ra_neg0 "SELECT radians(-0.0) FROM sensors LIMIT 1" \
+  ra_flat "SELECT radians(180) FROM sensors LIMIT 1" \
+  ra_right "SELECT radians(90) FROM sensors LIMIT 1" \
+  ra_two "SELECT radians(2) FROM sensors LIMIT 1" \
+  ra_null "SELECT radians(null) FROM sensors LIMIT 1" \
+  ra_id "SELECT radians(id) FROM sensors" \
+  ra_read "SELECT radians(reading) FROM sensors" \
+  ra_score "SELECT radians(score) FROM sensors" \
+  ra_byte "SELECT radians(b) FROM sensors" \
+  ra_short "SELECT radians(code) FROM sensors" \
+  ra_flags "SELECT radians(flags) FROM sensors" \
+  ra_text "SELECT radians('1') FROM sensors LIMIT 1" \
+  ra_suffix "SELECT radians('1.5d') FROM sensors LIMIT 1" \
+  ra_ws "SELECT radians(' 1') FROM sensors LIMIT 1" \
+  ra_nan "SELECT radians('NaN') FROM sensors LIMIT 1" \
+  ra_case "SELECT RADIANS(1) FROM sensors LIMIT 1" \
+  ra_note "SELECT radians(note) FROM sensors WHERE id = 2" \
+  ra_where "SELECT radians(id) FROM sensors WHERE id = 1" \
+  ra_order "SELECT radians(id) FROM sensors ORDER BY radians(id)" \
+  ra_lim0 "SELECT radians(id) FROM sensors LIMIT 0" \
+  ra_ch0 "SELECT radians(ch) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1562,7 +1587,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ac_days "SELECT acos(id) FROM days ORDER BY ts" \
   at_days "SELECT atan(id) FROM days ORDER BY ts" \
   a2_days "SELECT atan2(id, 1) FROM days ORDER BY ts" \
-  dg_days "SELECT degrees(id) FROM days ORDER BY ts"
+  dg_days "SELECT degrees(id) FROM days ORDER BY ts" \
+  ra_days "SELECT radians(id) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2919,6 +2945,31 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT degrees(id) FROM sensors ORDER BY degrees(id)"),
     (os.environ["DIFF_H1"], "SELECT degrees(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT degrees(ch) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT radians(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(0.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(-0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(180) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(90) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT radians(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT radians(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT radians(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT radians(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT radians(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT radians('1') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians('1.5d') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(' 1') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians('NaN') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT RADIANS(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(note) FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT radians(id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT radians(id) FROM sensors ORDER BY radians(id)"),
+    (os.environ["DIFF_H1"], "SELECT radians(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT radians(ch) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3070,6 +3121,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT atan(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT atan2(id, 1) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT degrees(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT radians(id) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

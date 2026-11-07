@@ -142,6 +142,7 @@ pub enum Proj {
     Atan(AtanExpr),
     Atan2(Atan2Expr),
     Degrees(DegreesExpr),
+    Radians(RadiansExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -575,6 +576,13 @@ pub struct DegreesExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `radians(degrees)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RadiansExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `power(base, exponent)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerExpr {
@@ -777,6 +785,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_ceil()?.label
             } else if parser.starts_sign_call() {
                 parser.parse_sign()?.label
+            } else if parser.starts_radians_call() {
+                parser.parse_radians()?.label
             } else if parser.starts_degrees_call() {
                 parser.parse_degrees()?.label
             } else if parser.starts_atan2_call() {
@@ -921,6 +931,7 @@ enum SelectPiece {
     Atan(AtanExpr),
     Atan2(Atan2Expr),
     Degrees(DegreesExpr),
+    Radians(RadiansExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -1124,6 +1135,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Ceil(self.parse_ceil()?));
             } else if self.starts_sign_call() {
                 pieces.push(SelectPiece::Sign(self.parse_sign()?));
+            } else if self.starts_radians_call() {
+                pieces.push(SelectPiece::Radians(self.parse_radians()?));
             } else if self.starts_degrees_call() {
                 pieces.push(SelectPiece::Degrees(self.parse_degrees()?));
             } else if self.starts_atan2_call() {
@@ -1231,6 +1244,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Atan(_)
                     | SelectPiece::Atan2(_)
                     | SelectPiece::Degrees(_)
+                    | SelectPiece::Radians(_)
                     | SelectPiece::Power(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
@@ -1314,6 +1328,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Atan(expr) => items.push(Proj::Atan(expr)),
                     SelectPiece::Atan2(expr) => items.push(Proj::Atan2(expr)),
                     SelectPiece::Degrees(expr) => items.push(Proj::Degrees(expr)),
+                    SelectPiece::Radians(expr) => items.push(Proj::Radians(expr)),
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
@@ -1419,6 +1434,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Atan(_)
                 | SelectPiece::Atan2(_)
                 | SelectPiece::Degrees(_)
+                | SelectPiece::Radians(_)
                 | SelectPiece::Power(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
@@ -1586,6 +1602,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(PowerExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_radians_call(&self) -> bool {
+        self.starts_named_call("radians")
+    }
+
+    fn parse_radians(&mut self) -> Result<RadiansExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `radians` requires arguments: radians(DOUBLE)".to_string(),
+            ));
+        }
+        Ok(RadiansExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
