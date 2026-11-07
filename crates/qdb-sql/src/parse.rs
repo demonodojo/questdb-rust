@@ -1647,6 +1647,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::Like(self.parse_not_like(name)?));
                 } else if self.starts_like_infix() {
                     pieces.push(SelectPiece::Like(self.parse_like_op(name)?));
+                } else if self.starts_ilike_infix() {
+                    pieces.push(SelectPiece::Ilike(self.parse_ilike_op(name)?));
                 } else if self.starts_not_between() {
                     pieces.push(SelectPiece::Between(self.parse_not_between(name)?));
                 } else if self.starts_between_infix() {
@@ -3814,6 +3816,23 @@ impl<'a> Parser<'a> {
             label,
             args,
             negated: false,
+        })
+    }
+
+    fn starts_ilike_infix(&self) -> bool {
+        self.keyword_at(self.pos, "ilike").is_some()
+    }
+
+    fn parse_ilike_op(&mut self, name: String) -> Result<IlikeExpr, Error> {
+        if !self.eat_keyword("ilike") {
+            return Err(Error::new(
+                "unsupported: expected ILIKE after column".to_string(),
+            ));
+        }
+        let (pattern_label, pattern) = self.parse_call_arg(true)?;
+        Ok(IlikeExpr {
+            label: format!("{name} ilike {pattern_label}"),
+            args: vec![ConcatArg::Column(name), pattern],
         })
     }
 

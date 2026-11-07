@@ -16580,6 +16580,55 @@ mod tests {
     }
 
     #[test]
+    fn iu_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT note ILIKE 'A%' FROM sensors",
+                "expected/iu_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note ILIKE 'A%' FROM sensors WHERE id = 1",
+                "expected/iu_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note ILIKE 'A%' FROM sensors WHERE id > 100",
+                "expected/iu_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note ILIKE '%ETA' FROM sensors",
+                "expected/iu_eta.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT location ILIKE 'MAD%' FROM sensors",
+                "expected/iu_loc.tsv",
+            ),
+            (
+                &days,
+                "SELECT note ILIKE 'A%' FROM days",
+                "expected/iu_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT note ILIKE note FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("use constant or bind variable"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
     fn dj_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");

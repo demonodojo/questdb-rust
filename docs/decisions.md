@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `ILIKE`
+
+`value ILIKE pattern` es la función `ilike`. El encabezado es `note ilike 'A%'` y el tipo es `BOOLEAN`. Un nulo es `false` y la comparación no distingue mayúsculas. `note ILIKE 'A%'` es `true`, `false`, `false` y `false`. En `days` es `true`, `false`, `false` y `false`. `note ILIKE '%ETA'` es `false`, `false`, `false` y `true`. `location ILIKE 'MAD%'` es `true`, `false`, `true` y `false`. Un patrón que es columna se rechaza con `use constant or bind variable`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — `NOT LIKE`
 
 `value NOT LIKE pattern` niega `like`. El encabezado es `not(note like 'a%')` y el tipo es `BOOLEAN`. `note NOT LIKE 'a%'` es `false`, `true`, `true` y `true`. En `days` es `false`, `true`, `true` y `true`. `note NOT LIKE '%eta'` es `true`, `true`, `true` y `false`. `location NOT LIKE 'mad%'` es `false`, `true`, `false` y `true`. Un patrón que es columna se rechaza con `use constant or bind variable`. Se contrastó con `/exec` en `sensors` y `days`.

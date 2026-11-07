@@ -45,7 +45,8 @@
 //! one character. A null text or a null or empty pattern is false. `like` is
 //! the case-sensitive form and names the column `text like pattern`.
 //! `value LIKE pattern` is that function. `NOT LIKE` negates it and names
-//! the column `not(value like pattern)`. `switch`
+//! the column `not(value like pattern)`. `value ILIKE pattern` is `ilike`.
+//! `switch`
 //! picks a result whose constant case equals the key. An even argument count
 //! makes the last value the else branch. An unmatched key is NULL when there
 //! is no else branch. `bar` renders a value between a minimum and a maximum
