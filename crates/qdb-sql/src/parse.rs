@@ -122,6 +122,7 @@ pub enum Proj {
     IsLeapYear(IsLeapYearExpr),
     DaysInMonth(DaysInMonthExpr),
     ToStr(ToStrExpr),
+    IsEndOfMonth(IsEndOfMonthExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -418,6 +419,13 @@ pub struct ToStrExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `is_end_of_month(timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IsEndOfMonthExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -622,6 +630,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_is_leap_year()?.label
             } else if parser.starts_days_in_month_call() {
                 parser.parse_days_in_month()?.label
+            } else if parser.starts_is_end_of_month_call() {
+                parser.parse_is_end_of_month()?.label
             } else if parser.starts_to_str_call() {
                 parser.parse_to_str()?.label
             } else if parser.starts_round_call() {
@@ -740,6 +750,7 @@ enum SelectPiece {
     IsLeapYear(IsLeapYearExpr),
     DaysInMonth(DaysInMonthExpr),
     ToStr(ToStrExpr),
+    IsEndOfMonth(IsEndOfMonthExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -919,6 +930,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::IsLeapYear(self.parse_is_leap_year()?));
             } else if self.starts_days_in_month_call() {
                 pieces.push(SelectPiece::DaysInMonth(self.parse_days_in_month()?));
+            } else if self.starts_is_end_of_month_call() {
+                pieces.push(SelectPiece::IsEndOfMonth(self.parse_is_end_of_month()?));
             } else if self.starts_to_str_call() {
                 pieces.push(SelectPiece::ToStr(self.parse_to_str()?));
             } else if self.starts_round_call() {
@@ -1000,6 +1013,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::IsLeapYear(_)
                     | SelectPiece::DaysInMonth(_)
                     | SelectPiece::ToStr(_)
+                    | SelectPiece::IsEndOfMonth(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -1065,6 +1079,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::IsLeapYear(expr) => items.push(Proj::IsLeapYear(expr)),
                     SelectPiece::DaysInMonth(expr) => items.push(Proj::DaysInMonth(expr)),
                     SelectPiece::ToStr(expr) => items.push(Proj::ToStr(expr)),
+                    SelectPiece::IsEndOfMonth(expr) => items.push(Proj::IsEndOfMonth(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -1154,6 +1169,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::IsLeapYear(_)
                 | SelectPiece::DaysInMonth(_)
                 | SelectPiece::ToStr(_)
+                | SelectPiece::IsEndOfMonth(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1400,6 +1416,25 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_is_end_of_month_call(&self) -> bool {
+        self.starts_named_call("is_end_of_month")
+    }
+
+    fn parse_is_end_of_month(&mut self) -> Result<IsEndOfMonthExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `is_end_of_month` requires arguments: is_end_of_month(TIMESTAMP)"
+                    .to_string(),
+            ));
+        }
+        Ok(IsEndOfMonthExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

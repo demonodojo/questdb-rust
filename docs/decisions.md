@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — is_end_of_month()
+
+`is_end_of_month(instante)` devuelve `BOOLEAN`. Es verdadero cuando el día del mes coincide con la longitud de ese mes: el 31 de enero, el 29 de febrero de 2020 y el 28 de febrero de 2019. El 28 de febrero de 2020 es falso. Un nulo devuelve `false`. Un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — to_str()
 
 `to_str(instante, patrón)` devuelve `STRING`. El patrón es una constante y elige la coincidencia más larga: año, mes, día, hora, fracción y nombres en inglés. `w` cuenta la semana como día del año dividido entre 7, más uno. `YYYY` es el año ISO. Las letras de zona imprimen `Z`. Una comilla del patrón se copia tal cual. Un timestamp nulo sigue NULL y un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.

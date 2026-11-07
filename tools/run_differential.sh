@@ -1095,7 +1095,20 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ts_case "SELECT TO_STR(TS, 'yyyy') FROM sensors LIMIT 1" \
   ts_order "SELECT to_str(id, 'yyyy-MM-dd') FROM sensors ORDER BY to_str(id, 'yyyy-MM-dd')" \
   ts_where "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors WHERE id = 1" \
-  ts_zero "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors LIMIT 0"
+  ts_zero "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors LIMIT 0" \
+  em_ts "SELECT is_end_of_month(ts) FROM sensors" \
+  em_id "SELECT is_end_of_month(id) FROM sensors" \
+  em_jan "SELECT is_end_of_month('2020-01-31T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  em_leap "SELECT is_end_of_month('2020-02-29T12:00:00.000000Z') FROM sensors LIMIT 1" \
+  em_feb28 "SELECT is_end_of_month('2020-02-28T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  em_feb19 "SELECT is_end_of_month('2019-02-28T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  em_apr "SELECT is_end_of_month('2020-04-30T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  em_mid "SELECT is_end_of_month('2020-04-15T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  em_null "SELECT is_end_of_month(null) FROM sensors LIMIT 1" \
+  em_case "SELECT IS_END_OF_MONTH(TS) FROM sensors LIMIT 1" \
+  em_order "SELECT is_end_of_month(id) FROM sensors ORDER BY is_end_of_month(id)" \
+  em_where "SELECT is_end_of_month(ts) FROM sensors WHERE id = 1" \
+  em_zero "SELECT is_end_of_month(ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1229,7 +1242,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   tc_hour "SELECT timestamp_ceil('h', ts) FROM days ORDER BY ts" \
   ly_days "SELECT is_leap_year(ts) FROM days ORDER BY ts" \
   dm_days "SELECT days_in_month(ts) FROM days ORDER BY ts" \
-  ts_days "SELECT to_str(ts, 'yyyy-MM-dd') FROM days ORDER BY ts"
+  ts_days "SELECT to_str(ts, 'yyyy-MM-dd') FROM days ORDER BY ts" \
+  em_days "SELECT is_end_of_month(ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2272,6 +2286,19 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_str(id, 'yyyy-MM-dd') FROM sensors ORDER BY to_str(id, 'yyyy-MM-dd')"),
     (os.environ["DIFF_H1"], "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month('2020-01-31T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month('2020-02-29T12:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month('2020-02-28T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month('2019-02-28T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month('2020-04-30T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month('2020-04-15T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT IS_END_OF_MONTH(TS) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month(id) FROM sensors ORDER BY is_end_of_month(id)"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month(ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT is_end_of_month(ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2404,6 +2431,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT is_leap_year(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT days_in_month(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT to_str(ts, 'yyyy-MM-dd') FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT is_end_of_month(ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

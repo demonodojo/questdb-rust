@@ -2,12 +2,12 @@ use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, DateDiffExpr, DateTruncExpr,
     DayExpr, DayOfWeekExpr, DaysInMonthExpr, ExpExpr, Filter, FloorExpr, GreatestExpr,
-    GroupedSelect, HourExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr,
-    MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj,
-    Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
-    SecondExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, TimestampCeilExpr, TimestampFloorExpr, ToStrExpr,
-    TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    GroupedSelect, HourExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr,
+    LogExpr, LowerExpr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr,
+    PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
+    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr,
+    SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TimestampCeilExpr,
+    TimestampFloorExpr, ToStrExpr, TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -224,6 +224,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::IsLeapYear { label, .. }
             | ResolvedProj::DaysInMonth { label, .. }
             | ResolvedProj::ToStr { label, .. }
+            | ResolvedProj::IsEndOfMonth { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -455,6 +456,10 @@ enum ResolvedProj {
         ops: Vec<ToStrOp>,
         value: DateDiffSide,
     },
+    IsEndOfMonth {
+        label: String,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -613,6 +618,7 @@ impl ResolvedProj {
             | Self::IsLeapYear { label, .. }
             | Self::DaysInMonth { label, .. }
             | Self::ToStr { label, .. }
+            | Self::IsEndOfMonth { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -656,6 +662,7 @@ impl ResolvedProj {
             Self::IsLeapYear { .. } => qdb_types::TAG_BOOLEAN,
             Self::DaysInMonth { .. } => qdb_types::TAG_INT,
             Self::ToStr { .. } => qdb_types::TAG_STRING,
+            Self::IsEndOfMonth { .. } => qdb_types::TAG_BOOLEAN,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -745,6 +752,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::IsLeapYear(expr) => resolve_is_leap_year(table, expr),
         Proj::DaysInMonth(expr) => resolve_days_in_month(table, expr),
         Proj::ToStr(expr) => resolve_to_str(table, expr),
+        Proj::IsEndOfMonth(expr) => resolve_is_end_of_month(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1657,6 +1665,19 @@ const LONG_MONTHS: [&str; 12] = [
     "November",
     "December",
 ];
+
+fn resolve_is_end_of_month(table: &Table, expr: &IsEndOfMonthExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `is_end_of_month`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::IsEndOfMonth {
+        label: expr.label.clone(),
+        value: date_trunc_timestamp(table, &expr.args[0])?,
+    })
+}
 
 fn resolve_days_in_month(table: &Table, expr: &DaysInMonthExpr) -> Result<ResolvedProj, Error> {
     if expr.args.len() != 1 {
@@ -4283,6 +4304,13 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Some(micros) => Scalar::Text(format_to_str(ops, micros)),
             None => Scalar::Null,
         },
+        ResolvedProj::IsEndOfMonth { value, .. } => {
+            let end = datediff_micros(table, row, value).is_some_and(|micros| {
+                let (year, month, day, _) = dateadd_parts(micros);
+                i32::try_from(day).unwrap_or(0) == days_in_month(year, month)
+            });
+            Scalar::Boolean(end)
+        }
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
         ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
             Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
@@ -13300,6 +13328,124 @@ mod tests {
             err.message.contains(
                 "there is no matching function `to_str` with the argument types: (TIMESTAMP, STRING, CHAR)"
             ),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn is_end_of_month_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month(ts) FROM sensors",
+                "expected/em_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month(id) FROM sensors",
+                "expected/em_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month('2020-01-31T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/em_jan.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month('2020-02-29T12:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/em_leap.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month('2020-02-28T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/em_feb28.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month('2019-02-28T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/em_feb19.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month('2020-04-30T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/em_apr.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month('2020-04-15T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/em_mid.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month(null) FROM sensors LIMIT 1",
+                "expected/em_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT IS_END_OF_MONTH(TS) FROM sensors LIMIT 1",
+                "expected/em_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month(id) FROM sensors ORDER BY is_end_of_month(id)",
+                "expected/em_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month(ts) FROM sensors WHERE id = 1",
+                "expected/em_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month(ts) FROM sensors LIMIT 0",
+                "expected/em_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT is_end_of_month(ts) FROM days ORDER BY ts",
+                "expected/em_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT is_end_of_month() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `is_end_of_month` requires arguments: is_end_of_month(TIMESTAMP)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT is_end_of_month(ts, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `is_end_of_month`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT is_end_of_month(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT is_end_of_month('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT is_end_of_month(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
             "{}",
             err.message
         );
