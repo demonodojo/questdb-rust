@@ -7323,6 +7323,10 @@ enum Accumulator {
         count: i64,
         population: bool,
     },
+    Vwap {
+        notional: f64,
+        volume: f64,
+    },
     Corr {
         mean_y: f64,
         sum_y: f64,
@@ -7483,6 +7487,10 @@ impl Accumulator {
                 distinct: func == AggFunc::StringDistinctAgg,
                 seen: Vec::new(),
             },
+            AggFunc::Vwap => Self::Vwap {
+                notional: 0.0,
+                volume: 0.0,
+            },
             AggFunc::CovarPop | AggFunc::CovarSamp => Self::Covar {
                 mean_y: 0.0,
                 mean_x: 0.0,
@@ -7579,6 +7587,18 @@ impl Accumulator {
             } => {
                 if *has_value {
                     Scalar::Text(text.clone())
+                } else {
+                    Scalar::Null
+                }
+            }
+            Self::Vwap { notional, volume } => {
+                if *volume > 0.0 {
+                    let result = *notional / *volume;
+                    if result.is_finite() {
+                        Scalar::Double(result)
+                    } else {
+                        Scalar::Null
+                    }
                 } else {
                     Scalar::Null
                 }
@@ -7819,6 +7839,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             | AggFunc::RegrSlope
             | AggFunc::RegrIntercept
             | AggFunc::RegrR2
+            | AggFunc::Vwap
     ) {
         covar_pair(table, tag, aggregate)?
     } else if matches!(aggregate.func, AggFunc::ArgMax | AggFunc::ArgMin) {
@@ -7908,6 +7929,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::KSum
         | AggFunc::NSum
         | AggFunc::CovarPop
+        | AggFunc::Vwap
         | AggFunc::CovarSamp
         | AggFunc::Corr
         | AggFunc::RegrSlope
@@ -7997,7 +8019,8 @@ fn contribution(
         | AggFunc::RegrIntercept
         | AggFunc::RegrR2
         | AggFunc::ArgMax
-        | AggFunc::ArgMin => Ok(None),
+        | AggFunc::ArgMin
+        | AggFunc::Vwap => Ok(None),
     }
 }
 
@@ -8068,6 +8091,20 @@ fn feed(
     row: usize,
     input: &AggColumn,
 ) -> Result<(), Error> {
+    if input.func == AggFunc::Vwap {
+        let price_index = input
+            .index
+            .ok_or_else(|| Error::new("internal: vwap column"))?;
+        let weight_index = input
+            .pair_index
+            .ok_or_else(|| Error::new("internal: vwap weight"))?;
+        let price = covar_value(&columns[price_index][row], input.tag)?;
+        let weight = covar_value(&columns[weight_index][row], input.pair_tag)?;
+        if let (Some(price), Some(weight)) = (price, weight) {
+            update_vwap(accumulator, price, weight);
+        }
+        return Ok(());
+    }
     if matches!(
         input.func,
         AggFunc::CovarPop
@@ -8184,6 +8221,20 @@ fn covar_value(value: &Scalar, tag: i32) -> Result<Option<f64>, Error> {
         Ok(Some(number))
     } else {
         Ok(None)
+    }
+}
+
+fn update_vwap(accumulator: &mut Accumulator, price: f64, weight: f64) {
+    let Accumulator::Vwap { notional, volume } = accumulator else {
+        return;
+    };
+    if price.is_finite() && weight.is_finite() && weight > 0.0 {
+        if *volume == 0.0 {
+            *notional = price * weight;
+        } else {
+            *notional += price * weight;
+        }
+        *volume += weight;
     }
 }
 
@@ -9604,7 +9655,7 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             text.push_str(&piece);
             *has_value = true;
         }
-        Accumulator::Covar { .. } | Accumulator::Corr { .. } => {}
+        Accumulator::Covar { .. } | Accumulator::Corr { .. } | Accumulator::Vwap { .. } => {}
         Accumulator::BoolAnd { value, count } => {
             let Scalar::Boolean(bit) = next else {
                 return;
@@ -24256,6 +24307,190 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn vwap_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT vwap(reading, flags) FROM sensors",
+                "expected/vw_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(reading, flags) FROM sensors WHERE id = 1",
+                "expected/vw_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(reading, flags) FROM sensors WHERE id > 100",
+                "expected/vw_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(reading, flags) FROM sensors WHERE flags > 0",
+                "expected/vw_pos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(score, flags) FROM sensors",
+                "expected/vw_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(id, flags) FROM sensors",
+                "expected/vw_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(b, flags) FROM sensors",
+                "expected/vw_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(code, flags) FROM sensors",
+                "expected/vw_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(reading, id) FROM sensors",
+                "expected/vw_read_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(flags, reading) FROM sensors",
+                "expected/vw_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(reading, flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/vw_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(reading, flags) FROM sensors LIMIT 0",
+                "expected/vw_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT VWAP(reading, flags) FROM sensors",
+                "expected/vw_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT vwap(reading, flags) FROM sensors WHERE id = -1",
+                "expected/vw_neg.tsv",
+            ),
+            (
+                &days,
+                "SELECT vwap(id, id) FROM days",
+                "expected/vw_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT vwap(id, id) FROM days GROUP BY location ORDER BY location",
+                "expected/vw_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT vwap() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `vwap` requires arguments: vwap(DOUBLE, DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `vwap`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(reading, flags, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `vwap`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(missing, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(reading, missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(ok, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(reading, ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(note, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(reading, note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(location, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: SYMBOL"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(ch, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT vwap(tag, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
             "{}",
             err.message
         );

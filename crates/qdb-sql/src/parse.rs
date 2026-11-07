@@ -59,6 +59,7 @@ pub enum AggFunc {
     StringAgg,
     StringDistinctAgg,
     CovarPop,
+    Vwap,
     CovarSamp,
     Corr,
     RegrSlope,
@@ -3104,6 +3105,7 @@ impl<'a> Parser<'a> {
                 | "string_agg"
                 | "string_distinct_agg"
                 | "covar_pop"
+                | "vwap"
                 | "covar_samp"
                 | "corr"
                 | "regr_slope"
@@ -3173,6 +3175,7 @@ impl<'a> Parser<'a> {
             "string_agg" => AggFunc::StringAgg,
             "string_distinct_agg" => AggFunc::StringDistinctAgg,
             "covar_pop" => AggFunc::CovarPop,
+            "vwap" => AggFunc::Vwap,
             "covar_samp" => AggFunc::CovarSamp,
             "corr" => AggFunc::Corr,
             "regr_slope" => AggFunc::RegrSlope,
@@ -3476,6 +3479,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::RegrSlope
                 | AggFunc::RegrIntercept
                 | AggFunc::RegrR2
+                | AggFunc::Vwap
         ) && self.peek() == Some(b',')
         {
             self.pos += 1;
@@ -3484,7 +3488,12 @@ impl<'a> Parser<'a> {
                 .peek()
                 .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
             {
-                return Err(Error::new("unsupported: covariance expects a column"));
+                let message = if func == AggFunc::Vwap {
+                    "unsupported: vwap expects a column"
+                } else {
+                    "unsupported: covariance expects a column"
+                };
+                return Err(Error::new(message));
             }
             pair = Some(self.ident_spelling()?);
             self.skip();
@@ -3631,6 +3640,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::RegrSlope
                 | AggFunc::RegrIntercept
                 | AggFunc::RegrR2
+                | AggFunc::Vwap
         ) && column.is_none()
         {
             let fname = name.to_ascii_lowercase();
@@ -3646,6 +3656,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::RegrSlope
                 | AggFunc::RegrIntercept
                 | AggFunc::RegrR2
+                | AggFunc::Vwap
         ) && pair.is_none()
         {
             return Err(Error::new(format!(

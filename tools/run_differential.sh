@@ -2036,7 +2036,21 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   wp_lim0 "SELECT skewness_pop(flags) FROM sensors LIMIT 0" \
   wp_case "SELECT SKEWNESS_POP(flags) FROM sensors" \
   wp_day "SELECT skewness_pop(day) FROM sensors" \
-  wp_ts "SELECT skewness_pop(ts) FROM sensors"
+  wp_ts "SELECT skewness_pop(ts) FROM sensors" \
+  vw_read "SELECT vwap(reading, flags) FROM sensors" \
+  vw_one "SELECT vwap(reading, flags) FROM sensors WHERE id = 1" \
+  vw_none "SELECT vwap(reading, flags) FROM sensors WHERE id > 100" \
+  vw_pos "SELECT vwap(reading, flags) FROM sensors WHERE flags > 0" \
+  vw_score "SELECT vwap(score, flags) FROM sensors" \
+  vw_id "SELECT vwap(id, flags) FROM sensors" \
+  vw_byte "SELECT vwap(b, flags) FROM sensors" \
+  vw_code "SELECT vwap(code, flags) FROM sensors" \
+  vw_read_id "SELECT vwap(reading, id) FROM sensors" \
+  vw_flags "SELECT vwap(flags, reading) FROM sensors" \
+  vw_grp "SELECT vwap(reading, flags) FROM sensors GROUP BY location ORDER BY location" \
+  vw_lim0 "SELECT vwap(reading, flags) FROM sensors LIMIT 0" \
+  vw_case "SELECT VWAP(reading, flags) FROM sensors" \
+  vw_neg "SELECT vwap(reading, flags) FROM sensors WHERE id = -1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2264,7 +2278,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   kp_days "SELECT kurtosis_pop(id) FROM days" \
   kp_days_grp "SELECT kurtosis_pop(id) FROM days GROUP BY location ORDER BY location" \
   wp_days "SELECT skewness_pop(id) FROM days" \
-  wp_days_grp "SELECT skewness_pop(id) FROM days GROUP BY location ORDER BY location"
+  wp_days_grp "SELECT skewness_pop(id) FROM days GROUP BY location ORDER BY location" \
+  vw_days "SELECT vwap(id, id) FROM days" \
+  vw_days_grp "SELECT vwap(id, id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4248,6 +4264,20 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT SKEWNESS_POP(flags) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT skewness_pop(day) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT skewness_pop(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT vwap(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT vwap(reading, flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT vwap(reading, flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT vwap(reading, flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT vwap(score, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT vwap(id, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT vwap(b, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT vwap(code, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT vwap(reading, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT vwap(flags, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT vwap(reading, flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT vwap(reading, flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT VWAP(reading, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT vwap(reading, flags) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4474,6 +4504,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT kurtosis_pop(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT skewness_pop(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT skewness_pop(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT vwap(id, id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT vwap(id, id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
