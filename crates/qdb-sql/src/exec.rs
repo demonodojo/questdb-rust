@@ -1,18 +1,18 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AddExpr, AggFunc,
-    AggregateExpr, AggregateExtra, AsinExpr, Atan2Expr, AtanExpr, BarExpr, BetweenExpr, CastExpr,
-    CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr,
-    DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr,
-    EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect,
-    HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr,
-    LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr,
-    MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
-    RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr,
-    SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams,
-    SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
-    SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr,
-    ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr,
-    YearExpr,
+    AggregateExpr, AggregateExtra, ArithOp, AsinExpr, Atan2Expr, AtanExpr, BarExpr, BetweenExpr,
+    CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr,
+    DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr,
+    DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr,
+    GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr,
+    LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr,
+    MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query,
+    QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
+    RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
+    SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
+    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd,
+    TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -703,7 +703,7 @@ enum ResolvedProj {
         index: usize,
         result_tag: i32,
         literal: Scalar,
-        sub: bool,
+        op: ArithOp,
     },
     Ln {
         label: String,
@@ -1692,7 +1692,7 @@ fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
         return Err(Error::new(format!("Invalid column: {}", expr.value)));
     };
     let tag = table.meta.columns[index].tag;
-    let spelling = if expr.sub { "-" } else { "+" };
+    let spelling = expr.op.spelling();
     let result_tag = match tag {
         qdb_types::TAG_LONG | qdb_types::TAG_INT | qdb_types::TAG_DOUBLE => tag,
         other => {
@@ -1721,8 +1721,24 @@ fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
         index,
         result_tag,
         literal: expr.literal.clone(),
-        sub: expr.sub,
+        op: expr.op,
     })
+}
+
+fn apply_i64(op: ArithOp, left: i64, right: i64) -> i64 {
+    match op {
+        ArithOp::Add => left.wrapping_add(right),
+        ArithOp::Sub => left.wrapping_sub(right),
+        ArithOp::Mul => left.wrapping_mul(right),
+    }
+}
+
+fn apply_f64(op: ArithOp, left: f64, right: f64) -> f64 {
+    match op {
+        ArithOp::Add => left + right,
+        ArithOp::Sub => left - right,
+        ArithOp::Mul => left * right,
+    }
 }
 
 fn add_value(
@@ -1731,7 +1747,7 @@ fn add_value(
     index: usize,
     result_tag: i32,
     literal: &Scalar,
-    sub: bool,
+    op: ArithOp,
 ) -> Scalar {
     let left = &table.columns[index][row];
     if left.is_null() || literal.is_null() {
@@ -1739,27 +1755,16 @@ fn add_value(
     }
     match (result_tag, left, literal) {
         (qdb_types::TAG_LONG, Scalar::Long(left), Scalar::Long(right)) => {
-            let value = if sub {
-                left.wrapping_sub(*right)
-            } else {
-                left.wrapping_add(*right)
-            };
-            Scalar::Long(value)
+            Scalar::Long(apply_i64(op, *left, *right))
         }
         (qdb_types::TAG_INT, Scalar::Int(left), Scalar::Long(right)) => {
-            let value = if sub {
-                i64::from(*left).wrapping_sub(*right)
-            } else {
-                i64::from(*left).wrapping_add(*right)
-            };
-            Scalar::Int(value as i32)
+            Scalar::Int(apply_i64(op, i64::from(*left), *right) as i32)
         }
         (qdb_types::TAG_DOUBLE, Scalar::Double(left), Scalar::Long(right)) => {
-            let right = *right as f64;
-            Scalar::Double(if sub { left - right } else { left + right })
+            Scalar::Double(apply_f64(op, *left, *right as f64))
         }
         (qdb_types::TAG_DOUBLE, Scalar::Double(left), Scalar::Double(right)) => {
-            Scalar::Double(if sub { left - *right } else { left + *right })
+            Scalar::Double(apply_f64(op, *left, *right))
         }
         _ => Scalar::Null,
     }
@@ -7196,9 +7201,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             index,
             result_tag,
             literal,
-            sub,
+            op,
             ..
-        } => add_value(table, row, *index, *result_tag, literal, *sub),
+        } => add_value(table, row, *index, *result_tag, literal, *op),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15574,6 +15579,71 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn mu_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id * 2 FROM sensors",
+                "expected/mu_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id * 2 FROM sensors WHERE id = 1",
+                "expected/mu_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id * 2 FROM sensors WHERE id = 2",
+                "expected/mu_two.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id * 2 FROM sensors WHERE id > 100",
+                "expected/mu_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id * null FROM sensors",
+                "expected/mu_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT reading * 0 FROM sensors",
+                "expected/mu_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags * 2 FROM sensors",
+                "expected/mu_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id * 2 FROM sensors LIMIT 0",
+                "expected/mu_lim0.tsv",
+            ),
+            (&days, "SELECT id * 2 FROM days", "expected/mu_days.tsv"),
+            (
+                &days,
+                "SELECT id * null FROM days",
+                "expected/mu_days_null.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT missing * 2 FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

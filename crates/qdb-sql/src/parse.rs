@@ -844,13 +844,31 @@ pub struct InListExpr {
     pub args: Vec<ConcatArg>,
 }
 
-/// `value + other` adds a constant to a column and keeps the column's numeric type.
+/// `+`, `-` or `*` of a column and a constant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithOp {
+    Add,
+    Sub,
+    Mul,
+}
+
+impl ArithOp {
+    pub fn spelling(self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::Sub => "-",
+            Self::Mul => "*",
+        }
+    }
+}
+
+/// `value + other` adds, subtracts or multiplies a constant and a column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddExpr {
     pub label: String,
     pub value: String,
     pub literal: Scalar,
-    pub sub: bool,
+    pub op: ArithOp,
 }
 
 /// `value = other` compares a column with one constant.
@@ -2096,27 +2114,28 @@ impl<'a> Parser<'a> {
         while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
             pos += 1;
         }
-        matches!(self.src.get(pos), Some(b'+' | b'-'))
+        matches!(self.src.get(pos), Some(b'+' | b'-' | b'*'))
     }
 
     fn parse_add(&mut self, name: String) -> Result<AddExpr, Error> {
         self.skip();
-        let sub = if self.eat(b'-') {
-            true
+        let op = if self.eat(b'-') {
+            ArithOp::Sub
         } else if self.eat(b'+') {
-            false
+            ArithOp::Add
+        } else if self.eat(b'*') {
+            ArithOp::Mul
         } else {
             return Err(Error::new(
-                "unsupported: expected '+' or '-' after column".to_string(),
+                "unsupported: expected '+', '-' or '*' after column".to_string(),
             ));
         };
-        let spelling = if sub { "-" } else { "+" };
         let literal = self.parse_literal()?;
         Ok(AddExpr {
-            label: format!("{name} {spelling} {}", eq_literal_label(&literal)),
+            label: format!("{name} {} {}", op.spelling(), eq_literal_label(&literal)),
             value: name,
             literal,
-            sub,
+            op,
         })
     }
 
