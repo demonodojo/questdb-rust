@@ -106,6 +106,7 @@ pub enum Proj {
     Cast(CastExpr),
     DateAdd(DateAddExpr),
     DateDiff(DateDiffExpr),
+    Year(YearExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -290,6 +291,13 @@ pub struct DateDiffExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `year(timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct YearExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -464,6 +472,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_dateadd()?.label
             } else if parser.starts_datediff_call() {
                 parser.parse_datediff()?.label
+            } else if parser.starts_year_call() {
+                parser.parse_year()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -564,6 +574,7 @@ enum SelectPiece {
     Cast(CastExpr),
     DateAdd(DateAddExpr),
     DateDiff(DateDiffExpr),
+    Year(YearExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -713,6 +724,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::DateAdd(self.parse_dateadd()?));
             } else if self.starts_datediff_call() {
                 pieces.push(SelectPiece::DateDiff(self.parse_datediff()?));
+            } else if self.starts_year_call() {
+                pieces.push(SelectPiece::Year(self.parse_year()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -776,6 +789,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Cast(_)
                     | SelectPiece::DateAdd(_)
                     | SelectPiece::DateDiff(_)
+                    | SelectPiece::Year(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -825,6 +839,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Cast(expr) => items.push(Proj::Cast(expr)),
                     SelectPiece::DateAdd(expr) => items.push(Proj::DateAdd(expr)),
                     SelectPiece::DateDiff(expr) => items.push(Proj::DateDiff(expr)),
+                    SelectPiece::Year(expr) => items.push(Proj::Year(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -898,6 +913,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Cast(_)
                 | SelectPiece::DateAdd(_)
                 | SelectPiece::DateDiff(_)
+                | SelectPiece::Year(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1144,6 +1160,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_year_call(&self) -> bool {
+        self.starts_named_call("year")
+    }
+
+    fn parse_year(&mut self) -> Result<YearExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `year` requires arguments: year(TIMESTAMP)".to_string(),
+            ));
+        }
+        Ok(YearExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

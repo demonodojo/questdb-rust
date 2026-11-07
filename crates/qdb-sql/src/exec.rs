@@ -5,7 +5,7 @@ use crate::parse::{
     NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
     RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SelectList, SideExpr, SignExpr,
     SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd,
-    TrimExpr, UpperExpr,
+    TrimExpr, UpperExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -206,6 +206,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Cast { label, .. }
             | ResolvedProj::DateAdd { label, .. }
             | ResolvedProj::DateDiff { label, .. }
+            | ResolvedProj::Year { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -368,6 +369,10 @@ enum ResolvedProj {
         start: DateDiffSide,
         end: DateDiffSide,
     },
+    Year {
+        label: String,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -510,6 +515,7 @@ impl ResolvedProj {
             | Self::Cast { label, .. }
             | Self::DateAdd { label, .. }
             | Self::DateDiff { label, .. }
+            | Self::Year { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -537,6 +543,7 @@ impl ResolvedProj {
             Self::Cast { type_tag, .. } => *type_tag,
             Self::DateAdd { .. } => qdb_types::TAG_TIMESTAMP,
             Self::DateDiff { .. } => qdb_types::TAG_LONG,
+            Self::Year { .. } => qdb_types::TAG_INT,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -610,6 +617,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Cast(expr) => resolve_cast(table, expr),
         Proj::DateAdd(expr) => resolve_dateadd(table, expr),
         Proj::DateDiff(expr) => resolve_datediff(table, expr),
+        Proj::Year(expr) => resolve_year(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1266,6 +1274,19 @@ enum DateDiffSide {
     Null,
 }
 
+fn resolve_year(table: &Table, expr: &YearExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `year`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::Year {
+        label: expr.label.clone(),
+        value: datediff_side(table, &expr.args[0], "year", 1)?,
+    })
+}
+
 fn resolve_datediff(table: &Table, expr: &DateDiffExpr) -> Result<ResolvedProj, Error> {
     if expr.args.len() != 3 {
         return Err(Error::new(format!(
@@ -1274,8 +1295,8 @@ fn resolve_datediff(table: &Table, expr: &DateDiffExpr) -> Result<ResolvedProj, 
         )));
     }
     let period = datediff_period(table, &expr.args[0])?;
-    let start = datediff_side(table, &expr.args[1], 2)?;
-    let end = datediff_side(table, &expr.args[2], 3)?;
+    let start = datediff_side(table, &expr.args[1], "datediff", 2)?;
+    let end = datediff_side(table, &expr.args[2], "datediff", 3)?;
     let period = period.filter(|unit| datediff_known(*unit));
     Ok(ResolvedProj::DateDiff {
         label: expr.label.clone(),
@@ -1291,7 +1312,7 @@ fn datediff_period(table: &Table, arg: &ConcatArg) -> Result<Option<char>, Error
             let mut chars = text.chars();
             match (chars.next(), chars.next()) {
                 (Some(ch), None) => Ok(Some(ch)),
-                _ => Err(datediff_type_mismatch(1, "STRING")),
+                _ => Err(datediff_type_mismatch("datediff", 1, "STRING")),
             }
         }
         ConcatArg::Column(name) => {
@@ -1299,18 +1320,26 @@ fn datediff_period(table: &Table, arg: &ConcatArg) -> Result<Option<char>, Error
                 return Err(Error::new(format!("Invalid column: {name}")));
             };
             Err(datediff_type_mismatch(
+                "datediff",
                 1,
                 qdb_types::type_name(table.meta.columns[index].tag),
             ))
         }
-        ConcatArg::Literal(Scalar::Null) => Err(datediff_type_mismatch(1, "NULL")),
-        ConcatArg::Literal(Scalar::Long(_)) => Err(datediff_type_mismatch(1, "INT")),
-        ConcatArg::Literal(Scalar::Double(_)) => Err(datediff_type_mismatch(1, "DOUBLE")),
-        _ => Err(datediff_type_mismatch(1, "UNSUPPORTED")),
+        ConcatArg::Literal(Scalar::Null) => Err(datediff_type_mismatch("datediff", 1, "NULL")),
+        ConcatArg::Literal(Scalar::Long(_)) => Err(datediff_type_mismatch("datediff", 1, "INT")),
+        ConcatArg::Literal(Scalar::Double(_)) => {
+            Err(datediff_type_mismatch("datediff", 1, "DOUBLE"))
+        }
+        _ => Err(datediff_type_mismatch("datediff", 1, "UNSUPPORTED")),
     }
 }
 
-fn datediff_side(table: &Table, arg: &ConcatArg, position: usize) -> Result<DateDiffSide, Error> {
+fn datediff_side(
+    table: &Table,
+    arg: &ConcatArg,
+    function: &str,
+    position: usize,
+) -> Result<DateDiffSide, Error> {
     match arg {
         ConcatArg::Column(name) => {
             let Some(index) = table.column_index(name) else {
@@ -1320,7 +1349,11 @@ fn datediff_side(table: &Table, arg: &ConcatArg, position: usize) -> Result<Date
                 qdb_types::TAG_TIMESTAMP | qdb_types::TAG_LONG => {
                     Ok(DateDiffSide::Column { index })
                 }
-                tag => Err(datediff_type_mismatch(position, qdb_types::type_name(tag))),
+                tag => Err(datediff_type_mismatch(
+                    function,
+                    position,
+                    qdb_types::type_name(tag),
+                )),
             }
         }
         ConcatArg::Literal(Scalar::Null) => Ok(DateDiffSide::Null),
@@ -1329,15 +1362,21 @@ fn datediff_side(table: &Table, arg: &ConcatArg, position: usize) -> Result<Date
             Some(micros) => Ok(DateDiffSide::Micros(micros)),
             None => Err(Error::new(format!("Invalid date [str={text}]"))),
         },
-        ConcatArg::Literal(Scalar::Double(_)) => Err(datediff_type_mismatch(position, "DOUBLE")),
-        _ => Err(datediff_type_mismatch(position, "UNSUPPORTED")),
+        ConcatArg::Literal(Scalar::Double(_)) => {
+            Err(datediff_type_mismatch(function, position, "DOUBLE"))
+        }
+        _ => Err(datediff_type_mismatch(function, position, "UNSUPPORTED")),
     }
 }
 
-fn datediff_type_mismatch(position: usize, actual: &str) -> Error {
-    let expected = if position == 1 { "CHAR" } else { "TIMESTAMP" };
+fn datediff_type_mismatch(function: &str, position: usize, actual: &str) -> Error {
+    let expected = if function == "datediff" && position == 1 {
+        "CHAR"
+    } else {
+        "TIMESTAMP"
+    };
     Error::new(format!(
-        "argument type mismatch for function `datediff` at #{position} expected: {expected}, actual: {actual}"
+        "argument type mismatch for function `{function}` at #{position} expected: {expected}, actual: {actual}"
     ))
 }
 
@@ -3261,6 +3300,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::DateDiff {
             period, start, end, ..
         } => datediff_value(table, row, *period, start, end),
+        ResolvedProj::Year { value, .. } => match datediff_micros(table, row, value) {
+            Some(micros) => Scalar::Int(dateadd_parts(micros).0),
+            None => Scalar::Null,
+        },
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
         ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
             Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
@@ -12040,6 +12083,91 @@ mod tests {
         let err = execute(&sensors, "SELECT datediff('d', missing, ts) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn year_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT year(ts) FROM sensors",
+                "expected/yr_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT year(id) FROM sensors",
+                "expected/yr_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT year('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1",
+                "expected/yr_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT year('2019-12-31T23:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/yr_prev.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT YEAR(TS) FROM sensors",
+                "expected/yr_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT year(id) FROM sensors ORDER BY year(id)",
+                "expected/yr_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT year(ts) FROM sensors WHERE id = 1",
+                "expected/yr_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT year(ts) FROM sensors LIMIT 0",
+                "expected/yr_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT year(ts) FROM days ORDER BY ts",
+                "expected/yr_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT year() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `year` requires arguments: year(TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT year(ts, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `year`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT year(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
             "{}",
             err.message
         );
