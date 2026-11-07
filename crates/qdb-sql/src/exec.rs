@@ -17279,6 +17279,56 @@ mod tests {
     }
 
     #[test]
+    fn zq_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id >= id FROM sensors",
+                "expected/zq_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id >= id FROM sensors WHERE id = 1",
+                "expected/zq_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id >= id FROM sensors WHERE id > 100",
+                "expected/zq_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id >= flags FROM sensors",
+                "expected/zq_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags >= id FROM sensors",
+                "expected/zq_rev.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note >= note FROM sensors",
+                "expected/zq_note.tsv",
+            ),
+            (&days, "SELECT id >= id FROM days", "expected/zq_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id >= missing FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
     fn dj_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");

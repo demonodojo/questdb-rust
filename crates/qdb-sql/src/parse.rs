@@ -1681,6 +1681,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::Eq(self.parse_column_lt(name)?));
                 } else if self.starts_column_gt() {
                     pieces.push(SelectPiece::Eq(self.parse_column_gt(name)?));
+                } else if self.starts_column_ge() {
+                    pieces.push(SelectPiece::Eq(self.parse_column_ge(name)?));
                 } else if self.starts_eq_or_ne() {
                     pieces.push(SelectPiece::Eq(self.parse_eq(name)?));
                 } else if self.starts_bitand() {
@@ -2877,6 +2879,60 @@ impl<'a> Parser<'a> {
             label: format!("{name} > {column}"),
             value: name,
             op: CmpOp::Gt,
+            literal: Scalar::Null,
+            other: Some(column),
+        })
+    }
+
+    fn starts_column_ge(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if self.src.get(pos) != Some(&b'>') || self.src.get(pos + 1) != Some(&b'=') {
+            return false;
+        }
+        pos += 2;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let Some(first) = self.src.get(pos) else {
+            return false;
+        };
+        if !first.is_ascii_alphabetic() && *first != b'_' {
+            return false;
+        }
+        let start = pos;
+        pos += 1;
+        while matches!(
+            self.src.get(pos),
+            Some(byte) if byte.is_ascii_alphanumeric() || *byte == b'_'
+        ) {
+            pos += 1;
+        }
+        let word = std::str::from_utf8(&self.src[start..pos])
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        !matches!(word.as_str(), "null" | "true" | "false")
+    }
+
+    fn parse_column_ge(&mut self, name: String) -> Result<EqExpr, Error> {
+        self.skip();
+        if !(self.eat(b'>') && self.eat(b'=')) {
+            return Err(Error::new(
+                "unsupported: expected '>=' after column".to_string(),
+            ));
+        }
+        if !self.starts_add_column() {
+            return Err(Error::new(
+                "unsupported: expected a column after '>='".to_string(),
+            ));
+        }
+        let column = self.ident_spelling()?;
+        Ok(EqExpr {
+            label: format!("{name} >= {column}"),
+            value: name,
+            op: CmpOp::GtEq,
             literal: Scalar::Null,
             other: Some(column),
         })
