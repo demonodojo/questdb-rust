@@ -1067,7 +1067,19 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ly_null "SELECT is_leap_year(null) FROM sensors LIMIT 1" \
   ly_case "SELECT IS_LEAP_YEAR(TS) FROM sensors LIMIT 1" \
   ly_where "SELECT is_leap_year(ts) FROM sensors WHERE id = 1" \
-  ly_zero "SELECT is_leap_year(ts) FROM sensors LIMIT 0"
+  ly_zero "SELECT is_leap_year(ts) FROM sensors LIMIT 0" \
+  dm_ts "SELECT days_in_month(ts) FROM sensors" \
+  dm_id "SELECT days_in_month(id) FROM sensors" \
+  dm_feb "SELECT days_in_month('2020-02-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  dm_feb19 "SELECT days_in_month('2019-02-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  dm_1900 "SELECT days_in_month('1900-02-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  dm_2000 "SELECT days_in_month('2000-02-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  dm_apr "SELECT days_in_month('2020-04-15T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  dm_null "SELECT days_in_month(null) FROM sensors LIMIT 1" \
+  dm_case "SELECT DAYS_IN_MONTH(TS) FROM sensors LIMIT 1" \
+  dm_order "SELECT days_in_month(id) FROM sensors ORDER BY days_in_month(id)" \
+  dm_where "SELECT days_in_month(ts) FROM sensors WHERE id = 1" \
+  dm_zero "SELECT days_in_month(ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1199,7 +1211,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   dt_hour "SELECT date_trunc('hour', ts) FROM days ORDER BY ts" \
   tf_hour "SELECT timestamp_floor('h', ts) FROM days ORDER BY ts" \
   tc_hour "SELECT timestamp_ceil('h', ts) FROM days ORDER BY ts" \
-  ly_days "SELECT is_leap_year(ts) FROM days ORDER BY ts"
+  ly_days "SELECT is_leap_year(ts) FROM days ORDER BY ts" \
+  dm_days "SELECT days_in_month(ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2214,6 +2227,18 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT IS_LEAP_YEAR(TS) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT is_leap_year(ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT is_leap_year(ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT days_in_month(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT days_in_month(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT days_in_month('2020-02-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT days_in_month('2019-02-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT days_in_month('1900-02-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT days_in_month('2000-02-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT days_in_month('2020-04-15T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT days_in_month(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT DAYS_IN_MONTH(TS) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT days_in_month(id) FROM sensors ORDER BY days_in_month(id)"),
+    (os.environ["DIFF_H1"], "SELECT days_in_month(ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT days_in_month(ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2344,6 +2369,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT timestamp_floor('h', ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT timestamp_ceil('h', ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT is_leap_year(ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT days_in_month(ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

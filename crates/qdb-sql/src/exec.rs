@@ -1,13 +1,13 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, DateDiffExpr, DateTruncExpr,
-    DayExpr, DayOfWeekExpr, ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr,
-    IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, MicrosExpr, MillisExpr,
-    MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
-    ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
-    SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
-    SubstrExpr, TimestampCeilExpr, TimestampFloorExpr, TrimEnd, TrimExpr, UpperExpr,
-    WeekOfYearExpr, YearExpr,
+    DayExpr, DayOfWeekExpr, DaysInMonthExpr, ExpExpr, Filter, FloorExpr, GreatestExpr,
+    GroupedSelect, HourExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr,
+    MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj,
+    Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
+    SecondExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, TimestampCeilExpr, TimestampFloorExpr, TrimEnd,
+    TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -222,6 +222,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::TimestampFloor { label, .. }
             | ResolvedProj::TimestampCeil { label, .. }
             | ResolvedProj::IsLeapYear { label, .. }
+            | ResolvedProj::DaysInMonth { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -444,6 +445,10 @@ enum ResolvedProj {
         label: String,
         value: DateDiffSide,
     },
+    DaysInMonth {
+        label: String,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -600,6 +605,7 @@ impl ResolvedProj {
             | Self::TimestampFloor { label, .. }
             | Self::TimestampCeil { label, .. }
             | Self::IsLeapYear { label, .. }
+            | Self::DaysInMonth { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -641,6 +647,7 @@ impl ResolvedProj {
                 qdb_types::TAG_TIMESTAMP
             }
             Self::IsLeapYear { .. } => qdb_types::TAG_BOOLEAN,
+            Self::DaysInMonth { .. } => qdb_types::TAG_INT,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -728,6 +735,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::TimestampFloor(expr) => resolve_timestamp_floor(table, expr),
         Proj::TimestampCeil(expr) => resolve_timestamp_ceil(table, expr),
         Proj::IsLeapYear(expr) => resolve_is_leap_year(table, expr),
+        Proj::DaysInMonth(expr) => resolve_days_in_month(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1382,6 +1390,28 @@ enum DateDiffSide {
     Micros(i64),
     Column { index: usize },
     Null,
+}
+
+fn resolve_days_in_month(table: &Table, expr: &DaysInMonthExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `days_in_month`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::DaysInMonth {
+        label: expr.label.clone(),
+        value: date_trunc_timestamp(table, &expr.args[0])?,
+    })
+}
+
+fn days_in_month(year: i32, month: u32) -> i32 {
+    const DAYS: [i32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if month == 2 && is_leap_year(year) {
+        29
+    } else {
+        DAYS[(month.saturating_sub(1) as usize).min(11)]
+    }
 }
 
 fn resolve_is_leap_year(table: &Table, expr: &IsLeapYearExpr) -> Result<ResolvedProj, Error> {
@@ -3976,6 +4006,13 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             let year = datediff_micros(table, row, value).map(|micros| dateadd_parts(micros).0);
             Scalar::Boolean(year.is_some_and(is_leap_year))
         }
+        ResolvedProj::DaysInMonth { value, .. } => match datediff_micros(table, row, value) {
+            Some(micros) => {
+                let (year, month, _, _) = dateadd_parts(micros);
+                Scalar::Int(days_in_month(year, month))
+            }
+            None => Scalar::Null,
+        },
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
         ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
             Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
@@ -12840,6 +12877,118 @@ mod tests {
         let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn days_in_month_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT days_in_month(ts) FROM sensors",
+                "expected/dm_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT days_in_month(id) FROM sensors",
+                "expected/dm_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT days_in_month('2020-02-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/dm_feb.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT days_in_month('2019-02-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/dm_feb19.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT days_in_month('1900-02-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/dm_1900.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT days_in_month('2000-02-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/dm_2000.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT days_in_month('2020-04-15T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/dm_apr.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT days_in_month(null) FROM sensors LIMIT 1",
+                "expected/dm_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT DAYS_IN_MONTH(TS) FROM sensors LIMIT 1",
+                "expected/dm_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT days_in_month(id) FROM sensors ORDER BY days_in_month(id)",
+                "expected/dm_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT days_in_month(ts) FROM sensors WHERE id = 1",
+                "expected/dm_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT days_in_month(ts) FROM sensors LIMIT 0",
+                "expected/dm_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT days_in_month(ts) FROM days ORDER BY ts",
+                "expected/dm_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT days_in_month() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `days_in_month` requires arguments: days_in_month(TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT days_in_month(ts, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `days_in_month`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT days_in_month(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT days_in_month('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT days_in_month(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
             "{}",
             err.message
         );

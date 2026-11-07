@@ -120,6 +120,7 @@ pub enum Proj {
     TimestampFloor(TimestampFloorExpr),
     TimestampCeil(TimestampCeilExpr),
     IsLeapYear(IsLeapYearExpr),
+    DaysInMonth(DaysInMonthExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -402,6 +403,13 @@ pub struct IsLeapYearExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `days_in_month(timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DaysInMonthExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -604,6 +612,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_timestamp_ceil()?.label
             } else if parser.starts_is_leap_year_call() {
                 parser.parse_is_leap_year()?.label
+            } else if parser.starts_days_in_month_call() {
+                parser.parse_days_in_month()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -718,6 +728,7 @@ enum SelectPiece {
     TimestampFloor(TimestampFloorExpr),
     TimestampCeil(TimestampCeilExpr),
     IsLeapYear(IsLeapYearExpr),
+    DaysInMonth(DaysInMonthExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -895,6 +906,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::TimestampCeil(self.parse_timestamp_ceil()?));
             } else if self.starts_is_leap_year_call() {
                 pieces.push(SelectPiece::IsLeapYear(self.parse_is_leap_year()?));
+            } else if self.starts_days_in_month_call() {
+                pieces.push(SelectPiece::DaysInMonth(self.parse_days_in_month()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -972,6 +985,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::TimestampFloor(_)
                     | SelectPiece::TimestampCeil(_)
                     | SelectPiece::IsLeapYear(_)
+                    | SelectPiece::DaysInMonth(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -1035,6 +1049,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::TimestampFloor(expr) => items.push(Proj::TimestampFloor(expr)),
                     SelectPiece::TimestampCeil(expr) => items.push(Proj::TimestampCeil(expr)),
                     SelectPiece::IsLeapYear(expr) => items.push(Proj::IsLeapYear(expr)),
+                    SelectPiece::DaysInMonth(expr) => items.push(Proj::DaysInMonth(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -1122,6 +1137,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::TimestampFloor(_)
                 | SelectPiece::TimestampCeil(_)
                 | SelectPiece::IsLeapYear(_)
+                | SelectPiece::DaysInMonth(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1368,6 +1384,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_days_in_month_call(&self) -> bool {
+        self.starts_named_call("days_in_month")
+    }
+
+    fn parse_days_in_month(&mut self) -> Result<DaysInMonthExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `days_in_month` requires arguments: days_in_month(TIMESTAMP)".to_string(),
+            ));
+        }
+        Ok(DaysInMonthExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

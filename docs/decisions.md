@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — days_in_month()
+
+`days_in_month(instante)` devuelve `INT`. Febrero tiene 29 días en 2020 y 2000, y 28 en 2019 y 1900. Abril tiene 30. Un nulo sigue siendo nulo. Un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — is_leap_year()
 
 `is_leap_year(instante)` devuelve `BOOLEAN`. Usa la regla gregoriana: 2020 y 2000 son bisiestos, 1900 y 2019 no. Un nulo devuelve `false`. Un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.
