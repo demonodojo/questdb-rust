@@ -227,6 +227,7 @@ pub enum Proj {
     Like(LikeExpr),
     Switch(SwitchExpr),
     Bar(BarExpr),
+    TimestampSequence(TimestampSequenceExpr),
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
@@ -386,6 +387,13 @@ pub struct SwitchExpr {
 /// `bar(value, min, max, width)` renders a block bar as text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BarExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `timestamp_sequence(start, step)` yields a timestamp that advances by `step`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimestampSequenceExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -906,6 +914,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_switch()?.label
             } else if parser.starts_bar_call() {
                 parser.parse_bar()?.label
+            } else if parser.starts_timestamp_sequence_call() {
+                parser.parse_timestamp_sequence()?.label
             } else if parser.starts_strpos_call() {
                 parser.parse_strpos()?.label
             } else if parser.starts_split_part_call() {
@@ -1096,6 +1106,7 @@ enum SelectPiece {
     Like(LikeExpr),
     Switch(SwitchExpr),
     Bar(BarExpr),
+    TimestampSequence(TimestampSequenceExpr),
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
@@ -1278,6 +1289,10 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Switch(self.parse_switch()?));
             } else if self.starts_bar_call() {
                 pieces.push(SelectPiece::Bar(self.parse_bar()?));
+            } else if self.starts_timestamp_sequence_call() {
+                pieces.push(SelectPiece::TimestampSequence(
+                    self.parse_timestamp_sequence()?,
+                ));
             } else if self.starts_strpos_call() {
                 pieces.push(SelectPiece::StrPos(self.parse_strpos()?));
             } else if self.starts_split_part_call() {
@@ -1433,6 +1448,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Like(_)
                     | SelectPiece::Switch(_)
                     | SelectPiece::Bar(_)
+                    | SelectPiece::TimestampSequence(_)
                     | SelectPiece::StrPos(_)
                     | SelectPiece::SplitPart(_)
                     | SelectPiece::Pad(_)
@@ -1523,6 +1539,9 @@ impl<'a> Parser<'a> {
                     SelectPiece::Like(expr) => items.push(Proj::Like(expr)),
                     SelectPiece::Switch(expr) => items.push(Proj::Switch(expr)),
                     SelectPiece::Bar(expr) => items.push(Proj::Bar(expr)),
+                    SelectPiece::TimestampSequence(expr) => {
+                        items.push(Proj::TimestampSequence(expr))
+                    }
                     SelectPiece::StrPos(expr) => items.push(Proj::StrPos(expr)),
                     SelectPiece::SplitPart(expr) => items.push(Proj::SplitPart(expr)),
                     SelectPiece::Pad(expr) => items.push(Proj::Pad(expr)),
@@ -1639,6 +1658,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Like(_)
                 | SelectPiece::Switch(_)
                 | SelectPiece::Bar(_)
+                | SelectPiece::TimestampSequence(_)
                 | SelectPiece::StrPos(_)
                 | SelectPiece::SplitPart(_)
                 | SelectPiece::Pad(_)
@@ -2947,6 +2967,24 @@ impl<'a> Parser<'a> {
 
     fn starts_bar_call(&self) -> bool {
         self.starts_named_call("bar")
+    }
+
+    fn starts_timestamp_sequence_call(&self) -> bool {
+        self.starts_named_call("timestamp_sequence")
+    }
+
+    fn parse_timestamp_sequence(&mut self) -> Result<TimestampSequenceExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `timestamp_sequence` requires arguments: timestamp_sequence(TIMESTAMP, LONG)",
+            ));
+        }
+        Ok(TimestampSequenceExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn parse_bar(&mut self) -> Result<BarExpr, Error> {

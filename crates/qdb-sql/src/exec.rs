@@ -9,11 +9,13 @@ use crate::parse::{
     PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
     RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr,
     SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SqrtExpr, StartsWithExpr,
-    StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, ToDateExpr,
-    ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr,
+    TimestampSequenceExpr, ToDateExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr,
+    UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::path::Path;
 
@@ -137,6 +139,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
         }
     }
     if !query.order_by.is_empty() {
+        fill_timestamp_sequences(table, &resolved, &row_ids);
         let mut keys = Vec::with_capacity(query.order_by.len());
         for order in &query.order_by {
             if let Some(index) = resolved.iter().position(|item| {
@@ -200,6 +203,9 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
         }
         apply_limit(&mut row_ids, limit.lo, limit.hi);
     }
+    if query.order_by.is_empty() {
+        fill_timestamp_sequences(table, &resolved, &row_ids);
+    }
     let columns = resolved
         .iter()
         .map(|item| match item {
@@ -218,6 +224,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Like { label, .. }
             | ResolvedProj::Switch { label, .. }
             | ResolvedProj::Bar { label, .. }
+            | ResolvedProj::TimestampSequence { label, .. }
             | ResolvedProj::StrPos { label, .. }
             | ResolvedProj::SplitPart { label, .. }
             | ResolvedProj::Pad { label, .. }
@@ -379,6 +386,12 @@ enum ResolvedProj {
         min: SqrtInput,
         max: SqrtInput,
         width: SqrtInput,
+    },
+    TimestampSequence {
+        label: String,
+        start: SeqSource,
+        step: SeqSource,
+        values: RefCell<Vec<Scalar>>,
     },
     StrPos {
         label: String,
@@ -751,6 +764,7 @@ impl ResolvedProj {
             | Self::Like { label, .. }
             | Self::Switch { label, .. }
             | Self::Bar { label, .. }
+            | Self::TimestampSequence { label, .. }
             | Self::StrPos { label, .. }
             | Self::SplitPart { label, .. }
             | Self::Pad { label, .. }
@@ -885,6 +899,7 @@ impl ResolvedProj {
             | Self::Like { .. } => qdb_types::TAG_BOOLEAN,
             Self::Switch { result_tag, .. } => *result_tag,
             Self::Bar { .. } => qdb_types::TAG_VARCHAR,
+            Self::TimestampSequence { .. } => qdb_types::TAG_TIMESTAMP,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -932,6 +947,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Like(expr) => resolve_like(table, expr),
         Proj::Switch(expr) => resolve_switch(table, expr),
         Proj::Bar(expr) => resolve_bar(table, expr),
+        Proj::TimestampSequence(expr) => resolve_timestamp_sequence(table, expr),
         Proj::StrPos(expr) => resolve_strpos(table, expr),
         Proj::SplitPart(expr) => resolve_split_part(table, expr),
         Proj::Pad(expr) => resolve_pad(table, expr),
@@ -5344,6 +5360,149 @@ fn resolve_bar(table: &Table, expr: &BarExpr) -> Result<ResolvedProj, Error> {
     })
 }
 
+enum SeqSource {
+    Null,
+    Constant(i64),
+    Column(usize),
+}
+
+fn resolve_timestamp_sequence(
+    table: &Table,
+    expr: &TimestampSequenceExpr,
+) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `timestamp_sequence`; expected: 2, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::TimestampSequence {
+        label: expr.label.clone(),
+        start: seq_start(table, &expr.args[0])?,
+        step: seq_step(table, &expr.args[1])?,
+        values: RefCell::new(Vec::new()),
+    })
+}
+
+fn seq_start(table: &Table, arg: &ConcatArg) -> Result<SeqSource, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok(SeqSource::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(SeqSource::Constant(*number)),
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            let tag = table.meta.columns[index].tag;
+            if matches!(
+                tag,
+                qdb_types::TAG_TIMESTAMP
+                    | qdb_types::TAG_DATE
+                    | qdb_types::TAG_LONG
+                    | qdb_types::TAG_INT
+            ) {
+                Ok(SeqSource::Column(index))
+            } else {
+                Err(seq_mismatch(table, arg, "TIMESTAMP"))
+            }
+        }
+        _ => Err(seq_mismatch(table, arg, "TIMESTAMP")),
+    }
+}
+
+fn seq_step(table: &Table, arg: &ConcatArg) -> Result<SeqSource, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok(SeqSource::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(SeqSource::Constant(*number)),
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            let tag = table.meta.columns[index].tag;
+            if matches!(
+                tag,
+                qdb_types::TAG_LONG
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_BYTE
+            ) {
+                Ok(SeqSource::Column(index))
+            } else {
+                Err(seq_mismatch(table, arg, "LONG"))
+            }
+        }
+        _ => Err(seq_mismatch(table, arg, "LONG")),
+    }
+}
+
+fn seq_mismatch(table: &Table, arg: &ConcatArg, expected: &str) -> Error {
+    match concat_arg_type(table, arg) {
+        Ok(actual) => Error::new(format!(
+            "expression type mismatch, expected: {expected}, actual: {actual}"
+        )),
+        Err(err) => err,
+    }
+}
+
+fn fill_timestamp_sequences(table: &Table, items: &[ResolvedProj], row_ids: &[usize]) {
+    for item in items {
+        let ResolvedProj::TimestampSequence {
+            start,
+            step,
+            values,
+            ..
+        } = item
+        else {
+            continue;
+        };
+        let mut out = vec![Scalar::Null; table.row_count()];
+        match start {
+            SeqSource::Null => {}
+            SeqSource::Constant(start) => {
+                let mut next = *start;
+                for &row in row_ids {
+                    out[row] = seq_timestamp(next);
+                    next = next.wrapping_add(seq_step_at(table, row, step));
+                }
+            }
+            SeqSource::Column(index) => {
+                let mut next: i64 = 0;
+                for &row in row_ids {
+                    let base = seq_cell_long(&table.columns[*index][row]);
+                    out[row] = seq_timestamp(next.wrapping_add(base));
+                    next = next.wrapping_add(seq_step_at(table, row, step));
+                }
+            }
+        }
+        *values.borrow_mut() = out;
+    }
+}
+
+fn seq_step_at(table: &Table, row: usize, step: &SeqSource) -> i64 {
+    match step {
+        SeqSource::Null => i64::MIN,
+        SeqSource::Constant(number) => *number,
+        SeqSource::Column(index) => seq_cell_long(&table.columns[*index][row]),
+    }
+}
+
+fn seq_cell_long(value: &Scalar) -> i64 {
+    match value {
+        Scalar::Timestamp(number) | Scalar::Date(number) | Scalar::Long(number) => *number,
+        Scalar::Int(number) => i64::from(*number),
+        Scalar::Short(number) => i64::from(*number),
+        Scalar::Byte(number) => i64::from(*number),
+        _ => i64::MIN,
+    }
+}
+
+fn seq_timestamp(value: i64) -> Scalar {
+    if value == i64::MIN {
+        Scalar::Null
+    } else {
+        Scalar::Timestamp(value)
+    }
+}
+
 fn bar_double(table: &Table, arg: &ConcatArg, position: usize) -> Result<SqrtInput, Error> {
     match power_input(table, arg) {
         Ok(input) => Ok(input),
@@ -6793,6 +6952,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             ..
         } => switch_pick(table, row, key, arms, else_value),
         ResolvedProj::Bar { .. } => Scalar::Null,
+        ResolvedProj::TimestampSequence { values, .. } => {
+            values.borrow().get(row).cloned().unwrap_or(Scalar::Null)
+        }
         ResolvedProj::Glob { value, pattern, .. } => {
             let matched = match text_of(table, row, value) {
                 Some(value) => glob_match(value.as_bytes(), pattern),
@@ -14842,6 +15004,144 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn timestamp_sequence_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT timestamp_sequence(0, 1000000) FROM sensors",
+                "expected/tq_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT timestamp_sequence(0, 1000000) FROM sensors WHERE id = 1",
+                "expected/tq_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT timestamp_sequence(0, 1000000) FROM sensors WHERE id > 100",
+                "expected/tq_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT timestamp_sequence(1000000, -1000000) FROM sensors",
+                "expected/tq_back.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT timestamp_sequence(ts, 1000) FROM sensors",
+                "expected/tq_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT timestamp_sequence(0, null) FROM sensors",
+                "expected/tq_nullstep.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT timestamp_sequence(null, 1000) FROM sensors WHERE id = 1",
+                "expected/tq_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT TIMESTAMP_SEQUENCE(0, 1000) FROM sensors WHERE id = 1",
+                "expected/tq_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT timestamp_sequence(0, 1000000) FROM sensors LIMIT -1",
+                "expected/tq_last.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT timestamp_sequence(0, 1000000) FROM sensors ORDER BY id",
+                "expected/tq_order.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT timestamp_sequence(0, 1000000) FROM sensors LIMIT 0",
+                "expected/tq_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT timestamp_sequence(0, 1000000) FROM days",
+                "expected/tq_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT timestamp_sequence(0, 1000000) FROM days WHERE id = 1",
+                "expected/tq_days_one.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT timestamp_sequence() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `timestamp_sequence` requires arguments: timestamp_sequence(TIMESTAMP, LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_sequence(0) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `timestamp_sequence`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT timestamp_sequence(0, 1000000, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `timestamp_sequence`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT timestamp_sequence(reading, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: TIMESTAMP, actual: DOUBLE"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT timestamp_sequence(ts, reading) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: LONG, actual: DOUBLE"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT timestamp_sequence(missing, 1) FROM sensors",
+        )
+        .unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
