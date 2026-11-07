@@ -4069,7 +4069,10 @@ impl<'a> Parser<'a> {
                 "unsupported: expected '::' after column".to_string(),
             ));
         }
-        let type_name = self.ident_spelling()?;
+        let mut type_name = self.ident_spelling()?;
+        if type_name.eq_ignore_ascii_case("float") {
+            type_name = "DOUBLE".to_string();
+        }
         Ok(CastExpr {
             label: format!("{name}::{type_name}"),
             column: name,
