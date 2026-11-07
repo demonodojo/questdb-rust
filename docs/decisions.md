@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — `LIKE`
+
+`value LIKE pattern` es la función `like`. El encabezado es `note like 'a%'` y el tipo es `BOOLEAN`. Un nulo es `false`. `note LIKE 'a%'` es `true`, `false`, `false` y `false`. En `days` es `true`, `false`, `false` y `false`. `note LIKE '%eta'` es `false`, `false`, `false` y `true`. `location LIKE 'mad%'` es `true`, `false`, `true` y `false`. Un patrón que es columna se rechaza con `use constant or bind variable`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — `NOT BETWEEN`
 
 `value NOT BETWEEN low AND high` niega `between`. El encabezado es `not(id between (1, 2))` y el tipo es `BOOLEAN`. `id NOT BETWEEN 1 AND 2` es `false`, `false`, `true` y `true`. En `days` es `false`, `false`, `true` y `true`. `flags NOT BETWEEN 0 AND 10` es `false`, `true`, `false` y `true`. `id NOT BETWEEN id AND id` es `false`, `false`, `true` y `false`. Un `DOUBLE` se rechaza con el mismo texto que `between`. Se contrastó con `/exec` en `sensors` y `days`.

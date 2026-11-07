@@ -1642,6 +1642,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::And)?));
                 } else if self.eat_keyword("or") {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::Or)?));
+                } else if self.starts_like_infix() {
+                    pieces.push(SelectPiece::Like(self.parse_like_op(name)?));
                 } else if self.starts_not_between() {
                     pieces.push(SelectPiece::Between(self.parse_not_between(name)?));
                 } else if self.starts_between_infix() {
@@ -3752,6 +3754,23 @@ impl<'a> Parser<'a> {
         Ok(SwitchExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
+        })
+    }
+
+    fn starts_like_infix(&self) -> bool {
+        self.keyword_at(self.pos, "like").is_some()
+    }
+
+    fn parse_like_op(&mut self, name: String) -> Result<LikeExpr, Error> {
+        if !self.eat_keyword("like") {
+            return Err(Error::new(
+                "unsupported: expected LIKE after column".to_string(),
+            ));
+        }
+        let (pattern_label, pattern) = self.parse_call_arg(true)?;
+        Ok(LikeExpr {
+            label: format!("{name} like {pattern_label}"),
+            args: vec![ConcatArg::Column(name), pattern],
         })
     }
 
