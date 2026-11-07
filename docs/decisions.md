@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — datediff()
+
+`datediff(periodo, inicio, fin)` devuelve `LONG` con la diferencia absoluta. Acepta `n`, `u`, `T`, `s`, `m`, `h`, `d`, `w`, `M` y `y`. `H` no es hora aquí y deja la fila en NULL. Un `LONG` se lee como microsegundos. Una cadena con fecha UTC se acepta; un texto que no lo es da `Invalid date`. Si el instante final cae antes del mismo punto dentro del mes, el mes no cuenta entero. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — dateadd()
 
 `dateadd(periodo, stride, timestamp)` devuelve `TIMESTAMP`. El periodo es un carácter: `n`, `u`, `T`, `s`, `m`, `h`/`H`, `d`, `w`, `M` y `y`. `M` suma meses de calendario y `m` suma minutos. El stride tiene que ser `INT`. Un literal nulo se rechaza con `` `null` is not a valid stride ``. Un nulo de columna deja esa fila en NULL. El día se recorta al añadir meses o años. Se contrastó con `/exec` en `sensors` y `days`.

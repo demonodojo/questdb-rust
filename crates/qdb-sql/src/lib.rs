@@ -41,7 +41,8 @@
 //! non-null text. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
-//! widest numeric argument and skips nulls. `dateadd` shifts a timestamp by a
+//! widest numeric argument and skips nulls. `datediff` counts periods between two
+//! timestamps. `dateadd` shifts a timestamp by a
 //! period. `cast` converts a column and labels
 //! the result `column::type`. `nullif` returns null when its two
 //! arguments are equal. `coalesce` returns the first non-null

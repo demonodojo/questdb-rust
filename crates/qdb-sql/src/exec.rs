@@ -1,10 +1,11 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
-    CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, ExpExpr, Filter, FloorExpr,
-    GreatestExpr, GroupedSelect, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, NullIfExpr,
-    PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
-    RoundHalfEvenExpr, RoundUpExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr,
-    SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, DateDiffExpr, ExpExpr, Filter,
+    FloorExpr, GreatestExpr, GroupedSelect, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr,
+    NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
+    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SelectList, SideExpr, SignExpr,
+    SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd,
+    TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -204,6 +205,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::NullIf { label, .. }
             | ResolvedProj::Cast { label, .. }
             | ResolvedProj::DateAdd { label, .. }
+            | ResolvedProj::DateDiff { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -360,6 +362,12 @@ enum ResolvedProj {
         stride: DateAddStride,
         timestamp: usize,
     },
+    DateDiff {
+        label: String,
+        period: Option<char>,
+        start: DateDiffSide,
+        end: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -501,6 +509,7 @@ impl ResolvedProj {
             | Self::NullIf { label, .. }
             | Self::Cast { label, .. }
             | Self::DateAdd { label, .. }
+            | Self::DateDiff { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -527,6 +536,7 @@ impl ResolvedProj {
             Self::Coalesce { result_tag, .. } | Self::NullIf { result_tag, .. } => *result_tag,
             Self::Cast { type_tag, .. } => *type_tag,
             Self::DateAdd { .. } => qdb_types::TAG_TIMESTAMP,
+            Self::DateDiff { .. } => qdb_types::TAG_LONG,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -599,6 +609,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::NullIf(expr) => resolve_nullif(table, expr),
         Proj::Cast(expr) => resolve_cast(table, expr),
         Proj::DateAdd(expr) => resolve_dateadd(table, expr),
+        Proj::DateDiff(expr) => resolve_datediff(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1246,6 +1257,165 @@ fn floor_input(table: &Table, arg: &ConcatArg) -> Result<(FloorInput, bool), ()>
             }
         }
         ConcatArg::Literal(_) => Err(()),
+    }
+}
+
+enum DateDiffSide {
+    Micros(i64),
+    Column { index: usize },
+    Null,
+}
+
+fn resolve_datediff(table: &Table, expr: &DateDiffExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 3 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `datediff`; expected: 3, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let period = datediff_period(table, &expr.args[0])?;
+    let start = datediff_side(table, &expr.args[1], 2)?;
+    let end = datediff_side(table, &expr.args[2], 3)?;
+    let period = period.filter(|unit| datediff_known(*unit));
+    Ok(ResolvedProj::DateDiff {
+        label: expr.label.clone(),
+        period,
+        start,
+        end,
+    })
+}
+
+fn datediff_period(table: &Table, arg: &ConcatArg) -> Result<Option<char>, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Text(text)) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) => Ok(Some(ch)),
+                _ => Err(datediff_type_mismatch(1, "STRING")),
+            }
+        }
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            Err(datediff_type_mismatch(
+                1,
+                qdb_types::type_name(table.meta.columns[index].tag),
+            ))
+        }
+        ConcatArg::Literal(Scalar::Null) => Err(datediff_type_mismatch(1, "NULL")),
+        ConcatArg::Literal(Scalar::Long(_)) => Err(datediff_type_mismatch(1, "INT")),
+        ConcatArg::Literal(Scalar::Double(_)) => Err(datediff_type_mismatch(1, "DOUBLE")),
+        _ => Err(datediff_type_mismatch(1, "UNSUPPORTED")),
+    }
+}
+
+fn datediff_side(table: &Table, arg: &ConcatArg, position: usize) -> Result<DateDiffSide, Error> {
+    match arg {
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            match table.meta.columns[index].tag {
+                qdb_types::TAG_TIMESTAMP | qdb_types::TAG_LONG => {
+                    Ok(DateDiffSide::Column { index })
+                }
+                tag => Err(datediff_type_mismatch(position, qdb_types::type_name(tag))),
+            }
+        }
+        ConcatArg::Literal(Scalar::Null) => Ok(DateDiffSide::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(DateDiffSide::Micros(*number)),
+        ConcatArg::Literal(Scalar::Text(text)) => match qdb_types::parse_timestamp_micros(text) {
+            Some(micros) => Ok(DateDiffSide::Micros(micros)),
+            None => Err(Error::new(format!("Invalid date [str={text}]"))),
+        },
+        ConcatArg::Literal(Scalar::Double(_)) => Err(datediff_type_mismatch(position, "DOUBLE")),
+        _ => Err(datediff_type_mismatch(position, "UNSUPPORTED")),
+    }
+}
+
+fn datediff_type_mismatch(position: usize, actual: &str) -> Error {
+    let expected = if position == 1 { "CHAR" } else { "TIMESTAMP" };
+    Error::new(format!(
+        "argument type mismatch for function `datediff` at #{position} expected: {expected}, actual: {actual}"
+    ))
+}
+
+fn datediff_known(period: char) -> bool {
+    matches!(
+        period,
+        'n' | 'u' | 'T' | 's' | 'm' | 'h' | 'd' | 'w' | 'M' | 'y'
+    )
+}
+
+fn datediff_value(
+    table: &Table,
+    row: usize,
+    period: Option<char>,
+    start: &DateDiffSide,
+    end: &DateDiffSide,
+) -> Scalar {
+    let Some(period) = period else {
+        return Scalar::Null;
+    };
+    let (Some(start), Some(end)) = (
+        datediff_micros(table, row, start),
+        datediff_micros(table, row, end),
+    ) else {
+        return Scalar::Null;
+    };
+    Scalar::Long(datediff_between(start, end, period))
+}
+
+fn datediff_micros(table: &Table, row: usize, side: &DateDiffSide) -> Option<i64> {
+    match side {
+        DateDiffSide::Null => None,
+        DateDiffSide::Micros(number) => Some(*number),
+        DateDiffSide::Column { index } => match table.columns[*index][row] {
+            Scalar::Timestamp(number) | Scalar::Long(number) => Some(number),
+            _ => None,
+        },
+    }
+}
+
+fn datediff_between(start: i64, end: i64, period: char) -> i64 {
+    if period == 'M' {
+        return datediff_months(start, end);
+    }
+    if period == 'y' {
+        return datediff_months(start, end) / 12;
+    }
+    let diff = start.wrapping_sub(end).unsigned_abs();
+    if period == 'n' {
+        return i64::try_from(diff.saturating_mul(1_000)).unwrap_or(i64::MAX);
+    }
+    let unit = match period {
+        'u' => 1,
+        'T' => 1_000,
+        's' => 1_000_000,
+        'm' => 60 * 1_000_000,
+        'h' => 3_600 * 1_000_000,
+        'd' => DATEADD_DAY,
+        'w' => 7 * DATEADD_DAY,
+        _ => 1,
+    };
+    i64::try_from(diff / unit as u64).unwrap_or(i64::MAX)
+}
+
+fn datediff_months(start: i64, end: i64) -> i64 {
+    if end < start {
+        return datediff_months(end, start);
+    }
+    let (start_year, start_month, start_day, start_time) = dateadd_parts(start);
+    let (end_year, end_month, end_day, end_time) = dateadd_parts(end);
+    let start_residual = i64::from(start_day - 1) * DATEADD_DAY + start_time;
+    let end_residual = i64::from(end_day - 1) * DATEADD_DAY + end_time;
+    let months =
+        12 * i64::from(end_year - start_year) + i64::from(end_month) - i64::from(start_month);
+    if start_residual > end_residual {
+        months - 1
+    } else {
+        months
     }
 }
 
@@ -3088,6 +3258,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             timestamp,
             ..
         } => dateadd_value(table, row, *period, stride, *timestamp),
+        ResolvedProj::DateDiff {
+            period, start, end, ..
+        } => datediff_value(table, row, *period, start, end),
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
         ResolvedProj::SizePretty { size, .. } => match count_of(table, row, size) {
             Some(size) if size != i64::MIN => Scalar::Text(size_pretty(size)),
@@ -11805,6 +11978,66 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT dateadd(missing, 1, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn datediff_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (sensors.clone(), "SELECT datediff('d', ts, ts) FROM sensors", "expected/df_day.tsv"),
+            (sensors.clone(), "SELECT datediff('s', ts, '2020-01-02T03:04:06.000000Z') FROM sensors", "expected/df_second.tsv"),
+            (sensors.clone(), "SELECT datediff('h', ts, '2020-01-02T06:04:05.000000Z') FROM sensors", "expected/df_hour.tsv"),
+            (sensors.clone(), "SELECT datediff('M', ts, '2020-02-02T03:04:04.000000Z') FROM sensors", "expected/df_month_short.tsv"),
+            (sensors.clone(), "SELECT datediff('M', ts, '2020-02-02T03:04:05.000000Z') FROM sensors", "expected/df_month.tsv"),
+            (sensors.clone(), "SELECT datediff('u', ts, ts) FROM sensors", "expected/df_micro.tsv"),
+            (sensors.clone(), "SELECT datediff('d', ts, id) FROM sensors", "expected/df_id.tsv"),
+            (sensors.clone(), "SELECT datediff('x', ts, ts) FROM sensors", "expected/df_bad.tsv"),
+            (sensors.clone(), "SELECT DATEDIFF('s', ts, ts) FROM sensors", "expected/df_case.tsv"),
+            (sensors.clone(), "SELECT datediff('s', ts, '2020-01-02T03:04:06.000000Z') FROM sensors ORDER BY datediff('s', ts, '2020-01-02T03:04:06.000000Z')", "expected/df_order.tsv"),
+            (sensors.clone(), "SELECT datediff('s', ts, '2020-01-02T03:04:06.000000Z') FROM sensors WHERE id = 1", "expected/df_where.tsv"),
+            (sensors.clone(), "SELECT datediff('d', ts, ts) FROM sensors LIMIT 0", "expected/df_limit_zero.tsv"),
+            (days.clone(), "SELECT datediff('d', ts, '2020-01-05T00:00:00.000000Z') FROM days ORDER BY ts", "expected/df_day.tsv"),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT datediff() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `datediff` requires arguments: datediff(CHAR, TIMESTAMP, TIMESTAMP)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT datediff('d', ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `datediff`; expected: 3, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT datediff('day', ts, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("argument type mismatch for function `datediff` at #1 expected: CHAR, actual: STRING"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT datediff('d', ts, 'nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT datediff('d', missing, ts) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
