@@ -660,7 +660,23 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ln_reading_order "SELECT ln(reading) FROM sensors ORDER BY ln(reading)" \
   ln_with_id "SELECT id, ln(id) FROM sensors ORDER BY ln(id)" \
   ln_where "SELECT ln(id) FROM sensors WHERE id = 1" \
-  ln_limit_zero "SELECT ln(id) FROM sensors LIMIT 0"
+  ln_limit_zero "SELECT ln(id) FROM sensors LIMIT 0" \
+  lg_reading "SELECT log(reading) FROM sensors" \
+  lg_score "SELECT log(score) FROM sensors" \
+  lg_id "SELECT log(id) FROM sensors" \
+  lg_flags "SELECT log(flags) FROM sensors" \
+  lg_byte "SELECT log(b) FROM sensors" \
+  lg_code "SELECT log(code) FROM sensors" \
+  lg_ten "SELECT log(10) FROM sensors LIMIT 1" \
+  lg_zero "SELECT log(0) FROM sensors LIMIT 1" \
+  lg_neg "SELECT log(-1) FROM sensors LIMIT 1" \
+  lg_null "SELECT log(null) FROM sensors LIMIT 1" \
+  lg_case "SELECT LOG(READING) FROM sensors" \
+  lg_order "SELECT log(id) FROM sensors ORDER BY log(id)" \
+  lg_reading_order "SELECT log(reading) FROM sensors ORDER BY log(reading)" \
+  lg_with_id "SELECT id, log(id) FROM sensors ORDER BY log(id)" \
+  lg_where "SELECT log(id) FROM sensors WHERE id = 1" \
+  lg_limit_zero "SELECT log(id) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -762,7 +778,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   sg_id "SELECT sign(id) FROM days ORDER BY ts" \
   sq_id "SELECT sqrt(id) FROM days ORDER BY ts" \
   pw_id "SELECT power(id, 2) FROM days ORDER BY ts" \
-  ln_id "SELECT ln(id) FROM days ORDER BY ts"
+  ln_id "SELECT ln(id) FROM days ORDER BY ts" \
+  lg_id "SELECT log(id) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -1370,6 +1387,22 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, ln(id) FROM sensors ORDER BY ln(id)"),
     (os.environ["DIFF_H1"], "SELECT ln(id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT ln(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT log(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT log(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT log(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT log(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT log(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT log(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT log(10) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT log(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT log(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT log(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT LOG(READING) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT log(id) FROM sensors ORDER BY log(id)"),
+    (os.environ["DIFF_H1"], "SELECT log(reading) FROM sensors ORDER BY log(reading)"),
+    (os.environ["DIFF_H1"], "SELECT id, log(id) FROM sensors ORDER BY log(id)"),
+    (os.environ["DIFF_H1"], "SELECT log(id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT log(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1470,6 +1503,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT sqrt(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT power(id, 2) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT ln(id) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT log(id) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

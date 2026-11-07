@@ -104,6 +104,7 @@ pub enum Proj {
     Sqrt(SqrtExpr),
     Power(PowerExpr),
     Ln(LnExpr),
+    Log(LogExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,6 +263,13 @@ pub struct LnExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `log(number)`, base 10.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -357,6 +365,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_power()?.label
             } else if parser.starts_ln_call() {
                 parser.parse_ln()?.label
+            } else if parser.starts_log_call() {
+                parser.parse_log()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -431,6 +441,7 @@ enum SelectPiece {
     Sqrt(SqrtExpr),
     Power(PowerExpr),
     Ln(LnExpr),
+    Log(LogExpr),
 }
 
 struct Parser<'a> {
@@ -567,6 +578,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Power(self.parse_power()?));
             } else if self.starts_ln_call() {
                 pieces.push(SelectPiece::Ln(self.parse_ln()?));
+            } else if self.starts_log_call() {
+                pieces.push(SelectPiece::Log(self.parse_log()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -604,6 +617,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Sqrt(_)
                     | SelectPiece::Power(_)
                     | SelectPiece::Ln(_)
+                    | SelectPiece::Log(_)
             )
         });
         if counts > 0 && projected {
@@ -640,6 +654,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Sqrt(expr) => items.push(Proj::Sqrt(expr)),
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
+                    SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -699,7 +714,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Sign(_)
                 | SelectPiece::Sqrt(_)
                 | SelectPiece::Power(_)
-                | SelectPiece::Ln(_) => {
+                | SelectPiece::Ln(_)
+                | SelectPiece::Log(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -742,6 +758,24 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_log_call(&self) -> bool {
+        self.starts_named_call("log")
+    }
+
+    fn parse_log(&mut self) -> Result<LogExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `log` requires arguments: log(DOUBLE)".to_string(),
+            ));
+        }
+        Ok(LogExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_ln_call(&self) -> bool {

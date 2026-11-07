@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — log()
+
+Es `Math.log10` y devuelve `DOUBLE`. Un negativo es NaN y sale NULL. `log(0)` y `log(-0.0)` son infinito negativo: se ordenan antes que cualquier finito y se imprimen como NULL. `log(10)` es `1.0`. Un texto rompe la respuesta HTTP; aquí se rechaza como `DOUBLE` esperado. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — ln()
 
 Usa `Math.log` y devuelve `DOUBLE`. Un negativo es NaN y sale NULL, así que se ordena con los NULL. `ln(0)` y `ln(-0.0)` son infinito negativo: se ordenan antes que cualquier finito y `/exec` los imprime como NULL. Un texto rompe la respuesta HTTP; aquí se rechaza como `DOUBLE` esperado. Se contrastó con `/exec` en `sensors` y `days`.
