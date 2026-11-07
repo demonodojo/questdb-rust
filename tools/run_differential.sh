@@ -1134,7 +1134,25 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tt_case "SELECT TO_TIMESTAMP('1') FROM sensors LIMIT 1" \
   tt_order "SELECT to_timestamp(note) FROM sensors ORDER BY to_timestamp(note)" \
   tt_where "SELECT to_timestamp('1') FROM sensors WHERE id = 1" \
-  tt_limit "SELECT to_timestamp('1') FROM sensors LIMIT 0"
+  tt_limit "SELECT to_timestamp('1') FROM sensors LIMIT 0" \
+  tp_date "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  tp_loose "SELECT to_timestamp('2020-1-2', 'yyyy-M-d') FROM sensors LIMIT 1" \
+  tp_yy "SELECT to_timestamp('20', 'yy') FROM sensors LIMIT 1" \
+  tp_yy69 "SELECT to_timestamp('69', 'yy') FROM sensors LIMIT 1" \
+  tp_time "SELECT to_timestamp('2020-01-02 15:07:09', 'yyyy-MM-dd HH:mm:ss') FROM sensors LIMIT 1" \
+  tp_frac "SELECT to_timestamp('03:04:05.123456', 'HH:mm:ss.SSSUUU') FROM sensors LIMIT 1" \
+  tp_mon "SELECT to_timestamp('Jan 2, 2020', 'MMM d, yyyy') FROM sensors LIMIT 1" \
+  tp_long "SELECT to_timestamp('January 2, 2020', 'MMMM d, yyyy') FROM sensors LIMIT 1" \
+  tp_pm "SELECT to_timestamp('3 PM', 'h a') FROM sensors LIMIT 1" \
+  tp_noon "SELECT to_timestamp('12 PM', 'h a') FROM sensors LIMIT 1" \
+  tp_mid "SELECT to_timestamp('12 AM', 'h a') FROM sensors LIMIT 1" \
+  tp_note "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM sensors" \
+  tp_null "SELECT to_timestamp(null, 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  tp_bad "SELECT to_timestamp('nope', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  tp_case "SELECT TO_TIMESTAMP('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  tp_order "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM sensors ORDER BY to_timestamp(note, 'yyyy-MM-dd')" \
+  tp_where "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1" \
+  tp_zero "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1271,7 +1289,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ts_days "SELECT to_str(ts, 'yyyy-MM-dd') FROM days ORDER BY ts" \
   em_days "SELECT is_end_of_month(ts) FROM days ORDER BY ts" \
   ds_days "SELECT day_of_week_sunday_first(ts) FROM days ORDER BY ts" \
-  tt_days "SELECT to_timestamp(note) FROM days ORDER BY ts"
+  tt_days "SELECT to_timestamp(note) FROM days ORDER BY ts" \
+  tp_days "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2353,6 +2372,24 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_timestamp(note) FROM sensors ORDER BY to_timestamp(note)"),
     (os.environ["DIFF_H1"], "SELECT to_timestamp('1') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT to_timestamp('1') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('2020-1-2', 'yyyy-M-d') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('20', 'yy') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('69', 'yy') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('2020-01-02 15:07:09', 'yyyy-MM-dd HH:mm:ss') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('03:04:05.123456', 'HH:mm:ss.SSSUUU') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('Jan 2, 2020', 'MMM d, yyyy') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('January 2, 2020', 'MMMM d, yyyy') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('3 PM', 'h a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('12 PM', 'h a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('12 AM', 'h a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp(null, 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('nope', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT TO_TIMESTAMP('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM sensors ORDER BY to_timestamp(note, 'yyyy-MM-dd')"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2488,6 +2525,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT is_end_of_month(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT day_of_week_sunday_first(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT to_timestamp(note) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

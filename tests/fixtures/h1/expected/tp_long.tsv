@@ -1,0 +1,2 @@
+to_timestamp('January 2, 2020', 'MMMM d, yyyy')
+2020-01-02T00:00:00.000000Z

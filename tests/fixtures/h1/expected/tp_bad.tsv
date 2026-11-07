@@ -1,0 +1,2 @@
+to_timestamp('nope', 'yyyy-MM-dd')
+NULL

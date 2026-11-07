@@ -470,6 +470,7 @@ enum ResolvedProj {
     ToTimestamp {
         label: String,
         arg: ResolvedArg,
+        pattern: Option<Vec<TimestampToken>>,
     },
     Floor {
         label: String,
@@ -1683,12 +1684,282 @@ const LONG_MONTHS: [&str; 12] = [
     "December",
 ];
 
-fn resolve_to_timestamp(table: &Table, expr: &ToTimestampExpr) -> Result<ResolvedProj, Error> {
-    if expr.args.len() != 1 {
-        return Err(Error::new(
-            "unsupported: to_timestamp with a format".to_string(),
-        ));
+struct TimestampToken {
+    op: ToStrOp,
+    greedy: bool,
+}
+
+fn compile_timestamp_tokens(pattern: &str) -> Vec<TimestampToken> {
+    let ops = compile_to_str(pattern).unwrap_or_default();
+    let mut tokens: Vec<TimestampToken> = ops
+        .into_iter()
+        .map(|op| TimestampToken { op, greedy: false })
+        .collect();
+    for index in 0..tokens.len() {
+        let boundary = matches!(
+            tokens[index].op,
+            ToStrOp::Lit(_) | ToStrOp::AmPm | ToStrOp::Zone
+        );
+        if boundary && index > 0 && timestamp_token_is_flexible(&tokens[index - 1].op) {
+            tokens[index - 1].greedy = true;
+        }
     }
+    if let Some(last) = tokens.last_mut() {
+        if timestamp_token_is_flexible(&last.op) {
+            last.greedy = true;
+        }
+    }
+    tokens
+}
+
+fn timestamp_token_is_flexible(op: &ToStrOp) -> bool {
+    matches!(
+        op,
+        ToStrOp::Year(1)
+            | ToStrOp::Month(1)
+            | ToStrOp::Day(1)
+            | ToStrOp::Hour24(false)
+            | ToStrOp::Hour12(false)
+            | ToStrOp::HourK(false)
+            | ToStrOp::HourCapK(false)
+            | ToStrOp::Minute(false)
+            | ToStrOp::Second(false)
+            | ToStrOp::Millis(false)
+            | ToStrOp::Micros(false)
+    )
+}
+
+fn parse_timestamp_pattern(tokens: &[TimestampToken], text: &str) -> Option<i64> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut index = 0;
+    let mut year = 1970i32;
+    let mut month = 1u32;
+    let mut day = 1u32;
+    let mut hour = 0i32;
+    let mut minute = 0i32;
+    let mut second = 0i32;
+    let mut millis = 0i32;
+    let mut micros = 0i32;
+    let mut afternoon = None;
+    for token in tokens {
+        match &token.op {
+            ToStrOp::Lit(literal) => {
+                for ch in literal.chars() {
+                    if chars.get(index) != Some(&ch) {
+                        return None;
+                    }
+                    index += 1;
+                }
+            }
+            ToStrOp::Year(width) => {
+                let (value, len) = read_pattern_digits(&chars, index, *width, token.greedy)?;
+                index += len;
+                year = if *width == 2 || (token.greedy && len == 2) {
+                    adjust_two_digit_year(value)
+                } else {
+                    value
+                };
+            }
+            ToStrOp::Month(3) => {
+                let (value, len) = match_pattern_name(&chars, index, &SHORT_MONTHS)?;
+                index += len;
+                month = value;
+            }
+            ToStrOp::Month(4) => {
+                let (value, len) = match_pattern_name(&chars, index, &LONG_MONTHS)?;
+                index += len;
+                month = value;
+            }
+            ToStrOp::Month(width) => {
+                let (value, len) = read_pattern_digits(&chars, index, *width, token.greedy)?;
+                index += len;
+                month = u32::try_from(value).unwrap_or(0);
+            }
+            ToStrOp::Day(width) => {
+                let (value, len) = read_pattern_digits(&chars, index, *width, token.greedy)?;
+                index += len;
+                day = u32::try_from(value).unwrap_or(0);
+            }
+            ToStrOp::Hour24(padded) | ToStrOp::Hour12(padded) => {
+                let width = if *padded { 2 } else { 1 };
+                let (value, len) = read_pattern_digits(&chars, index, width, token.greedy)?;
+                index += len;
+                hour = value;
+            }
+            ToStrOp::Minute(padded) | ToStrOp::Second(padded) => {
+                let width = if *padded { 2 } else { 1 };
+                let (value, len) = read_pattern_digits(&chars, index, width, token.greedy)?;
+                index += len;
+                if matches!(token.op, ToStrOp::Minute(_)) {
+                    minute = value;
+                } else {
+                    second = value;
+                }
+            }
+            ToStrOp::Millis(padded) | ToStrOp::Micros(padded) => {
+                let width = if *padded { 3 } else { 1 };
+                let (value, len) = read_pattern_digits(&chars, index, width, token.greedy)?;
+                index += len;
+                if matches!(token.op, ToStrOp::Millis(_)) {
+                    millis = value;
+                } else {
+                    micros = value;
+                }
+            }
+            ToStrOp::AmPm => {
+                if chars[index..].starts_with(&['A', 'M']) {
+                    afternoon = Some(false);
+                    index += 2;
+                } else if chars[index..].starts_with(&['P', 'M']) {
+                    afternoon = Some(true);
+                    index += 2;
+                } else {
+                    return None;
+                }
+            }
+            ToStrOp::Zone if chars.get(index).is_some_and(|ch| *ch == 'Z' || *ch == 'z') => {
+                index += 1;
+            }
+            ToStrOp::Zone => return None,
+            _ => return None,
+        }
+    }
+    if index != chars.len() {
+        return None;
+    }
+    if let Some(is_pm) = afternoon {
+        if hour == 12 {
+            hour = if is_pm { 12 } else { 0 };
+        } else if is_pm {
+            hour += 12;
+        }
+    }
+    timestamp_from_clock(ParsedClock {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        millis,
+        micros,
+    })
+}
+
+fn read_pattern_digits(
+    chars: &[char],
+    index: usize,
+    width: u8,
+    greedy: bool,
+) -> Option<(i32, usize)> {
+    let exact = if greedy { 0 } else { usize::from(width) };
+    let limit = if greedy { 9 } else { exact };
+    let mut value = 0i32;
+    let mut count = 0;
+    while count < limit && index + count < chars.len() && chars[index + count].is_ascii_digit() {
+        let digit = (u32::from(chars[index + count]) - u32::from('0')) as i32;
+        value = value.saturating_mul(10).saturating_add(digit);
+        count += 1;
+    }
+    if greedy {
+        (count > 0).then_some((value, count))
+    } else if count == exact {
+        Some((value, count))
+    } else {
+        None
+    }
+}
+
+fn match_pattern_name(chars: &[char], index: usize, names: &[&str]) -> Option<(u32, usize)> {
+    for (offset, name) in names.iter().enumerate() {
+        let name: Vec<char> = name.chars().collect();
+        if chars[index..].starts_with(&name) {
+            return Some((u32::try_from(offset + 1).unwrap_or(0), name.len()));
+        }
+    }
+    None
+}
+
+fn adjust_two_digit_year(year: i32) -> i32 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| i64::try_from(elapsed.as_micros()).ok())
+        .unwrap_or(0);
+    let reference = dateadd_parts(now).0;
+    let offset = reference.rem_euclid(100);
+    let low = if offset + 20 > 100 {
+        reference - offset + 100
+    } else {
+        reference - offset
+    };
+    low + year
+}
+
+struct ParsedClock {
+    year: i32,
+    month: u32,
+    day: u32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+    millis: i32,
+    micros: i32,
+}
+
+fn timestamp_from_clock(clock: ParsedClock) -> Option<i64> {
+    if !(1..=12).contains(&clock.month)
+        || clock.day < 1
+        || clock.day > u32::try_from(days_in_month(clock.year, clock.month)).unwrap_or(0)
+    {
+        return None;
+    }
+    if !(0..24).contains(&clock.hour)
+        || !(0..60).contains(&clock.minute)
+        || !(0..60).contains(&clock.second)
+    {
+        return None;
+    }
+    if !(0..1_000).contains(&clock.millis) || !(0..1_000).contains(&clock.micros) {
+        return None;
+    }
+    let days = qdb_types::unix_days_from_civil(clock.year, clock.month, clock.day)?;
+    Some(
+        days * DATEADD_DAY
+            + i64::from(clock.hour) * 3_600 * 1_000_000
+            + i64::from(clock.minute) * 60 * 1_000_000
+            + i64::from(clock.second) * 1_000_000
+            + i64::from(clock.millis) * 1_000
+            + i64::from(clock.micros),
+    )
+}
+
+fn resolve_to_timestamp(table: &Table, expr: &ToTimestampExpr) -> Result<ResolvedProj, Error> {
+    let pattern = if expr.args.len() == 2 {
+        match &expr.args[1] {
+            ConcatArg::Literal(Scalar::Null) => return Err(Error::new("pattern is required")),
+            ConcatArg::Literal(Scalar::Text(text)) => Some(compile_timestamp_tokens(text)),
+            ConcatArg::Literal(Scalar::Char(0)) => Some(compile_timestamp_tokens("")),
+            ConcatArg::Literal(Scalar::Char(unit)) => Some(compile_timestamp_tokens(
+                &char::from_u32(u32::from(*unit))
+                    .unwrap_or('\u{0}')
+                    .to_string(),
+            )),
+            _ => {
+                return Err(Error::new(format!(
+                    "there is no matching function `to_timestamp` with the argument types: ({})",
+                    timestamp_floor_types(table, &expr.args)?
+                )));
+            }
+        }
+    } else if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "there is no matching function `to_timestamp` with the argument types: ({})",
+            timestamp_floor_types(table, &expr.args)?
+        )));
+    } else {
+        None
+    };
     let arg = match &expr.args[0] {
         ConcatArg::Literal(Scalar::Null) => ResolvedArg::Null,
         ConcatArg::Literal(Scalar::Text(text)) => ResolvedArg::Text(text.clone()),
@@ -1712,7 +1983,7 @@ fn resolve_to_timestamp(table: &Table, expr: &ToTimestampExpr) -> Result<Resolve
             ) {
                 return Err(Error::new(format!(
                     "there is no matching function `to_timestamp` with the argument types: ({})",
-                    qdb_types::type_name(tag)
+                    timestamp_floor_types(table, &expr.args)?
                 )));
             }
             ResolvedArg::Column { index, tag }
@@ -1727,6 +1998,7 @@ fn resolve_to_timestamp(table: &Table, expr: &ToTimestampExpr) -> Result<Resolve
     Ok(ResolvedProj::ToTimestamp {
         label: expr.label.clone(),
         arg,
+        pattern,
     })
 }
 
@@ -4431,11 +4703,17 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Some(micros) => Scalar::Text(format_to_str(ops, micros)),
             None => Scalar::Null,
         },
-        ResolvedProj::ToTimestamp { arg, .. } => match text_of(table, row, arg) {
-            Some(text) => match parse_questdb_long(&text) {
-                Some(micros) if micros != i64::MIN => Scalar::Timestamp(micros),
-                _ => Scalar::Null,
-            },
+        ResolvedProj::ToTimestamp { arg, pattern, .. } => match text_of(table, row, arg) {
+            Some(text) => {
+                let micros = match pattern {
+                    Some(tokens) => parse_timestamp_pattern(tokens, &text),
+                    None => parse_questdb_long(&text).filter(|micros| *micros != i64::MIN),
+                };
+                match micros {
+                    Some(micros) if micros != i64::MIN => Scalar::Timestamp(micros),
+                    _ => Scalar::Null,
+                }
+            }
             None => Scalar::Null,
         },
         ResolvedProj::DayOfWeekSundayFirst { value, .. } => {
@@ -13595,6 +13873,144 @@ mod tests {
         let err = execute(&sensors, "SELECT to_timestamp(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn to_timestamp_format_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1",
+                "expected/tp_date.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('2020-1-2', 'yyyy-M-d') FROM sensors LIMIT 1",
+                "expected/tp_loose.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('20', 'yy') FROM sensors LIMIT 1",
+                "expected/tp_yy.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('69', 'yy') FROM sensors LIMIT 1",
+                "expected/tp_yy69.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('2020-01-02 15:07:09', 'yyyy-MM-dd HH:mm:ss') FROM sensors LIMIT 1",
+                "expected/tp_time.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('03:04:05.123456', 'HH:mm:ss.SSSUUU') FROM sensors LIMIT 1",
+                "expected/tp_frac.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('Jan 2, 2020', 'MMM d, yyyy') FROM sensors LIMIT 1",
+                "expected/tp_mon.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('January 2, 2020', 'MMMM d, yyyy') FROM sensors LIMIT 1",
+                "expected/tp_long.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('3 PM', 'h a') FROM sensors LIMIT 1",
+                "expected/tp_pm.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('12 PM', 'h a') FROM sensors LIMIT 1",
+                "expected/tp_noon.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('12 AM', 'h a') FROM sensors LIMIT 1",
+                "expected/tp_mid.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM sensors",
+                "expected/tp_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp(null, 'yyyy-MM-dd') FROM sensors LIMIT 1",
+                "expected/tp_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('nope', 'yyyy-MM-dd') FROM sensors LIMIT 1",
+                "expected/tp_bad.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT TO_TIMESTAMP('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1",
+                "expected/tp_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM sensors ORDER BY to_timestamp(note, 'yyyy-MM-dd')",
+                "expected/tp_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1",
+                "expected/tp_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0",
+                "expected/tp_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM days ORDER BY ts",
+                "expected/tp_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(
+            &sensors,
+            "SELECT to_timestamp('2020-01-02', null) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("pattern is required"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT to_timestamp('2020-01-02', note) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_timestamp` with the argument types: (STRING, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timestamp(id, 'yyyy') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_timestamp` with the argument types: (LONG, STRING)"
+            ),
             "{}",
             err.message
         );
