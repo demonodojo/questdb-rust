@@ -848,6 +848,7 @@ pub struct InListExpr {
 pub struct EqExpr {
     pub label: String,
     pub value: String,
+    pub op: CmpOp,
     pub literal: Scalar,
 }
 
@@ -1139,7 +1140,7 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.skip();
                 if parser.eat_keyword("in") {
                     column = parser.parse_in_list(column)?.label;
-                } else if parser.peek() == Some(b'=') {
+                } else if parser.starts_eq_or_ne() {
                     column = parser.parse_eq(column)?.label;
                 } else if parser.peek() == Some(b'(') {
                     column = parser.parse_order_call(column)?;
@@ -1539,7 +1540,7 @@ impl<'a> Parser<'a> {
                 self.skip();
                 if self.eat_keyword("in") {
                     pieces.push(SelectPiece::InList(self.parse_in_list(name)?));
-                } else if self.peek() == Some(b'=') {
+                } else if self.starts_eq_or_ne() {
                     pieces.push(SelectPiece::Eq(self.parse_eq(name)?));
                 } else {
                     pieces.push(SelectPiece::Column(name));
@@ -2072,17 +2073,40 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_eq(&mut self, name: String) -> Result<EqExpr, Error> {
-        self.skip();
-        if !self.eat(b'=') {
-            return Err(Error::new("unsupported: expected '='".to_string()));
+    fn starts_eq_or_ne(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
         }
+        let rest = &self.src[pos..];
+        rest.starts_with(b"=") || rest.starts_with(b"!=") || rest.starts_with(b"<>")
+    }
+
+    fn parse_eq(&mut self, name: String) -> Result<EqExpr, Error> {
+        let spelling = self.cmp_spelling();
+        let op = self.parse_op()?;
         let literal = self.parse_literal()?;
         Ok(EqExpr {
-            label: format!("{name} = {}", eq_literal_label(&literal)),
+            label: format!("{name} {spelling} {}", eq_literal_label(&literal)),
             value: name,
+            op,
             literal,
         })
+    }
+
+    fn cmp_spelling(&self) -> String {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let rest = &self.src[pos..];
+        if rest.starts_with(b"!=") {
+            "!=".to_string()
+        } else if rest.starts_with(b"<>") {
+            "<>".to_string()
+        } else {
+            "=".to_string()
+        }
     }
 
     fn starts_spread_bps_call(&self) -> bool {

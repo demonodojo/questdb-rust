@@ -694,6 +694,7 @@ enum ResolvedProj {
     Eq {
         label: String,
         index: usize,
+        op: CmpOp,
         literal: Scalar,
     },
     Ln {
@@ -1681,14 +1682,26 @@ fn resolve_eq(table: &Table, expr: &EqExpr) -> Result<ResolvedProj, Error> {
     Ok(ResolvedProj::Eq {
         label: expr.label.clone(),
         index,
+        op: expr.op,
         literal: expr.literal.clone(),
     })
 }
 
-fn eq_value(table: &Table, row: usize, index: usize, literal: &Scalar) -> Result<Scalar, Error> {
+fn eq_value(
+    table: &Table,
+    row: usize,
+    index: usize,
+    op: CmpOp,
+    literal: &Scalar,
+) -> Result<Scalar, Error> {
     let tag = table.meta.columns[index].tag;
     let left = &table.columns[index][row];
-    Ok(Scalar::Boolean(sql_cmp(left, tag, CmpOp::Eq, literal)?))
+    let equal = sql_cmp(left, tag, CmpOp::Eq, literal)?;
+    let result = match op {
+        CmpOp::NotEq => !equal,
+        _ => equal,
+    };
+    Ok(Scalar::Boolean(result))
 }
 
 fn resolve_in_list(table: &Table, expr: &InListExpr) -> Result<ResolvedProj, Error> {
@@ -7004,7 +7017,9 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         ResolvedProj::Degrees { input, .. } => degrees_scalar(table, row, input),
         ResolvedProj::Radians { input, .. } => radians_scalar(table, row, input),
         ResolvedProj::Cot { input, .. } => cot_scalar(table, row, input),
-        ResolvedProj::Eq { index, literal, .. } => eq_value(table, row, *index, literal),
+        ResolvedProj::Eq {
+            index, op, literal, ..
+        } => eq_value(table, row, *index, *op, literal),
         ResolvedProj::Bar {
             value,
             min,
@@ -7084,9 +7099,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             value, low, high, ..
         } => between_value(table, row, value, low, high),
         ResolvedProj::InList { index, items, .. } => in_list_value(table, row, *index, items),
-        ResolvedProj::Eq { index, literal, .. } => {
-            eq_value(table, row, *index, literal).unwrap_or(Scalar::Null)
-        }
+        ResolvedProj::Eq {
+            index, op, literal, ..
+        } => eq_value(table, row, *index, *op, literal).unwrap_or(Scalar::Null),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15461,6 +15476,76 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn ne_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id <> 1 FROM sensors",
+                "expected/ne_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id <> 1 FROM sensors WHERE id = 1",
+                "expected/ne_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id <> 1 FROM sensors WHERE id = 2",
+                "expected/ne_two.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id <> 1 FROM sensors WHERE id > 100",
+                "expected/ne_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id <> null FROM sensors",
+                "expected/ne_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note <> 'alpha' FROM sensors",
+                "expected/ne_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note <> '' FROM sensors",
+                "expected/ne_empty.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT reading <> 0 FROM sensors",
+                "expected/ne_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id != 1 FROM sensors WHERE id = 1",
+                "expected/ne_bang.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id <> 1 FROM sensors LIMIT 0",
+                "expected/ne_lim0.tsv",
+            ),
+            (&days, "SELECT id <> 1 FROM days", "expected/ne_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT missing <> 1 FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
