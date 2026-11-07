@@ -64,6 +64,7 @@ pub enum AggFunc {
     RegrIntercept,
     RegrR2,
     BoolAnd,
+    BoolOr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3060,6 +3061,7 @@ impl<'a> Parser<'a> {
                 | "regr_intercept"
                 | "regr_r2"
                 | "bool_and"
+                | "bool_or"
         ) {
             return false;
         }
@@ -3113,6 +3115,7 @@ impl<'a> Parser<'a> {
             "regr_intercept" => AggFunc::RegrIntercept,
             "regr_r2" => AggFunc::RegrR2,
             "bool_and" => AggFunc::BoolAnd,
+            "bool_or" => AggFunc::BoolOr,
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func != AggFunc::Count && starred {
@@ -3130,6 +3133,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::KSum
                 | AggFunc::NSum
                 | AggFunc::BoolAnd
+                | AggFunc::BoolOr
         ) && self.peek() != Some(b')')
         {
             let mut provided = if column.is_some() { 1 } else { 0 };
@@ -3327,7 +3331,7 @@ impl<'a> Parser<'a> {
                 name.to_ascii_lowercase()
             )));
         }
-        if func == AggFunc::BoolAnd && column.is_none() {
+        if matches!(func, AggFunc::BoolAnd | AggFunc::BoolOr) && column.is_none() {
             let fname = name.to_ascii_lowercase();
             return Err(Error::new(format!(
                 "function `{fname}` requires arguments: {fname}(BOOLEAN)"
