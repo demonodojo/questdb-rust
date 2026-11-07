@@ -2232,7 +2232,26 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   qc_grp "SELECT quantile_cont(flags, 0.5) FROM sensors GROUP BY location ORDER BY location" \
   qc_grp_r "SELECT quantile_cont(reading, 0.5) FROM sensors GROUP BY location ORDER BY location" \
   qc_lim0 "SELECT quantile_cont(flags, 0.5) FROM sensors LIMIT 0" \
-  qc_case "SELECT QUANTILE_CONT(flags, 0.5) FROM sensors"
+  qc_case "SELECT QUANTILE_CONT(flags, 0.5) FROM sensors" \
+  qd_flags "SELECT quantile_disc(flags, 0.5) FROM sensors" \
+  qd_one "SELECT quantile_disc(flags, 0.5) FROM sensors WHERE id = 1" \
+  qd_none "SELECT quantile_disc(flags, 0.5) FROM sensors WHERE id > 100" \
+  qd_zero "SELECT quantile_disc(flags, 0) FROM sensors" \
+  qd_high "SELECT quantile_disc(flags, 1) FROM sensors" \
+  qd_neg "SELECT quantile_disc(flags, 0.5) FROM sensors WHERE id = -1" \
+  qd_read "SELECT quantile_disc(reading, 0.5) FROM sensors" \
+  qd_read0 "SELECT quantile_disc(reading, 0) FROM sensors" \
+  qd_read1 "SELECT quantile_disc(reading, 1) FROM sensors" \
+  qd_score "SELECT quantile_disc(score, 0.5) FROM sensors" \
+  qd_id "SELECT quantile_disc(id, 0.5) FROM sensors" \
+  qd_byte "SELECT quantile_disc(b, 0.5) FROM sensors" \
+  qd_code "SELECT quantile_disc(code, 0.5) FROM sensors" \
+  qd_day "SELECT quantile_disc(day, 0.5) FROM sensors" \
+  qd_ts "SELECT quantile_disc(ts, 0.5) FROM sensors" \
+  qd_grp "SELECT quantile_disc(flags, 0.5) FROM sensors GROUP BY location ORDER BY location" \
+  qd_grp_r "SELECT quantile_disc(reading, 0.5) FROM sensors GROUP BY location ORDER BY location" \
+  qd_lim0 "SELECT quantile_disc(flags, 0.5) FROM sensors LIMIT 0" \
+  qd_case "SELECT QUANTILE_DISC(flags, 0.5) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2485,7 +2504,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   sy_days "SELECT skewness_samp(id) FROM days" \
   sy_days_grp "SELECT skewness_samp(id) FROM days GROUP BY location ORDER BY location" \
   qc_days "SELECT quantile_cont(id, 0.5) FROM days" \
-  qc_days_grp "SELECT quantile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location"
+  qc_days_grp "SELECT quantile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location" \
+  qd_days "SELECT quantile_disc(id, 0.5) FROM days" \
+  qd_days_grp "SELECT quantile_disc(id, 0.5) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4665,6 +4686,25 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT quantile_cont(reading, 0.5) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT quantile_cont(flags, 0.5) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT QUANTILE_CONT(flags, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(flags, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(flags, 0.5) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(flags, 0.5) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(flags, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(flags, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(flags, 0.5) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(reading, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(reading, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(reading, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(score, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(id, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(b, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(code, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(day, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(ts, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(flags, 0.5) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(reading, 0.5) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT quantile_disc(flags, 0.5) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT QUANTILE_DISC(flags, 0.5) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4916,6 +4956,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT skewness_samp(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT quantile_cont(id, 0.5) FROM days"),
     (os.environ["DIFF_H2"], "SELECT quantile_cont(id, 0.5) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT quantile_disc(id, 0.5) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT quantile_disc(id, 0.5) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

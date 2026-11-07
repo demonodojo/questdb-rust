@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — quantile_disc()
+
+`quantile_disc(value, percentile)` devuelve el mismo valor almacenado que `percentile_disc()`. `quantile_disc(flags, 0.5)` es el `LONG` `10` y `quantile_disc(reading, 0)` es el `DOUBLE` `-0.0`. Sin valores el resultado es NULL. La llamada vacía exige argumentos y no nombra una firma. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — quantile_cont()
 
 `quantile_cont(value, percentile)` es la interpolación ya cubierta por `percentile_cont()`. `quantile_cont(flags, 0.25)` es el `DOUBLE` `5.0` y `quantile_cont(reading, 0)` es `-0.0`. Sin valores el resultado es NULL. La llamada vacía exige argumentos y no nombra una firma. Se contrastó con `/exec` en `sensors` y `days`.

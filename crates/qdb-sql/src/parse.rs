@@ -74,6 +74,7 @@ pub enum AggFunc {
     BoolOr,
     IsOrdered,
     PercentileDisc,
+    QuantileDisc,
     PercentileCont,
     QuantileCont,
     FirstNotNull,
@@ -3181,6 +3182,7 @@ impl<'a> Parser<'a> {
                 | "bool_or"
                 | "isordered"
                 | "percentile_disc"
+                | "quantile_disc"
                 | "percentile_cont"
                 | "quantile_cont"
                 | "first_not_null"
@@ -3262,6 +3264,7 @@ impl<'a> Parser<'a> {
             "bool_or" => AggFunc::BoolOr,
             "isordered" => AggFunc::IsOrdered,
             "percentile_disc" => AggFunc::PercentileDisc,
+            "quantile_disc" => AggFunc::QuantileDisc,
             "percentile_cont" => AggFunc::PercentileCont,
             "quantile_cont" => AggFunc::QuantileCont,
             "first_not_null" => AggFunc::FirstNotNull,
@@ -3723,7 +3726,10 @@ impl<'a> Parser<'a> {
         }
         if matches!(
             func,
-            AggFunc::PercentileDisc | AggFunc::PercentileCont | AggFunc::QuantileCont
+            AggFunc::PercentileDisc
+                | AggFunc::QuantileDisc
+                | AggFunc::PercentileCont
+                | AggFunc::QuantileCont
         ) && self.peek() == Some(b',')
         {
             let fname = name.to_ascii_lowercase();

@@ -7583,15 +7583,16 @@ impl Accumulator {
                 ordered: true,
                 previous: None,
             },
-            AggFunc::PercentileDisc | AggFunc::PercentileCont | AggFunc::QuantileCont => {
-                Self::PercentileDisc {
-                    longs: Vec::new(),
-                    doubles: Vec::new(),
-                    floating: false,
-                    continuous: matches!(func, AggFunc::PercentileCont | AggFunc::QuantileCont),
-                    percentile: 0.5,
-                }
-            }
+            AggFunc::PercentileDisc
+            | AggFunc::QuantileDisc
+            | AggFunc::PercentileCont
+            | AggFunc::QuantileCont => Self::PercentileDisc {
+                longs: Vec::new(),
+                doubles: Vec::new(),
+                floating: false,
+                continuous: matches!(func, AggFunc::PercentileCont | AggFunc::QuantileCont),
+                percentile: 0.5,
+            },
         }
     }
 
@@ -8054,6 +8055,10 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             1,
             percentile_disc_spec(table, tag, aggregate, "percentile_disc")?,
         ),
+        AggFunc::QuantileDisc => (
+            1,
+            percentile_disc_spec(table, tag, aggregate, "quantile_disc")?,
+        ),
         AggFunc::PercentileCont => (
             1,
             percentile_disc_spec(table, tag, aggregate, "percentile_cont")?,
@@ -8121,7 +8126,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::ArgMax => arg_max_result_tag(input.tag, input.pair_tag),
         AggFunc::ArgMin => arg_min_result_tag(input.tag, input.pair_tag),
         AggFunc::BoolAnd | AggFunc::BoolOr | AggFunc::IsOrdered => qdb_types::TAG_BOOLEAN,
-        AggFunc::PercentileDisc => percentile_disc_tag(input.tag),
+        AggFunc::PercentileDisc | AggFunc::QuantileDisc => percentile_disc_tag(input.tag),
         AggFunc::PercentileCont | AggFunc::QuantileCont => qdb_types::TAG_DOUBLE,
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
@@ -8214,6 +8219,7 @@ fn contribution(
         | AggFunc::Twap
         | AggFunc::IsOrdered
         | AggFunc::PercentileDisc
+        | AggFunc::QuantileDisc
         | AggFunc::PercentileCont
         | AggFunc::QuantileCont => Ok(None),
     }
@@ -8385,7 +8391,10 @@ fn feed(
     }
     if matches!(
         input.func,
-        AggFunc::PercentileDisc | AggFunc::PercentileCont | AggFunc::QuantileCont
+        AggFunc::PercentileDisc
+            | AggFunc::QuantileDisc
+            | AggFunc::PercentileCont
+            | AggFunc::QuantileCont
     ) {
         update_percentile_disc(accumulator, columns, row, input)?;
         return Ok(());
@@ -27080,6 +27089,249 @@ mod tests {
             "SELECT percentile_disc(missing, 0.5) FROM sensors",
         )
         .unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn quantile_disc_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT quantile_disc(flags, 0.5) FROM sensors",
+                "expected/qd_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(flags, 0.5) FROM sensors WHERE id = 1",
+                "expected/qd_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(flags, 0.5) FROM sensors WHERE id > 100",
+                "expected/qd_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(flags, 0) FROM sensors",
+                "expected/qd_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(flags, 1) FROM sensors",
+                "expected/qd_high.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(flags, 0.5) FROM sensors WHERE id = -1",
+                "expected/qd_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(reading, 0.5) FROM sensors",
+                "expected/qd_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(reading, 0) FROM sensors",
+                "expected/qd_read0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(reading, 1) FROM sensors",
+                "expected/qd_read1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(score, 0.5) FROM sensors",
+                "expected/qd_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(id, 0.5) FROM sensors",
+                "expected/qd_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(b, 0.5) FROM sensors",
+                "expected/qd_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(code, 0.5) FROM sensors",
+                "expected/qd_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(day, 0.5) FROM sensors",
+                "expected/qd_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(ts, 0.5) FROM sensors",
+                "expected/qd_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(flags, 0.5) FROM sensors GROUP BY location ORDER BY location",
+                "expected/qd_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(reading, 0.5) FROM sensors GROUP BY location ORDER BY location",
+                "expected/qd_grp_r.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT quantile_disc(flags, 0.5) FROM sensors LIMIT 0",
+                "expected/qd_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT QUANTILE_DISC(flags, 0.5) FROM sensors",
+                "expected/qd_case.tsv",
+            ),
+            (
+                &days,
+                "SELECT quantile_disc(id, 0.5) FROM days",
+                "expected/qd_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT quantile_disc(id, 0.5) FROM days GROUP BY location ORDER BY location",
+                "expected/qd_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT quantile_disc() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `quantile_disc` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quantile_disc(flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `quantile_disc` with the argument types: (INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT quantile_disc(flags, 0.5, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `quantile_disc` with the argument types: (INT, DOUBLE, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quantile_disc(flags, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("percentile must be a constant or runtime constant"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quantile_disc(flags, 1.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("invalid percentile [expected=range(0.0, 1.0), actual=1.5]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quantile_disc(flags, -0.1) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("invalid percentile [expected=range(0.0, 1.0), actual=-0.1]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quantile_disc(flags, null) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("invalid percentile [expected=range(0.0, 1.0), actual=NaN]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quantile_disc(ok, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `quantile_disc` with the argument types: (BOOLEAN, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT quantile_disc(location, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `quantile_disc` with the argument types: (SYMBOL, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quantile_disc(note, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quantile_disc(tag, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT quantile_disc(note, 0.5) FROM sensors WHERE note = ''",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quantile_disc(ch, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT quantile_disc(ch, 0.5) FROM sensors WHERE id = 2",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: \0 [CHAR -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quantile_disc(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quantile_disc(missing, 0.5) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

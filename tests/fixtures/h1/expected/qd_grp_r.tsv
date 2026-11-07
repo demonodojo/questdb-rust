@@ -1,0 +1,4 @@
+quantile_disc(reading, 0.5)
+NULL
+0.0
+-0.0
