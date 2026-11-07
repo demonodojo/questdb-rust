@@ -284,7 +284,19 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   lower_order "SELECT lower(note) FROM sensors ORDER BY lower(note)" \
   lower_with_id "SELECT id, lower(note) FROM sensors ORDER BY lower(note)" \
   lower_where_empty "SELECT lower(note) FROM sensors WHERE note = ''" \
-  lower_limit_zero "SELECT lower(note) FROM sensors LIMIT 0"
+  lower_limit_zero "SELECT lower(note) FROM sensors LIMIT 0" \
+  upper_note "SELECT upper(note) FROM sensors" \
+  upper_location "SELECT upper(location) FROM sensors" \
+  upper_tag "SELECT upper(tag) FROM sensors" \
+  upper_ch "SELECT upper(ch) FROM sensors" \
+  upper_beta "SELECT upper('βeta') FROM sensors LIMIT 1" \
+  upper_empty "SELECT upper('') FROM sensors LIMIT 1" \
+  upper_null "SELECT upper(null) FROM sensors LIMIT 1" \
+  upper_case "SELECT UPPER(NOTE) FROM sensors" \
+  upper_order "SELECT upper(note) FROM sensors ORDER BY upper(note)" \
+  upper_with_id "SELECT id, upper(note) FROM sensors ORDER BY upper(note)" \
+  upper_where_empty "SELECT upper(note) FROM sensors WHERE note = ''" \
+  upper_limit_zero "SELECT upper(note) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -350,7 +362,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   length_note "SELECT length(note) FROM days" \
   length_location "SELECT length(location) FROM days ORDER BY ts" \
   lower_note "SELECT lower(note) FROM days" \
-  lower_location "SELECT lower(location) FROM days ORDER BY ts"
+  lower_location "SELECT lower(location) FROM days ORDER BY ts" \
+  upper_note "SELECT upper(note) FROM days" \
+  upper_location "SELECT upper(location) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -582,6 +596,18 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, lower(note) FROM sensors ORDER BY lower(note)"),
     (os.environ["DIFF_H1"], "SELECT lower(note) FROM sensors WHERE note = ''"),
     (os.environ["DIFF_H1"], "SELECT lower(note) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT upper(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT upper(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT upper(tag) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT upper(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT upper('βeta') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT upper('') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT upper(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT UPPER(NOTE) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT upper(note) FROM sensors ORDER BY upper(note)"),
+    (os.environ["DIFF_H1"], "SELECT id, upper(note) FROM sensors ORDER BY upper(note)"),
+    (os.environ["DIFF_H1"], "SELECT upper(note) FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT upper(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -646,6 +672,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT length(location) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT lower(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT lower(location) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT upper(note) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT upper(location) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

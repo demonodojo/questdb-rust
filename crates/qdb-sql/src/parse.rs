@@ -85,6 +85,7 @@ pub enum Proj {
     Concat(ConcatExpr),
     Length(LengthExpr),
     Lower(LowerExpr),
+    Upper(UpperExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +96,12 @@ pub struct LengthExpr {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LowerExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpperExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -156,6 +163,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_length()?.label
             } else if parser.starts_lower_call() {
                 parser.parse_lower()?.label
+            } else if parser.starts_upper_call() {
+                parser.parse_upper()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -211,6 +220,7 @@ enum SelectPiece {
     Concat(ConcatExpr),
     Length(LengthExpr),
     Lower(LowerExpr),
+    Upper(UpperExpr),
 }
 
 struct Parser<'a> {
@@ -309,6 +319,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Length(self.parse_length()?));
             } else if self.starts_lower_call() {
                 pieces.push(SelectPiece::Lower(self.parse_lower()?));
+            } else if self.starts_upper_call() {
+                pieces.push(SelectPiece::Upper(self.parse_upper()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -324,7 +336,10 @@ impl<'a> Parser<'a> {
         let projected = pieces.iter().any(|piece| {
             matches!(
                 piece,
-                SelectPiece::Concat(_) | SelectPiece::Length(_) | SelectPiece::Lower(_)
+                SelectPiece::Concat(_)
+                    | SelectPiece::Length(_)
+                    | SelectPiece::Lower(_)
+                    | SelectPiece::Upper(_)
             )
         });
         if counts > 0 && projected {
@@ -342,6 +357,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Concat(expr) => items.push(Proj::Concat(expr)),
                     SelectPiece::Length(expr) => items.push(Proj::Length(expr)),
                     SelectPiece::Lower(expr) => items.push(Proj::Lower(expr)),
+                    SelectPiece::Upper(expr) => items.push(Proj::Upper(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -380,7 +396,10 @@ impl<'a> Parser<'a> {
                     key = Some(name);
                 }
                 SelectPiece::Aggregate(expr) => aggregate = Some(expr),
-                SelectPiece::Concat(_) | SelectPiece::Length(_) | SelectPiece::Lower(_) => {
+                SelectPiece::Concat(_)
+                | SelectPiece::Length(_)
+                | SelectPiece::Lower(_)
+                | SelectPiece::Upper(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -411,6 +430,25 @@ impl<'a> Parser<'a> {
 
     fn starts_lower_call(&self) -> bool {
         self.starts_named_call("lower")
+    }
+
+    fn starts_upper_call(&self) -> bool {
+        self.starts_named_call("upper")
+    }
+
+    fn parse_upper(&mut self) -> Result<UpperExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(UpperExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn parse_lower(&mut self) -> Result<LowerExpr, Error> {
