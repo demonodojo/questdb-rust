@@ -60,7 +60,8 @@
 //! size-weighted midpoint of a bid and an ask as `DOUBLE`. `between` reports
 //! whether a timestamp or an integer lies inside a closed interval and returns
 //! `BOOLEAN`. `value BETWEEN low AND high` is that function and names the
-//! column `value between (low, high)`. `in` reports whether a value equals one listed constant and
+//! column `value between (low, high)`. `NOT BETWEEN` negates it and names the
+//! column `not(value between (low, high))`. `in` reports whether a value equals one listed constant and
 //! returns `BOOLEAN`. A null value is false. `=` compares a column with one
 //! constant and returns `BOOLEAN`. Null equals null, and `-0.0` equals `0`.
 //! `IS NULL` is that comparison and names the column `value = NULL`.

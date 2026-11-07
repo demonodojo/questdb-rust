@@ -837,6 +837,7 @@ pub struct WmidExpr {
 pub struct BetweenExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
+    pub negated: bool,
 }
 
 /// `value in (list)` reports whether `value` equals one listed constant.
@@ -1641,6 +1642,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::And)?));
                 } else if self.eat_keyword("or") {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::Or)?));
+                } else if self.starts_not_between() {
+                    pieces.push(SelectPiece::Between(self.parse_not_between(name)?));
                 } else if self.starts_between_infix() {
                     pieces.push(SelectPiece::Between(self.parse_between_op(name)?));
                 } else if self.starts_is_not_null() {
@@ -2154,6 +2157,25 @@ impl<'a> Parser<'a> {
         self.starts_named_call("between")
     }
 
+    fn starts_not_between(&self) -> bool {
+        let Some(after_not) = self.keyword_at(self.pos, "not") else {
+            return false;
+        };
+        self.keyword_at(after_not, "between").is_some()
+    }
+
+    fn parse_not_between(&mut self, name: String) -> Result<BetweenExpr, Error> {
+        if !self.eat_keyword("not") {
+            return Err(Error::new(
+                "unsupported: expected NOT BETWEEN after column".to_string(),
+            ));
+        }
+        let mut expr = self.parse_between_op(name)?;
+        expr.label = format!("not({})", expr.label);
+        expr.negated = true;
+        Ok(expr)
+    }
+
     fn starts_between_infix(&self) -> bool {
         self.keyword_at(self.pos, "between").is_some()
     }
@@ -2174,6 +2196,7 @@ impl<'a> Parser<'a> {
         Ok(BetweenExpr {
             label: format!("{name} between ({low_label}, {high_label})"),
             args: vec![ConcatArg::Column(name), low, high],
+            negated: false,
         })
     }
 
@@ -2183,6 +2206,7 @@ impl<'a> Parser<'a> {
         Ok(BetweenExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
+            negated: false,
         })
     }
 

@@ -1,0 +1,5 @@
+not(id between (id, id))
+false
+false
+true
+false
