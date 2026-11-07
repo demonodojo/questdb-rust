@@ -921,6 +921,8 @@ pub struct AddExpr {
     pub label: String,
     pub value: String,
     pub literal: Scalar,
+    /// Right-hand column. `None` means `literal` is the constant operand.
+    pub other: Option<String>,
     pub op: ArithOp,
 }
 
@@ -2299,13 +2301,45 @@ impl<'a> Parser<'a> {
                 "unsupported: expected '+', '-', '*', '/' or '%' after column".to_string(),
             ));
         };
-        let literal = self.parse_literal()?;
+        let (literal, other) = if op == ArithOp::Add && self.starts_add_column() {
+            (Scalar::Null, Some(self.ident_spelling()?))
+        } else {
+            (self.parse_literal()?, None)
+        };
+        let label = match &other {
+            Some(column) => format!("{name} + {column}"),
+            None => format!("{name} {} {}", op.spelling(), eq_literal_label(&literal)),
+        };
         Ok(AddExpr {
-            label: format!("{name} {} {}", op.spelling(), eq_literal_label(&literal)),
+            label,
             value: name,
             literal,
+            other,
             op,
         })
+    }
+
+    fn starts_add_column(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let Some(first) = self.src.get(pos) else {
+            return false;
+        };
+        if !first.is_ascii_alphabetic() && *first != b'_' {
+            return false;
+        }
+        let start = pos;
+        pos += 1;
+        while matches!(self.src.get(pos), Some(byte) if byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            pos += 1;
+        }
+        let word = std::str::from_utf8(&self.src[start..pos])
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        !matches!(word.as_str(), "null" | "true" | "false")
     }
 
     fn starts_eq_or_ne(&self) -> bool {

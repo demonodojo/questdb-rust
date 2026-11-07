@@ -706,6 +706,7 @@ enum ResolvedProj {
         index: usize,
         result_tag: i32,
         literal: Scalar,
+        other: Option<usize>,
         op: ArithOp,
     },
     Neg {
@@ -1721,25 +1722,52 @@ fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
     };
     let tag = table.meta.columns[index].tag;
     let spelling = expr.op.spelling();
-    let result_tag = match tag {
-        qdb_types::TAG_LONG | qdb_types::TAG_INT | qdb_types::TAG_DOUBLE => tag,
-        other => {
-            return Err(Error::new(format!(
-                "there is no matching operator `{spelling}` with the argument type: {}",
-                qdb_types::type_name(other)
-            )))
-        }
+    let (result_tag, other) = if let Some(name) = &expr.other {
+        let Some(other) = table.column_index(name) else {
+            return Err(Error::new(format!("Invalid column: {name}")));
+        };
+        let other_tag = table.meta.columns[other].tag;
+        let result_tag = match (tag, other_tag) {
+            (qdb_types::TAG_LONG, qdb_types::TAG_LONG)
+            | (qdb_types::TAG_LONG, qdb_types::TAG_INT)
+            | (qdb_types::TAG_INT, qdb_types::TAG_LONG) => qdb_types::TAG_LONG,
+            (qdb_types::TAG_INT, qdb_types::TAG_INT) => qdb_types::TAG_INT,
+            (qdb_types::TAG_DOUBLE, qdb_types::TAG_DOUBLE) => qdb_types::TAG_DOUBLE,
+            _ => {
+                return Err(Error::new(format!(
+                    "there is no matching operator `{spelling}` with the argument type: {}",
+                    qdb_types::type_name(tag)
+                )))
+            }
+        };
+        (result_tag, Some(other))
+    } else {
+        let result_tag = match tag {
+            qdb_types::TAG_LONG | qdb_types::TAG_INT | qdb_types::TAG_DOUBLE => tag,
+            other => {
+                return Err(Error::new(format!(
+                    "there is no matching operator `{spelling}` with the argument type: {}",
+                    qdb_types::type_name(other)
+                )))
+            }
+        };
+        (result_tag, None)
     };
-    if matches!(expr.literal, Scalar::Double(_)) && tag != qdb_types::TAG_DOUBLE {
+    if expr.other.is_none()
+        && matches!(expr.literal, Scalar::Double(_))
+        && tag != qdb_types::TAG_DOUBLE
+    {
         return Err(Error::new(format!(
             "there is no matching operator `{spelling}` with the argument type: {}",
             qdb_types::type_name(tag)
         )));
     }
-    if !matches!(
-        expr.literal,
-        Scalar::Null | Scalar::Long(_) | Scalar::Double(_)
-    ) {
+    if expr.other.is_none()
+        && !matches!(
+            expr.literal,
+            Scalar::Null | Scalar::Long(_) | Scalar::Double(_)
+        )
+    {
         return Err(Error::new(format!(
             "there is no matching operator `{spelling}` with the argument type: STRING"
         )));
@@ -1749,6 +1777,7 @@ fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
         index,
         result_tag,
         literal: expr.literal.clone(),
+        other,
         op: expr.op,
     })
 }
@@ -1973,14 +2002,52 @@ fn apply_f64(op: ArithOp, left: f64, right: f64) -> Option<f64> {
     }
 }
 
+fn add_column_i64(value: &Scalar) -> Option<i64> {
+    match value {
+        Scalar::Long(number) => Some(*number),
+        Scalar::Int(number) => Some(i64::from(*number)),
+        _ => None,
+    }
+}
+
 fn add_value(
     table: &Table,
     row: usize,
     index: usize,
     result_tag: i32,
     literal: &Scalar,
+    other: Option<usize>,
     op: ArithOp,
 ) -> Scalar {
+    if let Some(other) = other {
+        let left = &table.columns[index][row];
+        let right = &table.columns[other][row];
+        if left.is_null() || right.is_null() {
+            return Scalar::Null;
+        }
+        return match result_tag {
+            qdb_types::TAG_LONG => match (add_column_i64(left), add_column_i64(right)) {
+                (Some(left), Some(right)) => {
+                    apply_i64(op, left, right).map_or(Scalar::Null, Scalar::Long)
+                }
+                _ => Scalar::Null,
+            },
+            qdb_types::TAG_INT => match (left, right) {
+                (Scalar::Int(left), Scalar::Int(right)) => {
+                    apply_i64(op, i64::from(*left), i64::from(*right))
+                        .map_or(Scalar::Null, |value| Scalar::Int(value as i32))
+                }
+                _ => Scalar::Null,
+            },
+            qdb_types::TAG_DOUBLE => match (left, right) {
+                (Scalar::Double(left), Scalar::Double(right)) => {
+                    apply_f64(op, *left, *right).map_or(Scalar::Null, Scalar::Double)
+                }
+                _ => Scalar::Null,
+            },
+            _ => Scalar::Null,
+        };
+    }
     let left = &table.columns[index][row];
     if left.is_null() || literal.is_null() {
         return Scalar::Null;
@@ -7436,9 +7503,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             index,
             result_tag,
             literal,
+            other,
             op,
             ..
-        } => add_value(table, row, *index, *result_tag, literal, *op),
+        } => add_value(table, row, *index, *result_tag, literal, *other, *op),
         ResolvedProj::Neg { index, .. } => neg_value(table, row, *index).unwrap_or(Scalar::Null),
         ResolvedProj::BitNot { index, .. } => {
             bit_not_value(table, row, *index).unwrap_or(Scalar::Null)
@@ -15821,6 +15889,61 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn cc_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id + id FROM sensors",
+                "expected/cc_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id + id FROM sensors WHERE id = 1",
+                "expected/cc_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id + id FROM sensors WHERE id = 2",
+                "expected/cc_two.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id + id FROM sensors WHERE id > 100",
+                "expected/cc_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT reading + reading FROM sensors",
+                "expected/cc_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags + flags FROM sensors",
+                "expected/cc_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id + flags FROM sensors",
+                "expected/cc_mix.tsv",
+            ),
+            (&days, "SELECT id + id FROM days", "expected/cc_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id + missing FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
