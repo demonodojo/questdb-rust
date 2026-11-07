@@ -1,7 +1,7 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
     ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, SelectList, SideExpr,
-    SubstrExpr, UpperExpr,
+    SubstrExpr, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -183,7 +183,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Lower { label, .. }
             | ResolvedProj::Upper { label, .. }
             | ResolvedProj::Side { label, .. }
-            | ResolvedProj::Substr { label, .. } => label.clone(),
+            | ResolvedProj::Substr { label, .. }
+            | ResolvedProj::Trim { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -241,6 +242,10 @@ enum ResolvedProj {
         label: String,
         mode: SubstrMode,
     },
+    Trim {
+        label: String,
+        arg: ResolvedArg,
+    },
 }
 
 enum SubstrMode {
@@ -261,7 +266,8 @@ impl ResolvedProj {
             | Self::Lower { label, .. }
             | Self::Upper { label, .. }
             | Self::Side { label, .. }
-            | Self::Substr { label, .. } => Some(label),
+            | Self::Substr { label, .. }
+            | Self::Trim { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -308,7 +314,15 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Upper(expr) => resolve_upper(table, expr),
         Proj::Side(expr) => resolve_side(table, expr),
         Proj::Substr(expr) => resolve_substr(table, expr),
+        Proj::Trim(expr) => resolve_trim(table, expr),
     }
+}
+
+fn resolve_trim(table: &Table, expr: &TrimExpr) -> Result<ResolvedProj, Error> {
+    Ok(ResolvedProj::Trim {
+        label: expr.label.clone(),
+        arg: resolve_one_text(table, "trim", &expr.args)?,
+    })
 }
 
 fn resolve_substr(table: &Table, expr: &SubstrExpr) -> Result<ResolvedProj, Error> {
@@ -642,6 +656,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                     _ => Scalar::Null,
                 }
             }
+        },
+        ResolvedProj::Trim { arg, .. } => match text_of(table, row, arg) {
+            Some(text) => Scalar::Text(text.trim_matches(' ').to_string()),
+            None => Scalar::Null,
         },
     }
 }
@@ -3946,6 +3964,136 @@ mod tests {
         assert!(
             err.message
                 .contains("negative substring length is not allowed"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn trim_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT trim(note) FROM sensors",
+                "expected/trim_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim(location) FROM sensors",
+                "expected/trim_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim(tag) FROM sensors",
+                "expected/trim_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim(ch) FROM sensors",
+                "expected/trim_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim('  BETA  ') FROM sensors LIMIT 1",
+                "expected/trim_spaces.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim(' a b ') FROM sensors LIMIT 1",
+                "expected/trim_inner.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim('βeta') FROM sensors LIMIT 1",
+                "expected/trim_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim('') FROM sensors LIMIT 1",
+                "expected/trim_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim(null) FROM sensors LIMIT 1",
+                "expected/trim_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim('  ') FROM sensors LIMIT 1",
+                "expected/trim_blank.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim('\t ab \t') FROM sensors LIMIT 1",
+                "expected/trim_tab.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT TRIM(NOTE) FROM sensors",
+                "expected/trim_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim(note) FROM sensors ORDER BY trim(note)",
+                "expected/trim_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, trim(note) FROM sensors ORDER BY trim(note)",
+                "expected/trim_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim(note) FROM sensors WHERE note = ''",
+                "expected/trim_where_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT trim(note) FROM sensors LIMIT 0",
+                "expected/trim_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT trim(note) FROM days",
+                "expected/trim_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT trim(location) FROM days ORDER BY ts",
+                "expected/trim_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT trim() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT trim(note, location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `trim` with the argument types: (STRING, SYMBOL)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT trim(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `trim` with the argument types: (LONG)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT trim(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );
