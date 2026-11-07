@@ -2569,7 +2569,13 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   nn_none "SELECT id IS NOT NULL FROM sensors WHERE id > 100" \
   nn_note "SELECT note IS NOT NULL FROM sensors" \
   nn_ok "SELECT ok IS NOT NULL FROM sensors" \
-  nn_read "SELECT reading IS NOT NULL FROM sensors"
+  nn_read "SELECT reading IS NOT NULL FROM sensors" \
+  bi_all "SELECT id BETWEEN 1 AND 2 FROM sensors" \
+  bi_one "SELECT id BETWEEN 1 AND 2 FROM sensors WHERE id = 1" \
+  bi_neg "SELECT id BETWEEN 1 AND 2 FROM sensors WHERE id = -1" \
+  bi_none "SELECT id BETWEEN 1 AND 2 FROM sensors WHERE id > 100" \
+  bi_flags "SELECT flags BETWEEN 0 AND 10 FROM sensors" \
+  bi_same "SELECT id BETWEEN id AND id FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2876,7 +2882,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   rx_days "SELECT id % id FROM days" \
   po_days "SELECT id || note FROM days" \
   nl_days "SELECT id IS NULL FROM days" \
-  nn_days "SELECT id IS NOT NULL FROM days"
+  nn_days "SELECT id IS NOT NULL FROM days" \
+  bi_days "SELECT id BETWEEN 1 AND 2 FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5393,6 +5400,12 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT note IS NOT NULL FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT ok IS NOT NULL FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT reading IS NOT NULL FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id BETWEEN 1 AND 2 FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id BETWEEN 1 AND 2 FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT id BETWEEN 1 AND 2 FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT id BETWEEN 1 AND 2 FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT flags BETWEEN 0 AND 10 FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id BETWEEN id AND id FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -5698,6 +5711,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT id || note FROM days"),
     (os.environ["DIFF_H2"], "SELECT id IS NULL FROM days"),
     (os.environ["DIFF_H2"], "SELECT id IS NOT NULL FROM days"),
+    (os.environ["DIFF_H2"], "SELECT id BETWEEN 1 AND 2 FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

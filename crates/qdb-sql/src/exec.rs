@@ -16348,6 +16348,61 @@ mod tests {
     }
 
     #[test]
+    fn bi_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id BETWEEN 1 AND 2 FROM sensors",
+                "expected/bi_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id BETWEEN 1 AND 2 FROM sensors WHERE id = 1",
+                "expected/bi_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id BETWEEN 1 AND 2 FROM sensors WHERE id = -1",
+                "expected/bi_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id BETWEEN 1 AND 2 FROM sensors WHERE id > 100",
+                "expected/bi_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags BETWEEN 0 AND 10 FROM sensors",
+                "expected/bi_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id BETWEEN id AND id FROM sensors",
+                "expected/bi_same.tsv",
+            ),
+            (
+                &days,
+                "SELECT id BETWEEN 1 AND 2 FROM days",
+                "expected/bi_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT reading BETWEEN 0 AND 1 FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching operator `between` with the argument type: DOUBLE"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
     fn dj_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");

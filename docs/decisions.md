@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — `BETWEEN`
+
+`value BETWEEN low AND high` es la función `between`. El encabezado es `id between (1, 2)` y el tipo es `BOOLEAN`. Los límites se incluyen y un nulo es `false`. `id BETWEEN 1 AND 2` es `true`, `true`, `false` y `false`. En `days` es `true`, `true`, `false` y `false`. `flags BETWEEN 0 AND 10` es `true`, `false`, `true` y `false`. `id BETWEEN id AND id` es `true`, `true`, `false` y `true`. Un `DOUBLE` se rechaza. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — `IS NOT NULL`
 
 `value IS NOT NULL` es la comparación `value != NULL`. El encabezado es `id != NULL` y el tipo es `BOOLEAN`. `id IS NOT NULL` es `true`, `true`, `false` y `true`. En `days` es `true`, `true`, `true` y `false`. `note IS NOT NULL` es `true`, `false`, `true` y `true`. `ok IS NOT NULL` es `true` en las cuatro filas. `reading IS NOT NULL` es `true`, `false`, `true` y `true`. Se contrastó con `/exec` en `sensors` y `days`.

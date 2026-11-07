@@ -1641,6 +1641,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::And)?));
                 } else if self.eat_keyword("or") {
                     pieces.push(SelectPiece::And(self.parse_and(name, BoolOp::Or)?));
+                } else if self.starts_between_infix() {
+                    pieces.push(SelectPiece::Between(self.parse_between_op(name)?));
                 } else if self.starts_is_not_null() {
                     pieces.push(SelectPiece::Eq(self.parse_is_not_null(name)?));
                 } else if self.starts_is_null() {
@@ -2150,6 +2152,29 @@ impl<'a> Parser<'a> {
 
     fn starts_between_call(&self) -> bool {
         self.starts_named_call("between")
+    }
+
+    fn starts_between_infix(&self) -> bool {
+        self.keyword_at(self.pos, "between").is_some()
+    }
+
+    fn parse_between_op(&mut self, name: String) -> Result<BetweenExpr, Error> {
+        if !self.eat_keyword("between") {
+            return Err(Error::new(
+                "unsupported: expected BETWEEN after column".to_string(),
+            ));
+        }
+        let (low_label, low) = self.parse_call_arg(true)?;
+        if !self.eat_keyword("and") {
+            return Err(Error::new(
+                "unsupported: expected AND after BETWEEN".to_string(),
+            ));
+        }
+        let (high_label, high) = self.parse_call_arg(true)?;
+        Ok(BetweenExpr {
+            label: format!("{name} between ({low_label}, {high_label})"),
+            args: vec![ConcatArg::Column(name), low, high],
+        })
     }
 
     fn parse_between(&mut self) -> Result<BetweenExpr, Error> {
