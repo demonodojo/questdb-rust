@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — in
+
+`value in (lista)` dice si el valor es igual a alguna constante de la lista y devuelve un `BOOLEAN`. Un valor nulo devuelve `false`. `id in (1, -1)` es `true`, `false`, `false` y `true`. En `days` es `true`, `false`, `false` y `false`. `note in ('alpha', '')` es `true`, `false`, `true` y `false` en `sensors`, y `true`, `false`, `false` y `false` en `days`. `location in ('madrid', '東京')` es `true`, `false`, `true` y `true`. `reading in (1.5, 0)` es `true`, `false`, `true` y `true`, porque `-0.0` coincide con `0`. La lista vacía responde `too few arguments for 'in'`. Un `BOOLEAN` no tiene operador `in`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — between()
 
 `between(value, low, high)` dice si un entero, una fecha o un timestamp cae en un intervalo cerrado y devuelve un `BOOLEAN`. El orden de los extremos no importa. Un valor nulo o un extremo nulo devuelve `false`. `between(id, 1, 2)` es `true`, `true`, `false` y `false`. `between(ts, ts, ts)` es `true` en las cuatro filas. `between(day, day, day)` es `true`, `false`, `true` y `true`. En `days`, `between(id, 1, 2)` es `true`, `true`, `false` y `false`. La llamada vacía responde `too few arguments for 'between' [found=0,expected=3]`. Un `DOUBLE` no tiene operador `between`. Se contrastó con `/exec` en `sensors` y `days`.

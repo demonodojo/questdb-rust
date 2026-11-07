@@ -289,6 +289,7 @@ pub enum Proj {
     SpreadBps(SpreadBpsExpr),
     Wmid(WmidExpr),
     Between(BetweenExpr),
+    InList(InListExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -833,6 +834,14 @@ pub struct BetweenExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `value in (list)` reports whether `value` equals one listed constant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InListExpr {
+    pub label: String,
+    pub value: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `ln(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LnExpr {
@@ -1093,7 +1102,9 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
-                if parser.peek() == Some(b'(') {
+                if parser.eat_keyword("in") {
+                    column = parser.parse_in_list(column)?.label;
+                } else if parser.peek() == Some(b'(') {
                     column = parser.parse_order_call(column)?;
                     parser.skip();
                 }
@@ -1218,6 +1229,7 @@ enum SelectPiece {
     SpreadBps(SpreadBpsExpr),
     Wmid(WmidExpr),
     Between(BetweenExpr),
+    InList(InListExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -1485,7 +1497,13 @@ impl<'a> Parser<'a> {
             } else if self.starts_least_call() {
                 pieces.push(SelectPiece::Least(self.parse_least()?));
             } else {
-                pieces.push(SelectPiece::Column(self.ident_spelling()?));
+                let name = self.ident_spelling()?;
+                self.skip();
+                if self.eat_keyword("in") {
+                    pieces.push(SelectPiece::InList(self.parse_in_list(name)?));
+                } else {
+                    pieces.push(SelectPiece::Column(name));
+                }
             }
             self.skip();
             if !self.eat(b',') {
@@ -1575,6 +1593,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::SpreadBps(_)
                     | SelectPiece::Wmid(_)
                     | SelectPiece::Between(_)
+                    | SelectPiece::InList(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
                     | SelectPiece::Exp(_)
@@ -1675,6 +1694,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::SpreadBps(expr) => items.push(Proj::SpreadBps(expr)),
                     SelectPiece::Wmid(expr) => items.push(Proj::Wmid(expr)),
                     SelectPiece::Between(expr) => items.push(Proj::Between(expr)),
+                    SelectPiece::InList(expr) => items.push(Proj::InList(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
                     SelectPiece::Exp(expr) => items.push(Proj::Exp(expr)),
@@ -1795,6 +1815,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::SpreadBps(_)
                 | SelectPiece::Wmid(_)
                 | SelectPiece::Between(_)
+                | SelectPiece::InList(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
                 | SelectPiece::Exp(_)
@@ -1973,6 +1994,37 @@ impl<'a> Parser<'a> {
         let (labels, args) = self.parse_call_args(&name, true)?;
         Ok(BetweenExpr {
             label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn parse_in_list(&mut self, name: String) -> Result<InListExpr, Error> {
+        self.skip();
+        if !self.eat(b'(') {
+            return Err(Error::new("unsupported: expected '(' after in".to_string()));
+        }
+        self.skip();
+        if self.eat(b')') {
+            return Err(Error::new("too few arguments for 'in'".to_string()));
+        }
+        let mut args = Vec::new();
+        let mut labels = Vec::new();
+        loop {
+            let (label, arg) = self.parse_call_arg(true)?;
+            labels.push(label);
+            args.push(arg);
+            self.skip();
+            if self.eat(b',') {
+                continue;
+            }
+            if self.eat(b')') {
+                break;
+            }
+            return Err(Error::new("unsupported: expected ')' after in".to_string()));
+        }
+        Ok(InListExpr {
+            label: format!("{name} in ({})", labels.join(", ")),
+            value: name,
             args,
         })
     }

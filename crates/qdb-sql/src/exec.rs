@@ -4,11 +4,11 @@ use crate::parse::{
     CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr,
     DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr,
     ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr,
-    IlikeExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr,
-    LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NotExpr,
-    NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr,
-    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr,
-    Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr,
+    IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr,
+    LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr,
+    NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
+    ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
+    Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr,
     SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr,
     TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr,
     ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr, YearExpr,
@@ -286,6 +286,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::SpreadBps { label, .. }
             | ResolvedProj::Wmid { label, .. }
             | ResolvedProj::Between { label, .. }
+            | ResolvedProj::InList { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
             | ResolvedProj::Exp { label, .. }
@@ -683,6 +684,11 @@ enum ResolvedProj {
         low: BetweenInput,
         high: BetweenInput,
     },
+    InList {
+        label: String,
+        index: usize,
+        items: Vec<InItem>,
+    },
     Ln {
         label: String,
         input: SqrtInput,
@@ -859,6 +865,7 @@ impl ResolvedProj {
             | Self::SpreadBps { label, .. }
             | Self::Wmid { label, .. }
             | Self::Between { label, .. }
+            | Self::InList { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
             | Self::Exp { label, .. }
@@ -897,9 +904,10 @@ impl ResolvedProj {
             Self::IsLeapYear { .. } => qdb_types::TAG_BOOLEAN,
             Self::DaysInMonth { .. } => qdb_types::TAG_INT,
             Self::ToStr { .. } => qdb_types::TAG_STRING,
-            Self::IsEndOfMonth { .. } | Self::Not { .. } | Self::Between { .. } => {
-                qdb_types::TAG_BOOLEAN
-            }
+            Self::IsEndOfMonth { .. }
+            | Self::Not { .. }
+            | Self::Between { .. }
+            | Self::InList { .. } => qdb_types::TAG_BOOLEAN,
             Self::DayOfWeekSundayFirst { .. } => qdb_types::TAG_INT,
             Self::ToTimestamp { .. } => qdb_types::TAG_TIMESTAMP,
             Self::ToDate { .. } => qdb_types::TAG_DATE,
@@ -1053,6 +1061,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::SpreadBps(expr) => resolve_spread_bps(table, expr),
         Proj::Wmid(expr) => resolve_wmid(table, expr),
         Proj::Between(expr) => resolve_between(table, expr),
+        Proj::InList(expr) => resolve_in_list(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
         Proj::Exp(expr) => resolve_exp(table, expr),
@@ -1639,6 +1648,120 @@ fn between_value(
         (high, low)
     };
     Scalar::Boolean(low <= value && value <= high)
+}
+
+#[derive(Clone, Copy)]
+enum InKind {
+    Integer,
+    Float,
+    Text,
+}
+
+enum InItem {
+    Null,
+    Long(i64),
+    Double(f64),
+    Text(String),
+}
+
+fn resolve_in_list(table: &Table, expr: &InListExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.is_empty() {
+        return Err(Error::new("too few arguments for 'in'".to_string()));
+    }
+    let Some(index) = table.column_index(&expr.value) else {
+        return Err(Error::new(format!("Invalid column: {}", expr.value)));
+    };
+    let tag = table.meta.columns[index].tag;
+    let kind = match tag {
+        qdb_types::TAG_LONG | qdb_types::TAG_INT | qdb_types::TAG_SHORT | qdb_types::TAG_BYTE => {
+            InKind::Integer
+        }
+        qdb_types::TAG_DOUBLE | qdb_types::TAG_FLOAT => InKind::Float,
+        qdb_types::TAG_STRING
+        | qdb_types::TAG_SYMBOL
+        | qdb_types::TAG_VARCHAR
+        | qdb_types::TAG_CHAR => InKind::Text,
+        other => return Err(in_type_rejected(qdb_types::type_name(other))),
+    };
+    let left = qdb_types::type_name(tag);
+    let mut items = Vec::with_capacity(expr.args.len());
+    for arg in &expr.args {
+        items.push(in_item(left, kind, arg)?);
+    }
+    Ok(ResolvedProj::InList {
+        label: expr.label.clone(),
+        index,
+        items,
+    })
+}
+
+fn in_type_rejected(actual: &str) -> Error {
+    Error::new(format!(
+        "there is no matching operator `in` with the argument type: {actual}"
+    ))
+}
+
+fn in_item(left: &str, kind: InKind, arg: &ConcatArg) -> Result<InItem, Error> {
+    match (kind, arg) {
+        (_, ConcatArg::Literal(Scalar::Null)) => Ok(InItem::Null),
+        (InKind::Integer | InKind::Float, ConcatArg::Literal(Scalar::Long(number))) => {
+            Ok(InItem::Long(*number))
+        }
+        (InKind::Float, ConcatArg::Literal(Scalar::Double(number))) => Ok(InItem::Double(*number)),
+        (InKind::Text, ConcatArg::Literal(Scalar::Text(text))) => Ok(InItem::Text(text.clone())),
+        (InKind::Text, ConcatArg::Literal(Scalar::Char(unit))) => {
+            Ok(InItem::Text(in_char_text(*unit)))
+        }
+        (_, ConcatArg::Column(name)) => {
+            Err(Error::new(format!("unsupported: in list column {name}")))
+        }
+        _ => Err(Error::new(format!(
+            "cannot compare {left} with type {}",
+            between_literal_type(arg)
+        ))),
+    }
+}
+
+fn in_char_text(unit: u16) -> String {
+    char::from_u32(u32::from(unit))
+        .unwrap_or('\u{0}')
+        .to_string()
+}
+
+fn in_list_value(table: &Table, row: usize, index: usize, items: &[InItem]) -> Scalar {
+    Scalar::Boolean(match &table.columns[index][row] {
+        Scalar::Null => false,
+        Scalar::Long(number) => in_long(*number, items),
+        Scalar::Int(number) => in_long(i64::from(*number), items),
+        Scalar::Short(number) => in_long(i64::from(*number), items),
+        Scalar::Byte(number) => in_long(i64::from(*number), items),
+        Scalar::Double(number) => in_float(*number, items),
+        Scalar::Float(number) => in_float(f64::from(*number), items),
+        Scalar::Text(text) => in_text(text, items),
+        Scalar::Char(unit) => in_text(&in_char_text(*unit), items),
+        Scalar::Timestamp(number) | Scalar::Date(number) => in_long(*number, items),
+        Scalar::Boolean(_) => false,
+    })
+}
+
+fn in_long(number: i64, items: &[InItem]) -> bool {
+    items
+        .iter()
+        .any(|item| matches!(item, InItem::Long(value) if *value == number))
+}
+
+fn in_float(number: f64, items: &[InItem]) -> bool {
+    items.iter().any(|item| match item {
+        InItem::Long(value) => number == *value as f64,
+        InItem::Double(value) => number == *value,
+        _ => false,
+    })
+}
+
+fn in_text(text: &str, items: &[InItem]) -> bool {
+    items
+        .iter()
+        .any(|item| matches!(item, InItem::Text(value) if value == text))
 }
 
 fn resolve_wmid(table: &Table, expr: &WmidExpr) -> Result<ResolvedProj, Error> {
@@ -6932,6 +7055,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Between {
             value, low, high, ..
         } => between_value(table, row, value, low, high),
+        ResolvedProj::InList { index, items, .. } => in_list_value(table, row, *index, items),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15306,6 +15430,88 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn in_list_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id in (1, -1) FROM sensors",
+                "expected/iq_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id in (1, -1) FROM sensors WHERE id = 1",
+                "expected/iq_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id in (1, -1) FROM sensors WHERE id = 2",
+                "expected/iq_two.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id in (1, -1) FROM sensors WHERE id > 100",
+                "expected/iq_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note in ('alpha', '') FROM sensors",
+                "expected/iq_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT location in ('madrid', '東京') FROM sensors",
+                "expected/iq_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT reading in (1.5, 0) FROM sensors",
+                "expected/iq_dbl.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id in (1, -1) FROM sensors LIMIT 0",
+                "expected/iq_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT id in (1, -1) FROM days",
+                "expected/iq_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT note in ('alpha', '') FROM days",
+                "expected/iq_days_note.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id in () FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("too few arguments for 'in'"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ok in (true, false) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching operator `in` with the argument type: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT missing in (1) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
