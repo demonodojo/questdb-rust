@@ -1,0 +1,5 @@
+note !~ '.*eta'
+true
+true
+true
+false

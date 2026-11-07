@@ -6721,16 +6721,20 @@ fn resolve_regex(table: &Table, expr: &LikeExpr) -> Result<ResolvedProj, Error> 
             "not implemented: dynamic pattern would be very slow to execute".to_string(),
         ));
     }
+    let op = if expr.negated { "!~" } else { "~" };
     if matches!(expr.args[1], ConcatArg::Column(_)) {
+        if expr.negated {
+            return ilike_operator_error(table, &expr.args, op);
+        }
         return Err(Error::new(
             "not implemented: dynamic pattern would be very slow to execute".to_string(),
         ));
     }
     let ConcatArg::Literal(Scalar::Text(text)) = &expr.args[1] else {
-        return ilike_operator_error(table, &expr.args, "~");
+        return ilike_operator_error(table, &expr.args, op);
     };
     if !replace_text_ok(table, &expr.args[0]) {
-        return ilike_operator_error(table, &expr.args, "~");
+        return ilike_operator_error(table, &expr.args, op);
     }
     Ok(ResolvedProj::Like {
         label: expr.label.clone(),
@@ -16851,6 +16855,57 @@ mod tests {
         assert!(
             err.message
                 .contains("not implemented: dynamic pattern would be very slow to execute"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn nx_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT note !~ 'a.*' FROM sensors",
+                "expected/nx_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note !~ 'a.*' FROM sensors WHERE id = 1",
+                "expected/nx_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note !~ 'a.*' FROM sensors WHERE id > 100",
+                "expected/nx_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note !~ '.*eta' FROM sensors",
+                "expected/nx_eta.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT location !~ 'mad.*' FROM sensors",
+                "expected/nx_loc.tsv",
+            ),
+            (
+                &days,
+                "SELECT note !~ 'a.*' FROM days",
+                "expected/nx_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT note !~ note FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching operator `!~` with the argument types: STRING !~ STRING"
+            ),
             "{}",
             err.message
         );

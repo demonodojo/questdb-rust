@@ -1653,6 +1653,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::Ilike(self.parse_not_ilike(name)?));
                 } else if self.starts_ilike_infix() {
                     pieces.push(SelectPiece::Ilike(self.parse_ilike_op(name)?));
+                } else if self.starts_not_regex() {
+                    pieces.push(SelectPiece::Like(self.parse_not_regex(name)?));
                 } else if self.starts_regex_infix() {
                     pieces.push(SelectPiece::Like(self.parse_regex_op(name)?));
                 } else if self.starts_not_between() {
@@ -3824,6 +3826,33 @@ impl<'a> Parser<'a> {
             args,
             negated: false,
             regex: false,
+        })
+    }
+
+    fn starts_not_regex(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        self.src.get(pos) == Some(&b'!') && self.src.get(pos + 1) == Some(&b'~')
+    }
+
+    fn parse_not_regex(&mut self, name: String) -> Result<LikeExpr, Error> {
+        while self.pos < self.src.len() && self.src[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+        if self.src.get(self.pos) != Some(&b'!') || self.src.get(self.pos + 1) != Some(&b'~') {
+            return Err(Error::new(
+                "unsupported: expected !~ after column".to_string(),
+            ));
+        }
+        self.pos += 2;
+        let (pattern_label, pattern) = self.parse_call_arg(true)?;
+        Ok(LikeExpr {
+            label: format!("{name} !~ {pattern_label}"),
+            args: vec![ConcatArg::Column(name), pattern],
+            negated: true,
+            regex: true,
         })
     }
 

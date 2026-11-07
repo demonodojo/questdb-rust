@@ -1,0 +1,5 @@
+location !~ 'mad.*'
+false
+true
+false
+true
