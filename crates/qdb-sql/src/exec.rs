@@ -5093,6 +5093,9 @@ fn resolve_cast(table: &Table, expr: &CastExpr) -> Result<ResolvedProj, Error> {
         return Err(Error::new(format!("Invalid column: {}", expr.column)));
     };
     let Some(type_tag) = cast_type_tag(&expr.type_name) else {
+        if expr.infix {
+            return Err(Error::new(format!("invalid constant: {}", expr.type_name)));
+        }
         return Err(Error::new("unsupported cast".to_string()));
     };
     Ok(ResolvedProj::Cast {
@@ -17423,6 +17426,51 @@ mod tests {
         let err = execute(&sensors, "SELECT id != missing FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn zs_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id::string FROM sensors",
+                "expected/zs_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::string FROM sensors WHERE id = 1",
+                "expected/zs_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::string FROM sensors WHERE id > 100",
+                "expected/zs_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags::string FROM sensors",
+                "expected/zs_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note::string FROM sensors",
+                "expected/zs_note.tsv",
+            ),
+            (&days, "SELECT id::string FROM days", "expected/zs_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id::missing FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid constant: missing"),
             "{}",
             err.message
         );

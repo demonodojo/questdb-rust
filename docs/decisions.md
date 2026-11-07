@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `::string`
+
+`column::string` convierte una columna a `STRING`. El encabezado es `id::string` y conserva el nombre de tipo escrito. Un nulo sigue siendo `NULL`. `id::string` es `1`, `2`, `NULL` y `-1`. En `days` es `1`, `2`, `3` y `NULL`. `flags::string` es `10`, `NULL`, `0` y `42`. `note::string` es `alpha`, `NULL`, la cadena vacía y `βeta`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `!=`
 
 `left != right` compara dos columnas y devuelve `BOOLEAN`. El encabezado es `id != id`. Un nulo no es distinto de un nulo. `id != id` es `false`, `false`, `false` y `false`. En `days` es `false`, `false`, `false` y `false`. `id != flags` y `flags != id` son `true`, `true`, `true` y `true`. `note != note` es `false`, `false`, `false` y `false`. Una columna ausente se rechaza con `Invalid column: missing`. Se contrastó con `/exec` en `sensors` y `days`.

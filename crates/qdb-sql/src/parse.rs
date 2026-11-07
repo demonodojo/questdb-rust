@@ -503,6 +503,8 @@ pub struct CastExpr {
     pub label: String,
     pub column: String,
     pub type_name: String,
+    /// `true` for `column::type`. `false` for `cast(column AS type)`.
+    pub infix: bool,
 }
 
 /// `dateadd(period, stride, timestamp)`.
@@ -1645,7 +1647,9 @@ impl<'a> Parser<'a> {
             } else {
                 let name = self.ident_spelling()?;
                 self.skip();
-                if self.starts_pipes() {
+                if self.starts_colon_cast() {
+                    pieces.push(SelectPiece::Cast(self.parse_colon_cast(name)?));
+                } else if self.starts_pipes() {
                     pieces.push(SelectPiece::Concat(self.parse_concat_op(name)?));
                 } else if self.eat_keyword("in") {
                     pieces.push(SelectPiece::InList(self.parse_in_list(name)?));
@@ -4046,6 +4050,31 @@ impl<'a> Parser<'a> {
             label: format!("{column}::{type_name}"),
             column,
             type_name,
+            infix: false,
+        })
+    }
+
+    fn starts_colon_cast(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        self.src.get(pos) == Some(&b':') && self.src.get(pos + 1) == Some(&b':')
+    }
+
+    fn parse_colon_cast(&mut self, name: String) -> Result<CastExpr, Error> {
+        self.skip();
+        if !(self.eat(b':') && self.eat(b':')) {
+            return Err(Error::new(
+                "unsupported: expected '::' after column".to_string(),
+            ));
+        }
+        let type_name = self.ident_spelling()?;
+        Ok(CastExpr {
+            label: format!("{name}::{type_name}"),
+            column: name,
+            type_name,
+            infix: true,
         })
     }
 
