@@ -7277,6 +7277,13 @@ struct AggColumn {
     percentile: f64,
 }
 
+#[derive(Clone, Copy)]
+enum MomentKind {
+    Skew,
+    SkewPop,
+    KurtosisPop,
+}
+
 enum Accumulator {
     Count(i64),
     Value(Option<Scalar>),
@@ -7356,7 +7363,7 @@ enum Accumulator {
         m3: f64,
         m4: f64,
         count: i64,
-        kurtosis: bool,
+        kind: MomentKind,
     },
     Mode {
         seen: Vec<(Scalar, i64)>,
@@ -7415,13 +7422,17 @@ impl Accumulator {
                 count: 0,
                 invalid: false,
             },
-            AggFunc::Skewness | AggFunc::KurtosisPop => Self::Skewness {
+            AggFunc::Skewness | AggFunc::SkewnessPop | AggFunc::KurtosisPop => Self::Skewness {
                 mean: 0.0,
                 m2: 0.0,
                 m3: 0.0,
                 m4: 0.0,
                 count: 0,
-                kurtosis: func == AggFunc::KurtosisPop,
+                kind: match func {
+                    AggFunc::SkewnessPop => MomentKind::SkewPop,
+                    AggFunc::KurtosisPop => MomentKind::KurtosisPop,
+                    _ => MomentKind::Skew,
+                },
             },
             AggFunc::Mode => Self::Mode { seen: Vec::new() },
             AggFunc::ApproxMedian | AggFunc::ApproxPercentile => Self::ApproxMedian {
@@ -7609,15 +7620,13 @@ impl Accumulator {
                 m3,
                 m4,
                 count,
-                kurtosis,
+                kind,
                 ..
-            } => {
-                if *kurtosis {
-                    kurtosis_pop_scalar(*m2, *m4, *count)
-                } else {
-                    skewness_scalar(*m2, *m3, *count)
-                }
-            }
+            } => match kind {
+                MomentKind::KurtosisPop => kurtosis_pop_scalar(*m2, *m4, *count),
+                MomentKind::SkewPop => skewness_pop_scalar(*m2, *m3, *count),
+                MomentKind::Skew => skewness_scalar(*m2, *m3, *count),
+            },
             Self::Mode { seen } => mode_scalar(seen),
             Self::ApproxMedian {
                 floating,
@@ -7772,11 +7781,12 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     }
     if matches!(
         aggregate.func,
-        AggFunc::GeoMean | AggFunc::Skewness | AggFunc::KurtosisPop
+        AggFunc::GeoMean | AggFunc::Skewness | AggFunc::SkewnessPop | AggFunc::KurtosisPop
     ) && matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL)
     {
         let fname = match aggregate.func {
             AggFunc::Skewness => "skewness",
+            AggFunc::SkewnessPop => "skewness_pop",
             AggFunc::KurtosisPop => "kurtosis_pop",
             _ => "geomean",
         };
@@ -7905,6 +7915,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::RegrR2
         | AggFunc::GeoMean
         | AggFunc::Skewness
+        | AggFunc::SkewnessPop
         | AggFunc::KurtosisPop => qdb_types::TAG_DOUBLE,
         AggFunc::Mode => mode_result_tag(input.tag),
         AggFunc::ApproxMedian | AggFunc::ApproxPercentile => qdb_types::TAG_DOUBLE,
@@ -7948,6 +7959,7 @@ fn contribution(
         }
         AggFunc::GeoMean => geomean_addend(value, input, "geomean"),
         AggFunc::Skewness => geomean_addend(value, input, "skewness"),
+        AggFunc::SkewnessPop => geomean_addend(value, input, "skewness_pop"),
         AggFunc::KurtosisPop => geomean_addend(value, input, "kurtosis_pop"),
         AggFunc::Mode => mode_addend(value, input),
         AggFunc::ApproxMedian | AggFunc::ApproxPercentile => median_addend(value, input),
@@ -9368,6 +9380,19 @@ fn kurtosis_pop_scalar(m2: f64, m4: f64, count: i64) -> Scalar {
     }
     let n = count as f64;
     let result = n * m4 / (m2 * m2) - 3.0;
+    if result.is_finite() {
+        Scalar::Double(result)
+    } else {
+        Scalar::Null
+    }
+}
+
+fn skewness_pop_scalar(m2: f64, m3: f64, count: i64) -> Scalar {
+    if count < 1 || m2 == 0.0 {
+        return Scalar::Null;
+    }
+    let n = count as f64;
+    let result = n.sqrt() * m3 / (m2 * m2.sqrt());
     if result.is_finite() {
         Scalar::Double(result)
     } else {
@@ -24228,6 +24253,174 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT geomean(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn skewness_pop_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT skewness_pop(flags) FROM sensors",
+                "expected/wp_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(flags) FROM sensors WHERE id = 1",
+                "expected/wp_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(flags) FROM sensors WHERE id > 100",
+                "expected/wp_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(reading) FROM sensors",
+                "expected/wp_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(score) FROM sensors",
+                "expected/wp_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(b) FROM sensors",
+                "expected/wp_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(code) FROM sensors",
+                "expected/wp_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(id) FROM sensors",
+                "expected/wp_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(id) FROM sensors WHERE id > 0",
+                "expected/wp_idpos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(flags) FROM sensors WHERE flags > 0",
+                "expected/wp_flagpos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/wp_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/wp_read_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(flags) FROM sensors LIMIT 0",
+                "expected/wp_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT SKEWNESS_POP(flags) FROM sensors",
+                "expected/wp_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(day) FROM sensors",
+                "expected/wp_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness_pop(ts) FROM sensors",
+                "expected/wp_ts.tsv",
+            ),
+            (
+                &days,
+                "SELECT skewness_pop(id) FROM days",
+                "expected/wp_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT skewness_pop(id) FROM days GROUP BY location ORDER BY location",
+                "expected/wp_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT skewness_pop() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `skewness_pop` requires arguments: skewness_pop(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_pop(flags, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `skewness_pop`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_pop(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_pop(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_pop(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `skewness_pop` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_pop(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `skewness_pop` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_pop(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_pop(tag) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness_pop(ch) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),

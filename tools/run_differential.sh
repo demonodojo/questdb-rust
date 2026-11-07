@@ -2020,7 +2020,23 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   kp_lim0 "SELECT kurtosis_pop(flags) FROM sensors LIMIT 0" \
   kp_case "SELECT KURTOSIS_POP(flags) FROM sensors" \
   kp_day "SELECT kurtosis_pop(day) FROM sensors" \
-  kp_ts "SELECT kurtosis_pop(ts) FROM sensors"
+  kp_ts "SELECT kurtosis_pop(ts) FROM sensors" \
+  wp_flags "SELECT skewness_pop(flags) FROM sensors" \
+  wp_one "SELECT skewness_pop(flags) FROM sensors WHERE id = 1" \
+  wp_none "SELECT skewness_pop(flags) FROM sensors WHERE id > 100" \
+  wp_read "SELECT skewness_pop(reading) FROM sensors" \
+  wp_score "SELECT skewness_pop(score) FROM sensors" \
+  wp_byte "SELECT skewness_pop(b) FROM sensors" \
+  wp_code "SELECT skewness_pop(code) FROM sensors" \
+  wp_id "SELECT skewness_pop(id) FROM sensors" \
+  wp_idpos "SELECT skewness_pop(id) FROM sensors WHERE id > 0" \
+  wp_flagpos "SELECT skewness_pop(flags) FROM sensors WHERE flags > 0" \
+  wp_grp "SELECT skewness_pop(flags) FROM sensors GROUP BY location ORDER BY location" \
+  wp_read_grp "SELECT skewness_pop(reading) FROM sensors GROUP BY location ORDER BY location" \
+  wp_lim0 "SELECT skewness_pop(flags) FROM sensors LIMIT 0" \
+  wp_case "SELECT SKEWNESS_POP(flags) FROM sensors" \
+  wp_day "SELECT skewness_pop(day) FROM sensors" \
+  wp_ts "SELECT skewness_pop(ts) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2246,7 +2262,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ud_days_grp "SELECT string_distinct_agg(note, ',') FROM days GROUP BY location ORDER BY location" \
   ud_days_id "SELECT string_distinct_agg(location, ',') FROM days GROUP BY id ORDER BY id" \
   kp_days "SELECT kurtosis_pop(id) FROM days" \
-  kp_days_grp "SELECT kurtosis_pop(id) FROM days GROUP BY location ORDER BY location"
+  kp_days_grp "SELECT kurtosis_pop(id) FROM days GROUP BY location ORDER BY location" \
+  wp_days "SELECT skewness_pop(id) FROM days" \
+  wp_days_grp "SELECT skewness_pop(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4214,6 +4232,22 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT KURTOSIS_POP(flags) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT kurtosis_pop(day) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT kurtosis_pop(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(id) FROM sensors WHERE id > 0"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT SKEWNESS_POP(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness_pop(ts) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4438,6 +4472,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT string_distinct_agg(location, ',') FROM days GROUP BY id ORDER BY id"),
     (os.environ["DIFF_H2"], "SELECT kurtosis_pop(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT kurtosis_pop(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT skewness_pop(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT skewness_pop(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
