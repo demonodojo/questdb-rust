@@ -118,6 +118,7 @@ pub enum Proj {
     WeekOfYear(WeekOfYearExpr),
     DateTrunc(DateTruncExpr),
     TimestampFloor(TimestampFloorExpr),
+    TimestampCeil(TimestampCeilExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -386,6 +387,13 @@ pub struct TimestampFloorExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `timestamp_ceil(unit, timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimestampCeilExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -584,6 +592,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_date_trunc()?.label
             } else if parser.starts_timestamp_floor_call() {
                 parser.parse_timestamp_floor()?.label
+            } else if parser.starts_timestamp_ceil_call() {
+                parser.parse_timestamp_ceil()?.label
             } else if parser.starts_round_call() {
                 parser.parse_round()?.label
             } else if parser.starts_floor_call() {
@@ -696,6 +706,7 @@ enum SelectPiece {
     WeekOfYear(WeekOfYearExpr),
     DateTrunc(DateTruncExpr),
     TimestampFloor(TimestampFloorExpr),
+    TimestampCeil(TimestampCeilExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -869,6 +880,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::DateTrunc(self.parse_date_trunc()?));
             } else if self.starts_timestamp_floor_call() {
                 pieces.push(SelectPiece::TimestampFloor(self.parse_timestamp_floor()?));
+            } else if self.starts_timestamp_ceil_call() {
+                pieces.push(SelectPiece::TimestampCeil(self.parse_timestamp_ceil()?));
             } else if self.starts_round_call() {
                 pieces.push(SelectPiece::Round(self.parse_round()?));
             } else if self.starts_floor_call() {
@@ -944,6 +957,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::WeekOfYear(_)
                     | SelectPiece::DateTrunc(_)
                     | SelectPiece::TimestampFloor(_)
+                    | SelectPiece::TimestampCeil(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -1005,6 +1019,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::WeekOfYear(expr) => items.push(Proj::WeekOfYear(expr)),
                     SelectPiece::DateTrunc(expr) => items.push(Proj::DateTrunc(expr)),
                     SelectPiece::TimestampFloor(expr) => items.push(Proj::TimestampFloor(expr)),
+                    SelectPiece::TimestampCeil(expr) => items.push(Proj::TimestampCeil(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -1090,6 +1105,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::WeekOfYear(_)
                 | SelectPiece::DateTrunc(_)
                 | SelectPiece::TimestampFloor(_)
+                | SelectPiece::TimestampCeil(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1336,6 +1352,25 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(FloorExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_timestamp_ceil_call(&self) -> bool {
+        self.starts_named_call("timestamp_ceil")
+    }
+
+    fn parse_timestamp_ceil(&mut self) -> Result<TimestampCeilExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `timestamp_ceil` requires arguments: timestamp_ceil(STRING constant, TIMESTAMP)"
+                    .to_string(),
+            ));
+        }
+        Ok(TimestampCeilExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

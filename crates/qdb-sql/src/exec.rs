@@ -6,7 +6,7 @@ use crate::parse::{
     MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
     RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr,
     SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
-    TimestampFloorExpr, TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    TimestampCeilExpr, TimestampFloorExpr, TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -219,6 +219,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::WeekOfYear { label, .. }
             | ResolvedProj::DateTrunc { label, .. }
             | ResolvedProj::TimestampFloor { label, .. }
+            | ResolvedProj::TimestampCeil { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -432,6 +433,11 @@ enum ResolvedProj {
         stride: i32,
         value: DateDiffSide,
     },
+    TimestampCeil {
+        label: String,
+        unit: char,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -586,6 +592,7 @@ impl ResolvedProj {
             | Self::WeekOfYear { label, .. }
             | Self::DateTrunc { label, .. }
             | Self::TimestampFloor { label, .. }
+            | Self::TimestampCeil { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -623,7 +630,9 @@ impl ResolvedProj {
             | Self::Micros { .. }
             | Self::DayOfWeek { .. }
             | Self::WeekOfYear { .. } => qdb_types::TAG_INT,
-            Self::DateTrunc { .. } | Self::TimestampFloor { .. } => qdb_types::TAG_TIMESTAMP,
+            Self::DateTrunc { .. } | Self::TimestampFloor { .. } | Self::TimestampCeil { .. } => {
+                qdb_types::TAG_TIMESTAMP
+            }
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -709,6 +718,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::WeekOfYear(expr) => resolve_week_of_year(table, expr),
         Proj::DateTrunc(expr) => resolve_date_trunc(table, expr),
         Proj::TimestampFloor(expr) => resolve_timestamp_floor(table, expr),
+        Proj::TimestampCeil(expr) => resolve_timestamp_ceil(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1363,6 +1373,98 @@ enum DateDiffSide {
     Micros(i64),
     Column { index: usize },
     Null,
+}
+
+fn resolve_timestamp_ceil(table: &Table, expr: &TimestampCeilExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `timestamp_ceil`; expected: 2, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::TimestampCeil {
+        label: expr.label.clone(),
+        unit: timestamp_ceil_unit(table, &expr.args[0])?,
+        value: date_trunc_timestamp(table, &expr.args[1])?,
+    })
+}
+
+fn timestamp_ceil_unit(table: &Table, arg: &ConcatArg) -> Result<char, Error> {
+    let text = match arg {
+        ConcatArg::Literal(Scalar::Null) => return Err(Error::new("invalid unit 'null'")),
+        ConcatArg::Literal(Scalar::Text(text)) => text.clone(),
+        ConcatArg::Literal(Scalar::Char(unit)) => {
+            if *unit == 0 {
+                return Err(Error::new("invalid unit 'null'"));
+            }
+            char::from_u32(u32::from(*unit))
+                .unwrap_or('\u{0}')
+                .to_string()
+        }
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            let actual = qdb_types::type_name(table.meta.columns[index].tag);
+            let expected = if actual == "STRING" {
+                "STRING constant"
+            } else {
+                "STRING"
+            };
+            return Err(Error::new(format!(
+                "expression type mismatch, expected: {expected}, actual: {actual}"
+            )));
+        }
+        ConcatArg::Literal(other) => {
+            return Err(Error::new(format!(
+                "expression type mismatch, expected: STRING, actual: {}",
+                literal_sql_type(other)
+            )));
+        }
+    };
+    let mut chars = text.chars();
+    match (chars.next(), chars.next()) {
+        (None, _) => Err(Error::new("invalid unit 'null'")),
+        (Some(unit), None)
+            if matches!(
+                unit,
+                'n' | 'U' | 'T' | 's' | 'm' | 'h' | 'd' | 'w' | 'M' | 'y'
+            ) =>
+        {
+            Ok(unit)
+        }
+        (Some(unit), None) => Err(Error::new(format!("invalid unit '{unit}'"))),
+        _ => Err(Error::new(format!(
+            "inconvertible value: `{text}` [STRING -> CHAR]"
+        ))),
+    }
+}
+
+fn timestamp_ceil_micros(unit: char, micros: i64) -> i64 {
+    let step = |unit: char, size: i64| timestamp_floor_micros(unit, 1, micros) + size;
+    match unit {
+        'n' | 'U' => micros,
+        'T' => step('T', 1_000),
+        's' => step('s', 1_000_000),
+        'm' => step('m', 60 * 1_000_000),
+        'h' => step('h', 3_600 * 1_000_000),
+        'd' => step('d', DATEADD_DAY),
+        'w' => step('w', 7 * DATEADD_DAY),
+        'M' => {
+            let (mut year, mut month, _, _) = dateadd_parts(micros);
+            month += 1;
+            if month == 13 {
+                month = 1;
+                year += 1;
+            }
+            qdb_types::unix_days_from_civil(year, month, 1).unwrap_or(0) * DATEADD_DAY
+        }
+        'y' => {
+            let (year, _, _, _) = dateadd_parts(micros);
+            qdb_types::unix_days_from_civil(year + 1, 1, 1).unwrap_or(0) * DATEADD_DAY
+        }
+        _ => micros,
+    }
 }
 
 fn resolve_timestamp_floor(
@@ -3837,6 +3939,11 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             ..
         } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Timestamp(timestamp_floor_micros(*unit, *stride, micros)),
+            None => Scalar::Null,
+        },
+        ResolvedProj::TimestampCeil { unit, value, .. } => match datediff_micros(table, row, value)
+        {
+            Some(micros) => Scalar::Timestamp(timestamp_ceil_micros(*unit, micros)),
             None => Scalar::Null,
         },
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
@@ -12701,6 +12808,150 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn timestamp_ceil_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT timestamp_ceil('d', ts) FROM sensors",
+                "expected/tc_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_ceil('y', id) FROM sensors",
+                "expected/tc_year.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_ceil('h', id) FROM sensors",
+                "expected/tc_hour_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_ceil('w', '2020-01-06T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/tc_week.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_ceil('M', '2020-05-15T12:30:00.000000Z') FROM sensors LIMIT 1",
+                "expected/tc_month.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_ceil('T', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1",
+                "expected/tc_ms.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_ceil('U', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1",
+                "expected/tc_us.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT TIMESTAMP_CEIL('d', TS) FROM sensors LIMIT 1",
+                "expected/tc_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_ceil('h', id) FROM sensors ORDER BY timestamp_ceil('h', id)",
+                "expected/tc_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_ceil('d', ts) FROM sensors WHERE id = 1",
+                "expected/tc_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT timestamp_ceil('d', ts) FROM sensors LIMIT 0",
+                "expected/tc_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT timestamp_ceil('h', ts) FROM days ORDER BY ts",
+                "expected/tc_hour.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT timestamp_ceil() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `timestamp_ceil` requires arguments: timestamp_ceil(STRING constant, TIMESTAMP)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_ceil('d') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `timestamp_ceil`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_ceil('D', ts) FROM sensors").unwrap_err();
+        assert!(err.message.contains("invalid unit 'D'"), "{}", err.message);
+        let err = execute(&sensors, "SELECT timestamp_ceil('', ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid unit 'null'"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_ceil(null, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid unit 'null'"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_ceil('2h', ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `2h` [STRING -> CHAR]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_ceil(note, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: STRING constant, actual: STRING"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_ceil(id, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: STRING, actual: LONG"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_ceil('d', note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT timestamp_ceil('d', missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT timestamp_ceil('d', 'nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
             "{}",

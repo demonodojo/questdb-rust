@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — timestamp_ceil()
+
+`timestamp_ceil(unidad, instante)` devuelve `TIMESTAMP`. La unidad es una sola letra: `n`, `U`, `T`, `s`, `m`, `h`, `d`, `w`, `M` o `y`. Avanza siempre al siguiente límite, también cuando el instante ya cae en el límite. `n` y `U` se quedan en el microsegundo. Un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — timestamp_floor()
 
 `timestamp_floor(unidad, instante)` devuelve `TIMESTAMP`. La unidad es una letra: `n`, `U`, `T`, `s`, `m`, `h`, `d`, `w`, `M` o `y`. Un prefijo entero positivo marca el paso, como `2h` o `3d`. La semana cae en lunes y los pasos cuentan desde 1970. Un `LONG` se lee como microsegundos. Se contrastó con `/exec` en `sensors` y `days`.

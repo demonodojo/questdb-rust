@@ -1046,7 +1046,18 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tf_case "SELECT TIMESTAMP_FLOOR('d', TS) FROM sensors LIMIT 1" \
   tf_order "SELECT timestamp_floor('h', id) FROM sensors ORDER BY timestamp_floor('h', id)" \
   tf_where "SELECT timestamp_floor('d', ts) FROM sensors WHERE id = 1" \
-  tf_zero "SELECT timestamp_floor('d', ts) FROM sensors LIMIT 0"
+  tf_zero "SELECT timestamp_floor('d', ts) FROM sensors LIMIT 0" \
+  tc_day "SELECT timestamp_ceil('d', ts) FROM sensors" \
+  tc_year "SELECT timestamp_ceil('y', id) FROM sensors" \
+  tc_hour_id "SELECT timestamp_ceil('h', id) FROM sensors" \
+  tc_week "SELECT timestamp_ceil('w', '2020-01-06T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  tc_month "SELECT timestamp_ceil('M', '2020-05-15T12:30:00.000000Z') FROM sensors LIMIT 1" \
+  tc_ms "SELECT timestamp_ceil('T', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1" \
+  tc_us "SELECT timestamp_ceil('U', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1" \
+  tc_case "SELECT TIMESTAMP_CEIL('d', TS) FROM sensors LIMIT 1" \
+  tc_order "SELECT timestamp_ceil('h', id) FROM sensors ORDER BY timestamp_ceil('h', id)" \
+  tc_where "SELECT timestamp_ceil('d', ts) FROM sensors WHERE id = 1" \
+  tc_zero "SELECT timestamp_ceil('d', ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1176,7 +1187,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   dw_ts "SELECT day_of_week(ts) FROM days ORDER BY ts" \
   wy_ts "SELECT week_of_year(ts) FROM days ORDER BY ts" \
   dt_hour "SELECT date_trunc('hour', ts) FROM days ORDER BY ts" \
-  tf_hour "SELECT timestamp_floor('h', ts) FROM days ORDER BY ts"
+  tf_hour "SELECT timestamp_floor('h', ts) FROM days ORDER BY ts" \
+  tc_hour "SELECT timestamp_ceil('h', ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2170,6 +2182,17 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT timestamp_floor('h', id) FROM sensors ORDER BY timestamp_floor('h', id)"),
     (os.environ["DIFF_H1"], "SELECT timestamp_floor('d', ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT timestamp_floor('d', ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_ceil('d', ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_ceil('y', id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_ceil('h', id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_ceil('w', '2020-01-06T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_ceil('M', '2020-05-15T12:30:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_ceil('T', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_ceil('U', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT TIMESTAMP_CEIL('d', TS) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_ceil('h', id) FROM sensors ORDER BY timestamp_ceil('h', id)"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_ceil('d', ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT timestamp_ceil('d', ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2298,6 +2321,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT week_of_year(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT date_trunc('hour', ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT timestamp_floor('h', ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT timestamp_ceil('h', ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
