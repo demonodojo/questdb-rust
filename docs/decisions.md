@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — like()
+
+`like(text, pattern)` distingue mayúsculas y devuelve `BOOLEAN`. La cabecera es `note like 'a%'`. Esa consulta es `true` en la fila `id = 1` y `false` cuando `note` es NULL. `like(note, 'A%')` con `id = 1` es `false`. Un patrón vacío o NULL devuelve `false`. Un patrón que no es constante dice `use constant or bind variable`. La llamada vacía dice `too few arguments for 'like'`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — ilike()
 
 `ilike(text, pattern)` es un `LIKE` sin distinguir mayúsculas y devuelve `BOOLEAN`. `ilike(note, 'A%')` es `true` en la fila `id = 1` y `false` cuando `note` es NULL. Un patrón vacío o NULL devuelve `false`. Un patrón que no es constante dice `use constant or bind variable`. La llamada vacía dice `too few arguments for 'ilike'`. Se contrastó con `/exec` en `sensors` y `days`.

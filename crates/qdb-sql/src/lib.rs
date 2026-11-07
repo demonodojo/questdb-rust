@@ -41,7 +41,8 @@
 //! non-null text. `glob` matches text against a constant pattern and returns a
 //! boolean. A null text is false, and the pattern must not be null or empty.
 //! `ilike` is a case-insensitive `LIKE`: `%` matches any text and `_` matches
-//! one character. A null text or a null or empty pattern is false. `strpos` and `position` return the 1-based index of the first
+//! one character. A null text or a null or empty pattern is false. `like` is
+//! the case-sensitive form and names the column `text like pattern`. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
 //! widest numeric argument and skips nulls. `to_str` formats a timestamp with a

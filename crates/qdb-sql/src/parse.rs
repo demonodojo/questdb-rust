@@ -223,6 +223,7 @@ pub enum Proj {
     StartsWith(StartsWithExpr),
     Glob(GlobExpr),
     Ilike(IlikeExpr),
+    Like(LikeExpr),
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
@@ -361,6 +362,13 @@ pub struct GlobExpr {
 /// `ilike(text, pattern)` is a case-insensitive `LIKE` and returns a boolean.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IlikeExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `like(text, pattern)` is a case-sensitive `LIKE` and returns a boolean.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LikeExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -875,6 +883,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_glob()?.label
             } else if parser.starts_ilike_call() {
                 parser.parse_ilike()?.label
+            } else if parser.starts_like_call() {
+                parser.parse_like()?.label
             } else if parser.starts_strpos_call() {
                 parser.parse_strpos()?.label
             } else if parser.starts_split_part_call() {
@@ -1062,6 +1072,7 @@ enum SelectPiece {
     StartsWith(StartsWithExpr),
     Glob(GlobExpr),
     Ilike(IlikeExpr),
+    Like(LikeExpr),
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
@@ -1238,6 +1249,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Glob(self.parse_glob()?));
             } else if self.starts_ilike_call() {
                 pieces.push(SelectPiece::Ilike(self.parse_ilike()?));
+            } else if self.starts_like_call() {
+                pieces.push(SelectPiece::Like(self.parse_like()?));
             } else if self.starts_strpos_call() {
                 pieces.push(SelectPiece::StrPos(self.parse_strpos()?));
             } else if self.starts_split_part_call() {
@@ -1390,6 +1403,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::StartsWith(_)
                     | SelectPiece::Glob(_)
                     | SelectPiece::Ilike(_)
+                    | SelectPiece::Like(_)
                     | SelectPiece::StrPos(_)
                     | SelectPiece::SplitPart(_)
                     | SelectPiece::Pad(_)
@@ -1477,6 +1491,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::StartsWith(expr) => items.push(Proj::StartsWith(expr)),
                     SelectPiece::Glob(expr) => items.push(Proj::Glob(expr)),
                     SelectPiece::Ilike(expr) => items.push(Proj::Ilike(expr)),
+                    SelectPiece::Like(expr) => items.push(Proj::Like(expr)),
                     SelectPiece::StrPos(expr) => items.push(Proj::StrPos(expr)),
                     SelectPiece::SplitPart(expr) => items.push(Proj::SplitPart(expr)),
                     SelectPiece::Pad(expr) => items.push(Proj::Pad(expr)),
@@ -1590,6 +1605,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::StartsWith(_)
                 | SelectPiece::Glob(_)
                 | SelectPiece::Ilike(_)
+                | SelectPiece::Like(_)
                 | SelectPiece::StrPos(_)
                 | SelectPiece::SplitPart(_)
                 | SelectPiece::Pad(_)
@@ -2886,6 +2902,26 @@ impl<'a> Parser<'a> {
 
     fn starts_ilike_call(&self) -> bool {
         self.starts_named_call("ilike")
+    }
+
+    fn starts_like_call(&self) -> bool {
+        self.starts_named_call("like")
+    }
+
+    fn parse_like(&mut self) -> Result<LikeExpr, Error> {
+        let _name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args("like", true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "too few arguments for 'like' [found=0,expected=2]",
+            ));
+        }
+        let label = if labels.len() == 2 {
+            format!("{} like {}", labels[0], labels[1])
+        } else {
+            format!("like({})", labels.join(", "))
+        };
+        Ok(LikeExpr { label, args })
     }
 
     fn parse_ilike(&mut self) -> Result<IlikeExpr, Error> {

@@ -4,9 +4,9 @@ use crate::parse::{
     CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
     DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, ExpExpr, ExtractExpr,
     Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr,
-    IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr,
-    MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr,
-    Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
+    IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
+    Md5Expr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr,
+    PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
     RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr,
     SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SqrtExpr, StartsWithExpr,
     StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, ToDateExpr, ToStrExpr,
@@ -215,6 +215,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::StartsWith { label, .. }
             | ResolvedProj::Glob { label, .. }
             | ResolvedProj::Ilike { label, .. }
+            | ResolvedProj::Like { label, .. }
             | ResolvedProj::StrPos { label, .. }
             | ResolvedProj::SplitPart { label, .. }
             | ResolvedProj::Pad { label, .. }
@@ -354,6 +355,11 @@ enum ResolvedProj {
         pattern: Vec<u8>,
     },
     Ilike {
+        label: String,
+        value: ResolvedArg,
+        pattern: IlikePattern,
+    },
+    Like {
         label: String,
         value: ResolvedArg,
         pattern: IlikePattern,
@@ -726,6 +732,7 @@ impl ResolvedProj {
             | Self::StartsWith { label, .. }
             | Self::Glob { label, .. }
             | Self::Ilike { label, .. }
+            | Self::Like { label, .. }
             | Self::StrPos { label, .. }
             | Self::SplitPart { label, .. }
             | Self::Pad { label, .. }
@@ -854,9 +861,10 @@ impl ResolvedProj {
                     qdb_types::TAG_FLOAT
                 }
             }
-            Self::StartsWith { .. } | Self::Glob { .. } | Self::Ilike { .. } => {
-                qdb_types::TAG_BOOLEAN
-            }
+            Self::StartsWith { .. }
+            | Self::Glob { .. }
+            | Self::Ilike { .. }
+            | Self::Like { .. } => qdb_types::TAG_BOOLEAN,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -901,6 +909,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::StartsWith(expr) => resolve_starts_with(table, expr),
         Proj::Glob(expr) => resolve_glob(table, expr),
         Proj::Ilike(expr) => resolve_ilike(table, expr),
+        Proj::Like(expr) => resolve_like(table, expr),
         Proj::StrPos(expr) => resolve_strpos(table, expr),
         Proj::SplitPart(expr) => resolve_split_part(table, expr),
         Proj::Pad(expr) => resolve_pad(table, expr),
@@ -5255,11 +5264,11 @@ fn resolve_ilike(table: &Table, expr: &IlikeExpr) -> Result<ResolvedProj, Error>
         if expr.args.len() == 2 && value_ok && ilike_text_column(table, &expr.args[1]) {
             return Err(Error::new("use constant or bind variable"));
         }
-        return ilike_operator_error(table, &expr.args);
+        return ilike_operator_error(table, &expr.args, "ilike");
     }
     let pattern = match &expr.args[1] {
         ConcatArg::Literal(Scalar::Text(text)) if !text.is_empty() => {
-            IlikePattern::Tokens(compile_ilike(text)?)
+            IlikePattern::Tokens(compile_ilike(text, true)?)
         }
         _ => IlikePattern::Never,
     };
@@ -5285,16 +5294,67 @@ fn ilike_text_column(table: &Table, arg: &ConcatArg) -> bool {
     })
 }
 
-fn ilike_operator_error(table: &Table, args: &[ConcatArg]) -> Result<ResolvedProj, Error> {
+fn resolve_like(table: &Table, expr: &LikeExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() < 2 {
+        return Err(Error::new(format!(
+            "too few arguments for 'like' [found={},expected=2]",
+            expr.args.len()
+        )));
+    }
+    let value_ok = replace_text_ok(table, &expr.args[0]);
+    let pattern_literal = matches!(
+        expr.args[1],
+        ConcatArg::Literal(Scalar::Text(_)) | ConcatArg::Literal(Scalar::Null)
+    );
+    if expr.args.len() != 2 || !value_ok || !pattern_literal {
+        if expr.args.len() == 2 && value_ok && ilike_text_column(table, &expr.args[1]) {
+            return Err(Error::new("use constant or bind variable"));
+        }
+        return ilike_operator_error(table, &expr.args, "like");
+    }
+    let pattern = match &expr.args[1] {
+        ConcatArg::Literal(Scalar::Text(text)) if !text.is_empty() => {
+            IlikePattern::Tokens(compile_ilike(text, false)?)
+        }
+        _ => IlikePattern::Never,
+    };
+    Ok(ResolvedProj::Like {
+        label: expr.label.clone(),
+        value: resolve_concat_arg(table, &expr.args[0])?,
+        pattern,
+    })
+}
+
+fn ilike_operator_error(
+    table: &Table,
+    args: &[ConcatArg],
+    name: &str,
+) -> Result<ResolvedProj, Error> {
     let right_at = if args.len() == 2 { 1 } else { args.len() - 1 };
     let left = replace_arg_type(table, &args[0])?;
     let right = replace_arg_type(table, &args[right_at])?;
     Err(Error::new(format!(
-        "there is no matching operator `ilike` with the argument types: {left} ilike {right}"
+        "there is no matching operator `{name}` with the argument types: {left} {name} {right}"
     )))
 }
 
-fn compile_ilike(pattern: &str) -> Result<Vec<IlikeToken>, Error> {
+fn like_row(
+    table: &Table,
+    row: usize,
+    value: &ResolvedArg,
+    pattern: &IlikePattern,
+    fold: bool,
+) -> bool {
+    match (pattern, text_of(table, row, value)) {
+        (IlikePattern::Never, _) | (_, None) => false,
+        (IlikePattern::Tokens(tokens), Some(value)) => {
+            let chars: Vec<char> = value.chars().collect();
+            ilike_match(&chars, tokens, 0, 0, fold)
+        }
+    }
+}
+
+fn compile_ilike(pattern: &str, fold: bool) -> Result<Vec<IlikeToken>, Error> {
     let chars: Vec<char> = pattern.chars().collect();
     let mut tokens = Vec::new();
     let mut index = 0;
@@ -5308,15 +5368,23 @@ fn compile_ilike(pattern: &str) -> Result<Vec<IlikeToken>, Error> {
                         chars.len()
                     )));
                 }
-                tokens.push(IlikeToken::Lit(ilike_fold(chars[index])));
+                tokens.push(IlikeToken::Lit(like_token(chars[index], fold)));
             }
             '%' => tokens.push(IlikeToken::Any),
             '_' => tokens.push(IlikeToken::One),
-            token => tokens.push(IlikeToken::Lit(ilike_fold(token))),
+            token => tokens.push(IlikeToken::Lit(like_token(token, fold))),
         }
         index += 1;
     }
     Ok(tokens)
+}
+
+fn like_token(token: char, fold: bool) -> char {
+    if fold {
+        ilike_fold(token)
+    } else {
+        token
+    }
 }
 
 fn ilike_fold(token: char) -> char {
@@ -5327,22 +5395,28 @@ fn ilike_fold(token: char) -> char {
     }
 }
 
-fn ilike_match(text: &[char], tokens: &[IlikeToken], text_at: usize, token_at: usize) -> bool {
+fn ilike_match(
+    text: &[char],
+    tokens: &[IlikeToken],
+    text_at: usize,
+    token_at: usize,
+    fold: bool,
+) -> bool {
     if token_at == tokens.len() {
         return text_at == text.len();
     }
     match tokens[token_at] {
         IlikeToken::Any => {
-            ilike_match(text, tokens, text_at, token_at + 1)
-                || (text_at < text.len() && ilike_match(text, tokens, text_at + 1, token_at))
+            ilike_match(text, tokens, text_at, token_at + 1, fold)
+                || (text_at < text.len() && ilike_match(text, tokens, text_at + 1, token_at, fold))
         }
         IlikeToken::One => {
-            text_at < text.len() && ilike_match(text, tokens, text_at + 1, token_at + 1)
+            text_at < text.len() && ilike_match(text, tokens, text_at + 1, token_at + 1, fold)
         }
         IlikeToken::Lit(token) => {
             text_at < text.len()
-                && ilike_fold(text[text_at]) == token
-                && ilike_match(text, tokens, text_at + 1, token_at + 1)
+                && like_token(text[text_at], fold) == token
+                && ilike_match(text, tokens, text_at + 1, token_at + 1, fold)
         }
     }
 }
@@ -6327,14 +6401,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             }
         }
         ResolvedProj::Ilike { value, pattern, .. } => {
-            let matched = match (pattern, text_of(table, row, value)) {
-                (IlikePattern::Never, _) | (_, None) => false,
-                (IlikePattern::Tokens(tokens), Some(value)) => {
-                    let chars: Vec<char> = value.chars().collect();
-                    ilike_match(&chars, tokens, 0, 0)
-                }
-            };
-            Scalar::Boolean(matched)
+            Scalar::Boolean(like_row(table, row, value, pattern, true))
+        }
+        ResolvedProj::Like { value, pattern, .. } => {
+            Scalar::Boolean(like_row(table, row, value, pattern, false))
         }
         ResolvedProj::Glob { value, pattern, .. } => {
             let matched = match text_of(table, row, value) {
@@ -14196,6 +14266,176 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn like_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT like(note, 'a%') FROM sensors",
+                "expected/lk_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, 'a%') FROM sensors WHERE id = 1",
+                "expected/lk_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, 'A%') FROM sensors WHERE id = 1",
+                "expected/lk_upper.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, 'a%') FROM sensors WHERE id = 2",
+                "expected/lk_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, '') FROM sensors WHERE id = 1",
+                "expected/lk_blank.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, null) FROM sensors WHERE id = 1",
+                "expected/lk_nullpat.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, '%') FROM sensors WHERE note = ''",
+                "expected/lk_pct.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, '_') FROM sensors WHERE id = 1",
+                "expected/lk_under.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, 'a_pha') FROM sensors WHERE id = 1",
+                "expected/lk_mid.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(tag, 'v%') FROM sensors WHERE id = 1",
+                "expected/lk_tag.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(location, 'ma%') FROM sensors WHERE id = 1",
+                "expected/lk_sym.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(ch, 'A') FROM sensors WHERE id = 1",
+                "expected/lk_char.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like('Alpha', 'a%') FROM sensors LIMIT 1",
+                "expected/lk_lit.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, 'β%') FROM sensors WHERE id = -1",
+                "expected/lk_beta.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, 'a\\%') FROM sensors WHERE id = 1",
+                "expected/lk_esc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT LIKE(note, 'a%') FROM sensors WHERE id = 1",
+                "expected/lk_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, 'a%') FROM sensors WHERE id > 100",
+                "expected/lk_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT like(note, 'a%') FROM sensors LIMIT 0",
+                "expected/lk_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT like(note, 'a%') FROM days",
+                "expected/lk_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT like(note, 'a%') FROM days WHERE id = 1",
+                "expected/lk_days_one.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT like() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for 'like' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT like(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for 'like' [found=1,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT like(note, 'a%', 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching operator `like` with the argument types: STRING like INT"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT like(flags, '1%') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching operator `like` with the argument types: INT like STRING"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT like(note, note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("use constant or bind variable"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT like(ok, 't%') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching operator `like` with the argument types: BOOLEAN like STRING"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT like(note, 'a\\') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("LIKE pattern must not end with escape character"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT like(missing, 'a%') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

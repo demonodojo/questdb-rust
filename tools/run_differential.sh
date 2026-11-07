@@ -2284,7 +2284,25 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ik_esc "SELECT ilike(note, 'a\\%') FROM sensors WHERE id = 1" \
   ik_case "SELECT ILIKE(note, 'A%') FROM sensors WHERE id = 1" \
   ik_none "SELECT ilike(note, 'A%') FROM sensors WHERE id > 100" \
-  ik_lim0 "SELECT ilike(note, 'A%') FROM sensors LIMIT 0"
+  ik_lim0 "SELECT ilike(note, 'A%') FROM sensors LIMIT 0" \
+  lk_all "SELECT like(note, 'a%') FROM sensors" \
+  lk_one "SELECT like(note, 'a%') FROM sensors WHERE id = 1" \
+  lk_upper "SELECT like(note, 'A%') FROM sensors WHERE id = 1" \
+  lk_null "SELECT like(note, 'a%') FROM sensors WHERE id = 2" \
+  lk_blank "SELECT like(note, '') FROM sensors WHERE id = 1" \
+  lk_nullpat "SELECT like(note, null) FROM sensors WHERE id = 1" \
+  lk_pct "SELECT like(note, '%') FROM sensors WHERE note = ''" \
+  lk_under "SELECT like(note, '_') FROM sensors WHERE id = 1" \
+  lk_mid "SELECT like(note, 'a_pha') FROM sensors WHERE id = 1" \
+  lk_tag "SELECT like(tag, 'v%') FROM sensors WHERE id = 1" \
+  lk_sym "SELECT like(location, 'ma%') FROM sensors WHERE id = 1" \
+  lk_char "SELECT like(ch, 'A') FROM sensors WHERE id = 1" \
+  lk_lit "SELECT like('Alpha', 'a%') FROM sensors LIMIT 1" \
+  lk_beta "SELECT like(note, 'β%') FROM sensors WHERE id = -1" \
+  lk_esc "SELECT like(note, 'a\\%') FROM sensors WHERE id = 1" \
+  lk_case "SELECT LIKE(note, 'a%') FROM sensors WHERE id = 1" \
+  lk_none "SELECT like(note, 'a%') FROM sensors WHERE id > 100" \
+  lk_lim0 "SELECT like(note, 'a%') FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2543,7 +2561,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   gl_days "SELECT glob(note, 'a*') FROM days" \
   gl_days_one "SELECT glob(note, 'a*') FROM days WHERE id = 1" \
   ik_days "SELECT ilike(note, 'A%') FROM days" \
-  ik_days_one "SELECT ilike(note, 'A%') FROM days WHERE id = 1"
+  ik_days_one "SELECT ilike(note, 'A%') FROM days WHERE id = 1" \
+  lk_days "SELECT like(note, 'a%') FROM days" \
+  lk_days_one "SELECT like(note, 'a%') FROM days WHERE id = 1"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4775,6 +4795,24 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT ILIKE(note, 'A%') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT ilike(note, 'A%') FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT ilike(note, 'A%') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT like(note, 'a%') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT like(note, 'a%') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT like(note, 'A%') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT like(note, 'a%') FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT like(note, '') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT like(note, null) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT like(note, '%') FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT like(note, '_') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT like(note, 'a_pha') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT like(tag, 'v%') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT like(location, 'ma%') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT like(ch, 'A') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT like('Alpha', 'a%') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT like(note, 'β%') FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT like(note, 'a\\%') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT LIKE(note, 'a%') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT like(note, 'a%') FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT like(note, 'a%') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -5032,6 +5070,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT glob(note, 'a*') FROM days WHERE id = 1"),
     (os.environ["DIFF_H2"], "SELECT ilike(note, 'A%') FROM days"),
     (os.environ["DIFF_H2"], "SELECT ilike(note, 'A%') FROM days WHERE id = 1"),
+    (os.environ["DIFF_H2"], "SELECT like(note, 'a%') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT like(note, 'a%') FROM days WHERE id = 1"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
