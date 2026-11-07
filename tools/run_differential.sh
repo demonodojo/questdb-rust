@@ -354,7 +354,22 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   trim_order "SELECT trim(note) FROM sensors ORDER BY trim(note)" \
   trim_with_id "SELECT id, trim(note) FROM sensors ORDER BY trim(note)" \
   trim_where_empty "SELECT trim(note) FROM sensors WHERE note = ''" \
-  trim_limit_zero "SELECT trim(note) FROM sensors LIMIT 0"
+  trim_limit_zero "SELECT trim(note) FROM sensors LIMIT 0" \
+  ltrim_spaces "SELECT ltrim('  a b  ') FROM sensors LIMIT 1" \
+  rtrim_spaces "SELECT rtrim('  a b  ') FROM sensors LIMIT 1" \
+  ltrim_blank "SELECT ltrim('  ') FROM sensors LIMIT 1" \
+  rtrim_null "SELECT rtrim(null) FROM sensors LIMIT 1" \
+  rtrim_tab $'SELECT rtrim(\'\t ab \') FROM sensors LIMIT 1' \
+  ltrim_note "SELECT ltrim(note) FROM sensors" \
+  rtrim_note "SELECT rtrim(note) FROM sensors" \
+  ltrim_location "SELECT ltrim(location) FROM sensors" \
+  rtrim_tag "SELECT rtrim(tag) FROM sensors" \
+  ltrim_ch "SELECT ltrim(ch) FROM sensors" \
+  ltrim_case "SELECT LTRIM(NOTE) FROM sensors" \
+  ltrim_order "SELECT ltrim(note) FROM sensors ORDER BY ltrim(note)" \
+  rtrim_with_id "SELECT id, rtrim(note) FROM sensors ORDER BY rtrim(note)" \
+  ltrim_where_empty "SELECT ltrim(note) FROM sensors WHERE note = ''" \
+  rtrim_limit_zero "SELECT rtrim(note) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -430,7 +445,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   sub_neg "SELECT substring(note, -1, 4) FROM days" \
   sub_location "SELECT substring(location, 2, 3) FROM days ORDER BY ts" \
   trim_note "SELECT trim(note) FROM days" \
-  trim_location "SELECT trim(location) FROM days ORDER BY ts"
+  trim_location "SELECT trim(location) FROM days ORDER BY ts" \
+  ltrim_note "SELECT ltrim(note) FROM days" \
+  rtrim_location "SELECT rtrim(location) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -732,6 +749,21 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, trim(note) FROM sensors ORDER BY trim(note)"),
     (os.environ["DIFF_H1"], "SELECT trim(note) FROM sensors WHERE note = ''"),
     (os.environ["DIFF_H1"], "SELECT trim(note) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT ltrim('  a b  ') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT rtrim('  a b  ') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT ltrim('  ') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT rtrim(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT rtrim('\t ab ') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT ltrim(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT rtrim(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ltrim(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT rtrim(tag) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ltrim(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT LTRIM(NOTE) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ltrim(note) FROM sensors ORDER BY ltrim(note)"),
+    (os.environ["DIFF_H1"], "SELECT id, rtrim(note) FROM sensors ORDER BY rtrim(note)"),
+    (os.environ["DIFF_H1"], "SELECT ltrim(note) FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT rtrim(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -806,6 +838,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT substring(location, 2, 3) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT trim(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT trim(location) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT ltrim(note) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT rtrim(location) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

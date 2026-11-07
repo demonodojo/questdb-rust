@@ -124,11 +124,20 @@ pub struct SubstrExpr {
     pub args: Vec<ConcatArg>,
 }
 
-/// `trim`: one text argument, ASCII spaces removed from both ends.
+/// Which ends `trim`, `ltrim` and `rtrim` clear.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrimEnd {
+    Both,
+    Left,
+    Right,
+}
+
+/// `trim`, `ltrim` or `rtrim`: one text argument, ASCII spaces removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrimExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
+    pub end: TrimEnd,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -494,11 +503,20 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_trim_call(&self) -> bool {
-        self.starts_named_call("trim")
+        self.starts_named_call("ltrim")
+            || self.starts_named_call("rtrim")
+            || self.starts_named_call("trim")
     }
 
     fn parse_trim(&mut self) -> Result<TrimExpr, Error> {
         let name = self.ident_spelling()?;
+        let end = if name.eq_ignore_ascii_case("ltrim") {
+            TrimEnd::Left
+        } else if name.eq_ignore_ascii_case("rtrim") {
+            TrimEnd::Right
+        } else {
+            TrimEnd::Both
+        };
         let (labels, args) = self.parse_call_args(&name, false)?;
         if args.is_empty() {
             return Err(Error::new(format!(
@@ -509,6 +527,7 @@ impl<'a> Parser<'a> {
         Ok(TrimExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
+            end,
         })
     }
 

@@ -1,0 +1,2 @@
+ltrim('  a b  ')
+a b  

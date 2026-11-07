@@ -1,7 +1,7 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
     ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, SelectList, SideExpr,
-    SubstrExpr, TrimExpr, UpperExpr,
+    SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -245,6 +245,7 @@ enum ResolvedProj {
     Trim {
         label: String,
         arg: ResolvedArg,
+        end: TrimEnd,
     },
 }
 
@@ -319,9 +320,15 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
 }
 
 fn resolve_trim(table: &Table, expr: &TrimExpr) -> Result<ResolvedProj, Error> {
+    let name = match expr.end {
+        TrimEnd::Left => "ltrim",
+        TrimEnd::Right => "rtrim",
+        TrimEnd::Both => "trim",
+    };
     Ok(ResolvedProj::Trim {
         label: expr.label.clone(),
-        arg: resolve_one_text(table, "trim", &expr.args)?,
+        arg: resolve_one_text(table, name, &expr.args)?,
+        end: expr.end,
     })
 }
 
@@ -657,10 +664,18 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 }
             }
         },
-        ResolvedProj::Trim { arg, .. } => match text_of(table, row, arg) {
-            Some(text) => Scalar::Text(text.trim_matches(' ').to_string()),
+        ResolvedProj::Trim { arg, end, .. } => match text_of(table, row, arg) {
+            Some(text) => Scalar::Text(trim_ascii_space(&text, *end)),
             None => Scalar::Null,
         },
+    }
+}
+
+fn trim_ascii_space(text: &str, end: TrimEnd) -> String {
+    match end {
+        TrimEnd::Both => text.trim_matches(' ').to_string(),
+        TrimEnd::Left => text.trim_start_matches(' ').to_string(),
+        TrimEnd::Right => text.trim_end_matches(' ').to_string(),
     }
 }
 
@@ -4092,6 +4107,131 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT trim(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn ltrim_rtrim_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT ltrim('  a b  ') FROM sensors LIMIT 1",
+                "expected/ltrim_spaces.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT rtrim('  a b  ') FROM sensors LIMIT 1",
+                "expected/rtrim_spaces.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ltrim('  ') FROM sensors LIMIT 1",
+                "expected/ltrim_blank.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT rtrim(null) FROM sensors LIMIT 1",
+                "expected/rtrim_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT rtrim('\t ab ') FROM sensors LIMIT 1",
+                "expected/rtrim_tab.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ltrim(note) FROM sensors",
+                "expected/ltrim_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT rtrim(note) FROM sensors",
+                "expected/rtrim_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ltrim(location) FROM sensors",
+                "expected/ltrim_location.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT rtrim(tag) FROM sensors",
+                "expected/rtrim_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ltrim(ch) FROM sensors",
+                "expected/ltrim_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT LTRIM(NOTE) FROM sensors",
+                "expected/ltrim_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ltrim(note) FROM sensors ORDER BY ltrim(note)",
+                "expected/ltrim_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, rtrim(note) FROM sensors ORDER BY rtrim(note)",
+                "expected/rtrim_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ltrim(note) FROM sensors WHERE note = ''",
+                "expected/ltrim_where_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT rtrim(note) FROM sensors LIMIT 0",
+                "expected/rtrim_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT ltrim(note) FROM days",
+                "expected/ltrim_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT rtrim(location) FROM days ORDER BY ts",
+                "expected/rtrim_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT ltrim() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ltrim(note, location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `ltrim` with the argument types: (STRING, SYMBOL)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ltrim(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching function `ltrim` with the argument types: (LONG)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT rtrim(missing) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
