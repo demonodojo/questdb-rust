@@ -1252,7 +1252,30 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sn_where "SELECT sin(id) FROM sensors WHERE id = 1" \
   sn_order "SELECT sin(id) FROM sensors ORDER BY sin(id)" \
   sn_zero "SELECT sin(id) FROM sensors LIMIT 0" \
-  sn_ch0 "SELECT sin(ch) FROM sensors LIMIT 0"
+  sn_ch0 "SELECT sin(ch) FROM sensors LIMIT 0" \
+  co_zero_lit "SELECT cos(0) FROM sensors LIMIT 1" \
+  co_one "SELECT cos(1) FROM sensors LIMIT 1" \
+  co_neg "SELECT cos(-1) FROM sensors LIMIT 1" \
+  co_neg0 "SELECT cos(-0.0) FROM sensors LIMIT 1" \
+  co_null "SELECT cos(null) FROM sensors LIMIT 1" \
+  co_id "SELECT cos(id) FROM sensors" \
+  co_read "SELECT cos(reading) FROM sensors" \
+  co_score "SELECT cos(score) FROM sensors LIMIT 1" \
+  co_flags "SELECT cos(flags) FROM sensors LIMIT 1" \
+  co_byte "SELECT cos(b) FROM sensors LIMIT 1" \
+  co_short "SELECT cos(code) FROM sensors LIMIT 1" \
+  co_ts "SELECT cos(ts) FROM sensors LIMIT 1" \
+  co_day "SELECT cos(day) FROM sensors LIMIT 1" \
+  co_text "SELECT cos('1.5') FROM sensors LIMIT 1" \
+  co_ws "SELECT cos(' 1') FROM sensors LIMIT 1" \
+  co_suffix "SELECT cos('1.5d') FROM sensors LIMIT 1" \
+  co_nan "SELECT cos('NaN') FROM sensors LIMIT 1" \
+  co_case "SELECT COS(0) FROM sensors LIMIT 1" \
+  co_note "SELECT cos(note) FROM sensors WHERE id = 2" \
+  co_where "SELECT cos(id) FROM sensors WHERE id = 1" \
+  co_order "SELECT cos(id) FROM sensors ORDER BY cos(id)" \
+  co_zero "SELECT cos(id) FROM sensors LIMIT 0" \
+  co_ch0 "SELECT cos(ch) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1397,7 +1420,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   s1_days "SELECT sha1(note) FROM days ORDER BY ts" \
   s2_days "SELECT sha256(note) FROM days ORDER BY ts" \
   sn_days "SELECT sin(id) FROM days ORDER BY ts" \
-  sn_days_ts "SELECT sin(ts) FROM days ORDER BY ts"
+  sn_days_ts "SELECT sin(ts) FROM days ORDER BY ts" \
+  co_days "SELECT cos(id) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2597,6 +2621,29 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT sin(id) FROM sensors ORDER BY sin(id)"),
     (os.environ["DIFF_H1"], "SELECT sin(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT sin(ch) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT cos(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(-0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cos(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cos(score) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(flags) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(b) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(code) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(ts) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(day) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos('1.5') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(' 1') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos('1.5d') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos('NaN') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT COS(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(note) FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT cos(id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT cos(id) FROM sensors ORDER BY cos(id)"),
+    (os.environ["DIFF_H1"], "SELECT cos(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT cos(ch) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2740,6 +2787,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT sha256(note) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT sin(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT sin(ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT cos(id) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
