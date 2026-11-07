@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — complemento
+
+`~value` es el complemento a nivel de bit de una columna. El encabezado es `~(id)`. Un nulo sigue nulo. `LONG` e `INT` conservan el tipo. `BYTE` y `SHORT` pasan a `INT`. Un símbolo pasa a `INT`, la clave del símbolo. Una fecha y un timestamp pasan a `LONG`. `~(id)` es `-2`, `-3`, NULL y `0`. En `days` es `-2`, `-3`, `-4` y NULL. `~(flags)` es `-11`, NULL, `-1` y `-43`. `~(b)` es `-4`, `-1`, `127` y `-2`. `~(code)` es `-8`, `-1`, `32767` y `-2`. `~(day)` es `-1577923200001`, NULL, `-1` y `-1592224200001`. `~(ts)` es `-1577934245000001`, `-1577934246000001`, `-1577934247000001` y `-1577934248000001`. `~(location)` es `-1`, NULL, `-1` y `-2`. `FLOAT`, `DOUBLE` y `BOOLEAN` no tienen operador. Un texto se intenta leer como `LONG` y `alpha` se rechaza. El carácter `A` se rechaza como inconvertible a `INT`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — menos unario
 
 `-value` niega una columna y conserva el tipo numérico, también en `BYTE`, `SHORT` y `FLOAT`. El encabezado es `-(id)`. Un nulo sigue nulo. Negar `-0.0` da `0.0` y negar `0.0` da `-0.0`. El mínimo de `BYTE` y de `SHORT` no cambia. `-(id)` es `-1`, `-2`, NULL y `1`. En `days` es `-1`, `-2`, `-3` y NULL. `-(reading)` es `-1.5`, NULL, `-0.0` y `0.0`. `-(flags)` es `-10`, NULL, `0` y `-42`. `-(score)` es `-1.25`, NULL, `-0.0` y `1.5`. `-(b)` es `-3`, `0`, `-128` y `-1`. `-(code)` es `-7`, `0`, `-32768` y `-1`. `BOOLEAN` no tiene operador. Un texto se intenta leer como `DOUBLE` y `alpha` se rechaza. Se contrastó con `/exec` en `sensors` y `days`.

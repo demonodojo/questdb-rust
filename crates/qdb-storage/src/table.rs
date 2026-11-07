@@ -11,6 +11,8 @@ pub struct Table {
     pub meta: TableMeta,
     pub txn: TxnHeader,
     pub columns: Vec<Vec<Scalar>>,
+    /// Symbol dictionaries in symbol-column order. The index is the QuestDB key.
+    pub symbol_maps: Vec<Vec<String>>,
 }
 
 impl Table {
@@ -93,6 +95,7 @@ pub fn open_table_with<F: FileSystem>(
         meta,
         txn,
         columns,
+        symbol_maps: symbols,
     })
 }
 

@@ -293,6 +293,7 @@ pub enum Proj {
     Eq(EqExpr),
     Add(AddExpr),
     Neg(NegExpr),
+    BitNot(BitNotExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -867,6 +868,13 @@ impl ArithOp {
     }
 }
 
+/// `~value` is the bitwise complement of one column. The header is `~(value)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitNotExpr {
+    pub label: String,
+    pub value: String,
+}
+
 /// `-value` negates one column. The header is `-(value)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NegExpr {
@@ -1313,6 +1321,7 @@ enum SelectPiece {
     Eq(EqExpr),
     Add(AddExpr),
     Neg(NegExpr),
+    BitNot(BitNotExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -1401,7 +1410,7 @@ impl<'a> Parser<'a> {
         if self.eat(b'*') {
             return Ok(SelectList::Star);
         }
-        if !self.starts_value() && !self.starts_unary_minus() {
+        if !self.starts_value() && !self.starts_unary_minus() && !self.starts_tilde() {
             return Err(Error::new(
                 "unsupported: SELECT list must name columns or `*`",
             ));
@@ -1581,6 +1590,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Least(self.parse_least()?));
             } else if self.starts_unary_minus() {
                 pieces.push(SelectPiece::Neg(self.parse_unary_minus()?));
+            } else if self.starts_tilde() {
+                pieces.push(SelectPiece::BitNot(self.parse_tilde()?));
             } else {
                 let name = self.ident_spelling()?;
                 self.skip();
@@ -1686,6 +1697,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Eq(_)
                     | SelectPiece::Add(_)
                     | SelectPiece::Neg(_)
+                    | SelectPiece::BitNot(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
                     | SelectPiece::Exp(_)
@@ -1790,6 +1802,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Eq(expr) => items.push(Proj::Eq(expr)),
                     SelectPiece::Add(expr) => items.push(Proj::Add(expr)),
                     SelectPiece::Neg(expr) => items.push(Proj::Neg(expr)),
+                    SelectPiece::BitNot(expr) => items.push(Proj::BitNot(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
                     SelectPiece::Exp(expr) => items.push(Proj::Exp(expr)),
@@ -1914,6 +1927,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Eq(_)
                 | SelectPiece::Add(_)
                 | SelectPiece::Neg(_)
+                | SelectPiece::BitNot(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
                 | SelectPiece::Exp(_)
@@ -2124,6 +2138,35 @@ impl<'a> Parser<'a> {
             label: format!("{name} in ({})", labels.join(", ")),
             value: name,
             args,
+        })
+    }
+
+    fn starts_tilde(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if self.src.get(pos) != Some(&b'~') {
+            return false;
+        }
+        pos += 1;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        matches!(self.src.get(pos), Some(byte) if byte.is_ascii_alphabetic() || *byte == b'_')
+    }
+
+    fn parse_tilde(&mut self) -> Result<BitNotExpr, Error> {
+        self.skip();
+        if !self.eat(b'~') {
+            return Err(Error::new(
+                "unsupported: expected '~' before column".to_string(),
+            ));
+        }
+        let name = self.ident_spelling()?;
+        Ok(BitNotExpr {
+            label: format!("~({name})"),
+            value: name,
         })
     }
 

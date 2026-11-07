@@ -2483,7 +2483,18 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ng_score "SELECT -score FROM sensors" \
   ng_byte "SELECT -b FROM sensors" \
   ng_code "SELECT -code FROM sensors" \
-  ng_lim0 "SELECT -id FROM sensors LIMIT 0"
+  ng_lim0 "SELECT -id FROM sensors LIMIT 0" \
+  bc_all "SELECT ~id FROM sensors" \
+  bc_one "SELECT ~id FROM sensors WHERE id = 1" \
+  bc_neg "SELECT ~id FROM sensors WHERE id = -1" \
+  bc_none "SELECT ~id FROM sensors WHERE id > 100" \
+  bc_flags "SELECT ~flags FROM sensors" \
+  bc_byte "SELECT ~b FROM sensors" \
+  bc_code "SELECT ~code FROM sensors" \
+  bc_day "SELECT ~day FROM sensors" \
+  bc_ts "SELECT ~ts FROM sensors" \
+  bc_loc "SELECT ~location FROM sensors" \
+  bc_lim0 "SELECT ~id FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2781,7 +2792,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   dv_days_null "SELECT id / null FROM days" \
   rm_days "SELECT id % 2 FROM days" \
   rm_days_null "SELECT id % null FROM days" \
-  ng_days "SELECT -id FROM days"
+  ng_days "SELECT -id FROM days" \
+  bc_days "SELECT ~id FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5212,6 +5224,17 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT -b FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT -code FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT -id FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT ~id FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ~id FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT ~id FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT ~id FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT ~flags FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ~b FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ~code FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ~day FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ~ts FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ~location FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ~id FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -5508,6 +5531,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT id % 2 FROM days"),
     (os.environ["DIFF_H2"], "SELECT id % null FROM days"),
     (os.environ["DIFF_H2"], "SELECT -id FROM days"),
+    (os.environ["DIFF_H2"], "SELECT ~id FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

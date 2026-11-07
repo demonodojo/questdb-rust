@@ -1,7 +1,7 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AddExpr, AggFunc,
     AggregateExpr, AggregateExtra, ArithOp, AsinExpr, Atan2Expr, AtanExpr, BarExpr, BetweenExpr,
-    CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr,
+    BitNotExpr, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr,
     DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr,
     DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr,
     GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr,
@@ -291,6 +291,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Eq { label, .. }
             | ResolvedProj::Add { label, .. }
             | ResolvedProj::Neg { label, .. }
+            | ResolvedProj::BitNot { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
             | ResolvedProj::Exp { label, .. }
@@ -711,6 +712,11 @@ enum ResolvedProj {
         index: usize,
         result_tag: i32,
     },
+    BitNot {
+        label: String,
+        index: usize,
+        result_tag: i32,
+    },
     Ln {
         label: String,
         input: SqrtInput,
@@ -891,6 +897,7 @@ impl ResolvedProj {
             | Self::Eq { label, .. }
             | Self::Add { label, .. }
             | Self::Neg { label, .. }
+            | Self::BitNot { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
             | Self::Exp { label, .. }
@@ -966,7 +973,8 @@ impl ResolvedProj {
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
             | Self::Add { result_tag, .. }
-            | Self::Neg { result_tag, .. } => *result_tag,
+            | Self::Neg { result_tag, .. }
+            | Self::BitNot { result_tag, .. } => *result_tag,
             Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
                 if *wide {
                     qdb_types::TAG_DOUBLE
@@ -1094,6 +1102,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Eq(expr) => resolve_eq(table, expr),
         Proj::Add(expr) => resolve_add(table, expr),
         Proj::Neg(expr) => resolve_neg(table, expr),
+        Proj::BitNot(expr) => resolve_bit_not(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
         Proj::Exp(expr) => resolve_exp(table, expr),
@@ -1732,6 +1741,82 @@ fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
         literal: expr.literal.clone(),
         op: expr.op,
     })
+}
+
+fn resolve_bit_not(table: &Table, expr: &BitNotExpr) -> Result<ResolvedProj, Error> {
+    let Some(index) = table.column_index(&expr.value) else {
+        return Err(Error::new(format!("Invalid column: {}", expr.value)));
+    };
+    let tag = table.meta.columns[index].tag;
+    let result_tag = match tag {
+        qdb_types::TAG_BYTE
+        | qdb_types::TAG_SHORT
+        | qdb_types::TAG_INT
+        | qdb_types::TAG_SYMBOL
+        | qdb_types::TAG_CHAR => qdb_types::TAG_INT,
+        qdb_types::TAG_LONG
+        | qdb_types::TAG_DATE
+        | qdb_types::TAG_TIMESTAMP
+        | qdb_types::TAG_STRING
+        | qdb_types::TAG_VARCHAR => qdb_types::TAG_LONG,
+        other => {
+            return Err(Error::new(format!(
+                "there is no matching operator `~` with the argument type: {}",
+                qdb_types::type_name(other)
+            )))
+        }
+    };
+    Ok(ResolvedProj::BitNot {
+        label: expr.label.clone(),
+        index,
+        result_tag,
+    })
+}
+
+fn bit_not_value(table: &Table, row: usize, index: usize) -> Result<Scalar, Error> {
+    let tag = table.meta.columns[index].tag;
+    match &table.columns[index][row] {
+        Scalar::Null => Ok(Scalar::Null),
+        Scalar::Byte(number) => Ok(Scalar::Int(!i32::from(*number))),
+        Scalar::Short(number) => Ok(Scalar::Int(!i32::from(*number))),
+        Scalar::Int(number) => Ok(Scalar::Int(!number)),
+        Scalar::Long(number) => Ok(Scalar::Long(!number)),
+        Scalar::Date(number) | Scalar::Timestamp(number) => Ok(Scalar::Long(!number)),
+        Scalar::Char(unit) => {
+            let ch = char::from_u32(u32::from(*unit)).unwrap_or('\u{0}');
+            match parse_questdb_long(&ch.to_string()).and_then(|value| i32::try_from(value).ok()) {
+                Some(number) => Ok(Scalar::Int(!number)),
+                None => Err(Error::new(format!(
+                    "inconvertible value: {ch} [CHAR -> INT]"
+                ))),
+            }
+        }
+        Scalar::Text(text) if tag == qdb_types::TAG_SYMBOL => {
+            let map_index = table.meta.columns[index]
+                .symbol_index
+                .ok_or_else(|| Error::new("internal: symbol column"))?;
+            let key = table.symbol_maps[map_index]
+                .iter()
+                .position(|found| found == text)
+                .ok_or_else(|| Error::new("internal: symbol key"))?;
+            let key = i32::try_from(key).map_err(|_| Error::new("internal: symbol key"))?;
+            Ok(Scalar::Int(!key))
+        }
+        Scalar::Text(text) => {
+            let kind = if tag == qdb_types::TAG_VARCHAR {
+                "VARCHAR"
+            } else {
+                "STRING"
+            };
+            match parse_questdb_long(text) {
+                Some(number) => Ok(Scalar::Long(!number)),
+                None => Err(Error::new(format!(
+                    "inconvertible value: `{text}` [{kind} -> LONG]"
+                ))),
+            }
+        }
+        _ => Err(Error::new("internal: bitwise not")),
+    }
 }
 
 fn resolve_neg(table: &Table, expr: &NegExpr) -> Result<ResolvedProj, Error> {
@@ -7192,6 +7277,7 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         ResolvedProj::Radians { input, .. } => radians_scalar(table, row, input),
         ResolvedProj::Cot { input, .. } => cot_scalar(table, row, input),
         ResolvedProj::Neg { index, .. } => neg_value(table, row, *index),
+        ResolvedProj::BitNot { index, .. } => bit_not_value(table, row, *index),
         ResolvedProj::Eq {
             index, op, literal, ..
         } => eq_value(table, row, *index, *op, literal),
@@ -7285,6 +7371,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             ..
         } => add_value(table, row, *index, *result_tag, literal, *op),
         ResolvedProj::Neg { index, .. } => neg_value(table, row, *index).unwrap_or(Scalar::Null),
+        ResolvedProj::BitNot { index, .. } => {
+            bit_not_value(table, row, *index).unwrap_or(Scalar::Null)
+        }
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15662,6 +15751,92 @@ mod tests {
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn bc_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (&sensors, "SELECT ~id FROM sensors", "expected/bc_all.tsv"),
+            (
+                &sensors,
+                "SELECT ~id FROM sensors WHERE id = 1",
+                "expected/bc_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ~id FROM sensors WHERE id = -1",
+                "expected/bc_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ~id FROM sensors WHERE id > 100",
+                "expected/bc_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ~flags FROM sensors",
+                "expected/bc_flags.tsv",
+            ),
+            (&sensors, "SELECT ~b FROM sensors", "expected/bc_byte.tsv"),
+            (
+                &sensors,
+                "SELECT ~code FROM sensors",
+                "expected/bc_code.tsv",
+            ),
+            (&sensors, "SELECT ~day FROM sensors", "expected/bc_day.tsv"),
+            (&sensors, "SELECT ~ts FROM sensors", "expected/bc_ts.tsv"),
+            (
+                &sensors,
+                "SELECT ~location FROM sensors",
+                "expected/bc_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ~id FROM sensors LIMIT 0",
+                "expected/bc_lim0.tsv",
+            ),
+            (&days, "SELECT ~id FROM days", "expected/bc_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT ~missing FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ~ok FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching operator `~` with the argument type: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ~reading FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching operator `~` with the argument type: DOUBLE"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ~note FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ~ch FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("inconvertible value: A [CHAR -> INT]"),
             "{}",
             err.message
         );
