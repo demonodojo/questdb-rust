@@ -3,14 +3,14 @@ use crate::parse::{
     AggregateExpr, AggregateExtra, AsinExpr, Atan2Expr, AtanExpr, CastExpr, CeilExpr, CmpOp,
     CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
     DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, ExpExpr, ExtractExpr,
-    Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IsEndOfMonthExpr,
-    IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr,
-    MillisExpr, MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj,
-    Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
-    RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
-    SizePrettyExpr, SparkParams, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
-    TanExpr, TimestampCeilExpr, TimestampFloorExpr, ToDateExpr, ToStrExpr, ToTimestampExpr,
-    TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr,
+    IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, Md5Expr,
+    MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr,
+    Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
+    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr,
+    SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SqrtExpr, StartsWithExpr,
+    StrPosExpr, SubstrExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, ToDateExpr, ToStrExpr,
+    ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -214,6 +214,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Replace { label, .. }
             | ResolvedProj::StartsWith { label, .. }
             | ResolvedProj::Glob { label, .. }
+            | ResolvedProj::Ilike { label, .. }
             | ResolvedProj::StrPos { label, .. }
             | ResolvedProj::SplitPart { label, .. }
             | ResolvedProj::Pad { label, .. }
@@ -351,6 +352,11 @@ enum ResolvedProj {
         label: String,
         value: ResolvedArg,
         pattern: Vec<u8>,
+    },
+    Ilike {
+        label: String,
+        value: ResolvedArg,
+        pattern: IlikePattern,
     },
     StrPos {
         label: String,
@@ -719,6 +725,7 @@ impl ResolvedProj {
             | Self::Replace { label, .. }
             | Self::StartsWith { label, .. }
             | Self::Glob { label, .. }
+            | Self::Ilike { label, .. }
             | Self::StrPos { label, .. }
             | Self::SplitPart { label, .. }
             | Self::Pad { label, .. }
@@ -847,7 +854,9 @@ impl ResolvedProj {
                     qdb_types::TAG_FLOAT
                 }
             }
-            Self::StartsWith { .. } | Self::Glob { .. } => qdb_types::TAG_BOOLEAN,
+            Self::StartsWith { .. } | Self::Glob { .. } | Self::Ilike { .. } => {
+                qdb_types::TAG_BOOLEAN
+            }
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -891,6 +900,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Replace(expr) => resolve_replace(table, expr),
         Proj::StartsWith(expr) => resolve_starts_with(table, expr),
         Proj::Glob(expr) => resolve_glob(table, expr),
+        Proj::Ilike(expr) => resolve_ilike(table, expr),
         Proj::StrPos(expr) => resolve_strpos(table, expr),
         Proj::SplitPart(expr) => resolve_split_part(table, expr),
         Proj::Pad(expr) => resolve_pad(table, expr),
@@ -5218,6 +5228,125 @@ fn resolve_strpos(table: &Table, expr: &StrPosExpr) -> Result<ResolvedProj, Erro
     })
 }
 
+enum IlikePattern {
+    Never,
+    Tokens(Vec<IlikeToken>),
+}
+
+enum IlikeToken {
+    Any,
+    One,
+    Lit(char),
+}
+
+fn resolve_ilike(table: &Table, expr: &IlikeExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() < 2 {
+        return Err(Error::new(format!(
+            "too few arguments for 'ilike' [found={},expected=2]",
+            expr.args.len()
+        )));
+    }
+    let value_ok = replace_text_ok(table, &expr.args[0]);
+    let pattern_literal = matches!(
+        expr.args[1],
+        ConcatArg::Literal(Scalar::Text(_)) | ConcatArg::Literal(Scalar::Null)
+    );
+    if expr.args.len() != 2 || !value_ok || !pattern_literal {
+        if expr.args.len() == 2 && value_ok && ilike_text_column(table, &expr.args[1]) {
+            return Err(Error::new("use constant or bind variable"));
+        }
+        return ilike_operator_error(table, &expr.args);
+    }
+    let pattern = match &expr.args[1] {
+        ConcatArg::Literal(Scalar::Text(text)) if !text.is_empty() => {
+            IlikePattern::Tokens(compile_ilike(text)?)
+        }
+        _ => IlikePattern::Never,
+    };
+    Ok(ResolvedProj::Ilike {
+        label: expr.label.clone(),
+        value: resolve_concat_arg(table, &expr.args[0])?,
+        pattern,
+    })
+}
+
+fn ilike_text_column(table: &Table, arg: &ConcatArg) -> bool {
+    let ConcatArg::Column(name) = arg else {
+        return false;
+    };
+    table.column_index(name).is_some_and(|index| {
+        matches!(
+            table.meta.columns[index].tag,
+            qdb_types::TAG_STRING
+                | qdb_types::TAG_SYMBOL
+                | qdb_types::TAG_VARCHAR
+                | qdb_types::TAG_CHAR
+        )
+    })
+}
+
+fn ilike_operator_error(table: &Table, args: &[ConcatArg]) -> Result<ResolvedProj, Error> {
+    let right_at = if args.len() == 2 { 1 } else { args.len() - 1 };
+    let left = replace_arg_type(table, &args[0])?;
+    let right = replace_arg_type(table, &args[right_at])?;
+    Err(Error::new(format!(
+        "there is no matching operator `ilike` with the argument types: {left} ilike {right}"
+    )))
+}
+
+fn compile_ilike(pattern: &str) -> Result<Vec<IlikeToken>, Error> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        match chars[index] {
+            '\\' => {
+                index += 1;
+                if index >= chars.len() {
+                    return Err(Error::new(format!(
+                        "found [tok='{pattern}', len={}] LIKE pattern must not end with escape character",
+                        chars.len()
+                    )));
+                }
+                tokens.push(IlikeToken::Lit(ilike_fold(chars[index])));
+            }
+            '%' => tokens.push(IlikeToken::Any),
+            '_' => tokens.push(IlikeToken::One),
+            token => tokens.push(IlikeToken::Lit(ilike_fold(token))),
+        }
+        index += 1;
+    }
+    Ok(tokens)
+}
+
+fn ilike_fold(token: char) -> char {
+    let mut lowered = token.to_lowercase();
+    match (lowered.next(), lowered.next()) {
+        (Some(one), None) => one,
+        _ => token,
+    }
+}
+
+fn ilike_match(text: &[char], tokens: &[IlikeToken], text_at: usize, token_at: usize) -> bool {
+    if token_at == tokens.len() {
+        return text_at == text.len();
+    }
+    match tokens[token_at] {
+        IlikeToken::Any => {
+            ilike_match(text, tokens, text_at, token_at + 1)
+                || (text_at < text.len() && ilike_match(text, tokens, text_at + 1, token_at))
+        }
+        IlikeToken::One => {
+            text_at < text.len() && ilike_match(text, tokens, text_at + 1, token_at + 1)
+        }
+        IlikeToken::Lit(token) => {
+            text_at < text.len()
+                && ilike_fold(text[text_at]) == token
+                && ilike_match(text, tokens, text_at + 1, token_at + 1)
+        }
+    }
+}
+
 fn resolve_glob(table: &Table, expr: &GlobExpr) -> Result<ResolvedProj, Error> {
     let pattern_literal = expr.args.len() == 2
         && replace_text_ok(table, &expr.args[0])
@@ -6196,6 +6325,16 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                     },
                 }
             }
+        }
+        ResolvedProj::Ilike { value, pattern, .. } => {
+            let matched = match (pattern, text_of(table, row, value)) {
+                (IlikePattern::Never, _) | (_, None) => false,
+                (IlikePattern::Tokens(tokens), Some(value)) => {
+                    let chars: Vec<char> = value.chars().collect();
+                    ilike_match(&chars, tokens, 0, 0)
+                }
+            };
+            Scalar::Boolean(matched)
         }
         ResolvedProj::Glob { value, pattern, .. } => {
             let matched = match text_of(table, row, value) {
@@ -14057,6 +14196,176 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn ilike_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT ilike(note, 'A%') FROM sensors",
+                "expected/ik_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, 'A%') FROM sensors WHERE id = 1",
+                "expected/ik_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, 'A%') FROM sensors WHERE id = 2",
+                "expected/ik_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, 'Z%') FROM sensors WHERE id = 1",
+                "expected/ik_z.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, '') FROM sensors WHERE id = 1",
+                "expected/ik_blank.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, null) FROM sensors WHERE id = 1",
+                "expected/ik_nullpat.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, '%') FROM sensors WHERE note = ''",
+                "expected/ik_pct.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, '_') FROM sensors WHERE id = 1",
+                "expected/ik_under.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, 'A_PHA') FROM sensors WHERE id = 1",
+                "expected/ik_mid.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(tag, 'v%') FROM sensors WHERE id = 1",
+                "expected/ik_tag.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(location, 'M%') FROM sensors WHERE id = 1",
+                "expected/ik_sym.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(ch, 'a') FROM sensors WHERE id = 1",
+                "expected/ik_char.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike('Alpha', 'a%') FROM sensors LIMIT 1",
+                "expected/ik_lit.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, 'Β%') FROM sensors WHERE id = -1",
+                "expected/ik_beta.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, 'a\\%') FROM sensors WHERE id = 1",
+                "expected/ik_esc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ILIKE(note, 'A%') FROM sensors WHERE id = 1",
+                "expected/ik_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, 'A%') FROM sensors WHERE id > 100",
+                "expected/ik_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ilike(note, 'A%') FROM sensors LIMIT 0",
+                "expected/ik_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT ilike(note, 'A%') FROM days",
+                "expected/ik_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT ilike(note, 'A%') FROM days WHERE id = 1",
+                "expected/ik_days_one.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT ilike() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for 'ilike' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ilike(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for 'ilike' [found=1,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ilike(note, 'A%', 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching operator `ilike` with the argument types: STRING ilike INT"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ilike(flags, '1%') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching operator `ilike` with the argument types: INT ilike STRING"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ilike(note, note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("use constant or bind variable"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ilike(ok, 't%') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching operator `ilike` with the argument types: BOOLEAN ilike STRING"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ilike(note, 'a\\') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("LIKE pattern must not end with escape character"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT ilike(missing, 'A%') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

@@ -1,0 +1,5 @@
+ilike(note, 'A%')
+true
+false
+false
+false
