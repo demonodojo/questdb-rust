@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — weighted_stddev_rel()
+
+`weighted_stddev_rel(value, weight)` es el mismo cálculo de fiabilidad que `weighted_stddev` y devuelve `DOUBLE`. `weighted_stddev_rel(reading, flags)` es `1.060660171779821`. Una sola fila o un grupo sin dos pesos positivos devuelve NULL. Un peso negativo anula el agregado. `weighted_stddev_rel(day, flags)` sale en notación científica con `E` mayúscula y queda fuera del TSV capturado. `weighted_stddev_rel(reading, 1)` es `0.8660254037844386` en 10.1.0; este paso solo acepta una columna como peso. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — weighted_stddev_freq()
 
 `weighted_stddev_freq(value, weight)` devuelve la desviación estándar ponderada por frecuencia como `DOUBLE`. Comparte la suma de `weighted_stddev` y divide por el peso total menos uno. `weighted_stddev_freq(reading, flags)` es `0.5969378875804073`. Una sola fila con peso mayor que uno es `0.0`. Sin filas el resultado es NULL. Un peso negativo anula el agregado. `weighted_stddev_freq(day, flags)` sale en notación científica con `E` mayúscula y queda fuera del TSV capturado. `weighted_stddev_freq(reading, 1)` es `0.8660254037844386` en 10.1.0; este paso solo acepta una columna como peso. Se contrastó con `/exec` en `sensors` y `days`.

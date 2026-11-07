@@ -7517,14 +7517,16 @@ impl Accumulator {
                 volume: 0.0,
                 started: false,
             },
-            AggFunc::WeightedStdDev | AggFunc::WeightedStdDevFreq => Self::WeightedStdDev {
-                w_sum: 0.0,
-                w_sum2: 0.0,
-                mean: 0.0,
-                s: 0.0,
-                started: false,
-                frequency: func == AggFunc::WeightedStdDevFreq,
-            },
+            AggFunc::WeightedStdDev | AggFunc::WeightedStdDevRel | AggFunc::WeightedStdDevFreq => {
+                Self::WeightedStdDev {
+                    w_sum: 0.0,
+                    w_sum2: 0.0,
+                    mean: 0.0,
+                    s: 0.0,
+                    started: false,
+                    frequency: func == AggFunc::WeightedStdDevFreq,
+                }
+            }
             AggFunc::Twap => Self::Twap {
                 samples: Vec::new(),
             },
@@ -7929,6 +7931,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             | AggFunc::Vwap
             | AggFunc::WeightedAvg
             | AggFunc::WeightedStdDev
+            | AggFunc::WeightedStdDevRel
             | AggFunc::WeightedStdDevFreq
     ) {
         covar_pair(table, tag, aggregate)?
@@ -8024,6 +8027,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::Vwap
         | AggFunc::WeightedAvg
         | AggFunc::WeightedStdDev
+        | AggFunc::WeightedStdDevRel
         | AggFunc::WeightedStdDevFreq
         | AggFunc::Twap
         | AggFunc::CovarSamp
@@ -8126,6 +8130,7 @@ fn contribution(
         | AggFunc::Vwap
         | AggFunc::WeightedAvg
         | AggFunc::WeightedStdDev
+        | AggFunc::WeightedStdDevRel
         | AggFunc::WeightedStdDevFreq
         | AggFunc::Twap => Ok(None),
     }
@@ -8226,7 +8231,7 @@ fn feed(
     }
     if matches!(
         input.func,
-        AggFunc::WeightedStdDev | AggFunc::WeightedStdDevFreq
+        AggFunc::WeightedStdDev | AggFunc::WeightedStdDevRel | AggFunc::WeightedStdDevFreq
     ) {
         let price_index = input
             .index
@@ -25851,6 +25856,232 @@ mod tests {
         assert!(
             err.message
                 .contains("unsupported: weighted_stddev_freq expects a column"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn weighted_stddev_rel_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(reading, flags) FROM sensors",
+                "expected/wr_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(reading, flags) FROM sensors WHERE id = 1",
+                "expected/wr_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(reading, flags) FROM sensors WHERE id > 100",
+                "expected/wr_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(reading, flags) FROM sensors WHERE id = -1",
+                "expected/wr_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(score, flags) FROM sensors",
+                "expected/wr_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(id, flags) FROM sensors",
+                "expected/wr_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(b, flags) FROM sensors",
+                "expected/wr_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(code, flags) FROM sensors",
+                "expected/wr_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(flags, reading) FROM sensors",
+                "expected/wr_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(reading, b) FROM sensors",
+                "expected/wr_neg_w.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(flags, flags) FROM sensors",
+                "expected/wr_self.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(ts, flags) FROM sensors",
+                "expected/wr_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(reading, flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/wr_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(reading, flags) FROM sensors LIMIT 0",
+                "expected/wr_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT WEIGHTED_STDDEV_REL(reading, flags) FROM sensors",
+                "expected/wr_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT weighted_stddev_rel(reading, flags) FROM sensors WHERE flags > 0",
+                "expected/wr_pos.tsv",
+            ),
+            (
+                &days,
+                "SELECT weighted_stddev_rel(id, id) FROM days",
+                "expected/wr_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT weighted_stddev_rel(id, id) FROM days GROUP BY location ORDER BY location",
+                "expected/wr_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT weighted_stddev_rel() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `weighted_stddev_rel` requires arguments: weighted_stddev_rel(DOUBLE, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT weighted_stddev_rel(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `weighted_stddev_rel`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_rel(reading, flags, id) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `weighted_stddev_rel`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT weighted_stddev_rel(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_rel(missing, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_rel(ok, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_rel(reading, location) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: SYMBOL"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_rel(note, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_rel(ch, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_rel(tag, flags) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_rel(ch, flags) FROM sensors WHERE id = 2",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: \0 [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT weighted_stddev_rel(reading, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("unsupported: weighted_stddev_rel expects a column"),
             "{}",
             err.message
         );

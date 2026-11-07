@@ -63,6 +63,7 @@ pub enum AggFunc {
     Twap,
     WeightedAvg,
     WeightedStdDev,
+    WeightedStdDevRel,
     WeightedStdDevFreq,
     CovarSamp,
     Corr,
@@ -3163,6 +3164,7 @@ impl<'a> Parser<'a> {
                 | "twap"
                 | "weighted_avg"
                 | "weighted_stddev"
+                | "weighted_stddev_rel"
                 | "weighted_stddev_freq"
                 | "covar_samp"
                 | "corr"
@@ -3238,6 +3240,7 @@ impl<'a> Parser<'a> {
             "twap" => AggFunc::Twap,
             "weighted_avg" => AggFunc::WeightedAvg,
             "weighted_stddev" => AggFunc::WeightedStdDev,
+            "weighted_stddev_rel" => AggFunc::WeightedStdDevRel,
             "weighted_stddev_freq" => AggFunc::WeightedStdDevFreq,
             "covar_samp" => AggFunc::CovarSamp,
             "corr" => AggFunc::Corr,
@@ -3547,6 +3550,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Twap
                 | AggFunc::WeightedAvg
                 | AggFunc::WeightedStdDev
+                | AggFunc::WeightedStdDevRel
                 | AggFunc::WeightedStdDevFreq
         ) && self.peek() == Some(b',')
         {
@@ -3564,6 +3568,8 @@ impl<'a> Parser<'a> {
                     "unsupported: weighted_avg expects a column"
                 } else if func == AggFunc::WeightedStdDev {
                     "unsupported: weighted_stddev expects a column"
+                } else if func == AggFunc::WeightedStdDevRel {
+                    "unsupported: weighted_stddev_rel expects a column"
                 } else if func == AggFunc::WeightedStdDevFreq {
                     "unsupported: weighted_stddev_freq expects a column"
                 } else {
@@ -3740,6 +3746,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Vwap
                 | AggFunc::WeightedAvg
                 | AggFunc::WeightedStdDev
+                | AggFunc::WeightedStdDevRel
                 | AggFunc::WeightedStdDevFreq
         ) && column.is_none()
         {
@@ -3760,6 +3767,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::Twap
                 | AggFunc::WeightedAvg
                 | AggFunc::WeightedStdDev
+                | AggFunc::WeightedStdDevRel
                 | AggFunc::WeightedStdDevFreq
         ) && pair.is_none()
         {
