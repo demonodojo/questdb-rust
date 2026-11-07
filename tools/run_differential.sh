@@ -1384,7 +1384,32 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   a2_where "SELECT atan2(id, 1) FROM sensors WHERE id = 1" \
   a2_order "SELECT atan2(id, 1) FROM sensors ORDER BY atan2(id, 1)" \
   a2_lim0 "SELECT atan2(id, 1) FROM sensors LIMIT 0" \
-  a2_ch0 "SELECT atan2(ch, 1) FROM sensors LIMIT 0"
+  a2_ch0 "SELECT atan2(ch, 1) FROM sensors LIMIT 0" \
+  dg_zero "SELECT degrees(0) FROM sensors LIMIT 1" \
+  dg_one "SELECT degrees(1) FROM sensors LIMIT 1" \
+  dg_neg "SELECT degrees(-1) FROM sensors LIMIT 1" \
+  dg_half "SELECT degrees(0.5) FROM sensors LIMIT 1" \
+  dg_neg0 "SELECT degrees(-0.0) FROM sensors LIMIT 1" \
+  dg_pi "SELECT degrees(3.141592653589793) FROM sensors LIMIT 1" \
+  dg_right "SELECT degrees(1.5707963267948966) FROM sensors LIMIT 1" \
+  dg_two "SELECT degrees(2) FROM sensors LIMIT 1" \
+  dg_null "SELECT degrees(null) FROM sensors LIMIT 1" \
+  dg_id "SELECT degrees(id) FROM sensors" \
+  dg_read "SELECT degrees(reading) FROM sensors" \
+  dg_score "SELECT degrees(score) FROM sensors" \
+  dg_byte "SELECT degrees(b) FROM sensors" \
+  dg_short "SELECT degrees(code) FROM sensors" \
+  dg_flags "SELECT degrees(flags) FROM sensors" \
+  dg_text "SELECT degrees('1') FROM sensors LIMIT 1" \
+  dg_suffix "SELECT degrees('1.5d') FROM sensors LIMIT 1" \
+  dg_ws "SELECT degrees(' 1') FROM sensors LIMIT 1" \
+  dg_nan "SELECT degrees('NaN') FROM sensors LIMIT 1" \
+  dg_case "SELECT DEGREES(1) FROM sensors LIMIT 1" \
+  dg_note "SELECT degrees(note) FROM sensors WHERE id = 2" \
+  dg_where "SELECT degrees(id) FROM sensors WHERE id = 1" \
+  dg_order "SELECT degrees(id) FROM sensors ORDER BY degrees(id)" \
+  dg_lim0 "SELECT degrees(id) FROM sensors LIMIT 0" \
+  dg_ch0 "SELECT degrees(ch) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1536,7 +1561,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   an_days "SELECT asin(id) FROM days ORDER BY ts" \
   ac_days "SELECT acos(id) FROM days ORDER BY ts" \
   at_days "SELECT atan(id) FROM days ORDER BY ts" \
-  a2_days "SELECT atan2(id, 1) FROM days ORDER BY ts"
+  a2_days "SELECT atan2(id, 1) FROM days ORDER BY ts" \
+  dg_days "SELECT degrees(id) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2868,6 +2894,31 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT atan2(id, 1) FROM sensors ORDER BY atan2(id, 1)"),
     (os.environ["DIFF_H1"], "SELECT atan2(id, 1) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT atan2(ch, 1) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT degrees(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(0.5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(-0.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(3.141592653589793) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(1.5707963267948966) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT degrees(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT degrees(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT degrees(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT degrees(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT degrees(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT degrees('1') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees('1.5d') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(' 1') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees('NaN') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT DEGREES(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(note) FROM sensors WHERE id = 2"),
+    (os.environ["DIFF_H1"], "SELECT degrees(id) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT degrees(id) FROM sensors ORDER BY degrees(id)"),
+    (os.environ["DIFF_H1"], "SELECT degrees(id) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT degrees(ch) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3018,6 +3069,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT acos(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT atan(id) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT atan2(id, 1) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT degrees(id) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

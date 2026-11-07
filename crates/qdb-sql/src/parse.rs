@@ -141,6 +141,7 @@ pub enum Proj {
     Acos(AcosExpr),
     Atan(AtanExpr),
     Atan2(Atan2Expr),
+    Degrees(DegreesExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -567,6 +568,13 @@ pub struct Atan2Expr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `degrees(radians)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DegreesExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `power(base, exponent)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerExpr {
@@ -769,6 +777,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_ceil()?.label
             } else if parser.starts_sign_call() {
                 parser.parse_sign()?.label
+            } else if parser.starts_degrees_call() {
+                parser.parse_degrees()?.label
             } else if parser.starts_atan2_call() {
                 parser.parse_atan2()?.label
             } else if parser.starts_atan_call() {
@@ -910,6 +920,7 @@ enum SelectPiece {
     Acos(AcosExpr),
     Atan(AtanExpr),
     Atan2(Atan2Expr),
+    Degrees(DegreesExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -1113,6 +1124,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Ceil(self.parse_ceil()?));
             } else if self.starts_sign_call() {
                 pieces.push(SelectPiece::Sign(self.parse_sign()?));
+            } else if self.starts_degrees_call() {
+                pieces.push(SelectPiece::Degrees(self.parse_degrees()?));
             } else if self.starts_atan2_call() {
                 pieces.push(SelectPiece::Atan2(self.parse_atan2()?));
             } else if self.starts_atan_call() {
@@ -1217,6 +1230,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Acos(_)
                     | SelectPiece::Atan(_)
                     | SelectPiece::Atan2(_)
+                    | SelectPiece::Degrees(_)
                     | SelectPiece::Power(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
@@ -1299,6 +1313,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Acos(expr) => items.push(Proj::Acos(expr)),
                     SelectPiece::Atan(expr) => items.push(Proj::Atan(expr)),
                     SelectPiece::Atan2(expr) => items.push(Proj::Atan2(expr)),
+                    SelectPiece::Degrees(expr) => items.push(Proj::Degrees(expr)),
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
@@ -1403,6 +1418,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Acos(_)
                 | SelectPiece::Atan(_)
                 | SelectPiece::Atan2(_)
+                | SelectPiece::Degrees(_)
                 | SelectPiece::Power(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
@@ -1570,6 +1586,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(PowerExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_degrees_call(&self) -> bool {
+        self.starts_named_call("degrees")
+    }
+
+    fn parse_degrees(&mut self) -> Result<DegreesExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `degrees` requires arguments: degrees(DOUBLE)".to_string(),
+            ));
+        }
+        Ok(DegreesExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
