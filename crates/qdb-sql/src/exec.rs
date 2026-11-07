@@ -1,6 +1,6 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AggFunc,
-    AggregateExpr, AsinExpr, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr,
+    AggregateExpr, AsinExpr, AtanExpr, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr,
     DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr,
     DaysInMonthExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect,
     HourExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr,
@@ -260,6 +260,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Tan { label, .. }
             | ResolvedProj::Asin { label, .. }
             | ResolvedProj::Acos { label, .. }
+            | ResolvedProj::Atan { label, .. }
             | ResolvedProj::Power { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
@@ -560,6 +561,10 @@ enum ResolvedProj {
         label: String,
         input: SinInput,
     },
+    Atan {
+        label: String,
+        input: SinInput,
+    },
     Power {
         label: String,
         base: SqrtInput,
@@ -722,6 +727,7 @@ impl ResolvedProj {
             | Self::Tan { label, .. }
             | Self::Asin { label, .. }
             | Self::Acos { label, .. }
+            | Self::Atan { label, .. }
             | Self::Power { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
@@ -777,6 +783,7 @@ impl ResolvedProj {
             | Self::Tan { .. }
             | Self::Asin { .. }
             | Self::Acos { .. }
+            | Self::Atan { .. }
             | Self::Power { .. }
             | Self::Ln { .. }
             | Self::Log { .. }
@@ -881,6 +888,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Tan(expr) => resolve_tan(table, expr),
         Proj::Asin(expr) => resolve_asin(table, expr),
         Proj::Acos(expr) => resolve_acos(table, expr),
+        Proj::Atan(expr) => resolve_atan(table, expr),
         Proj::Power(expr) => resolve_power(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
@@ -1379,6 +1387,13 @@ fn resolve_acos(table: &Table, expr: &AcosExpr) -> Result<ResolvedProj, Error> {
     Ok(ResolvedProj::Acos {
         label: expr.label.clone(),
         input: resolve_real_arg(table, "acos", &expr.args)?,
+    })
+}
+
+fn resolve_atan(table: &Table, expr: &AtanExpr) -> Result<ResolvedProj, Error> {
+    Ok(ResolvedProj::Atan {
+        label: expr.label.clone(),
+        input: resolve_real_arg(table, "atan", &expr.args)?,
     })
 }
 
@@ -5427,6 +5442,7 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         ResolvedProj::Tan { input, .. } => tan_scalar(table, row, input),
         ResolvedProj::Asin { input, .. } => asin_scalar(table, row, input),
         ResolvedProj::Acos { input, .. } => acos_scalar(table, row, input),
+        ResolvedProj::Atan { input, .. } => atan_scalar(table, row, input),
         _ => Ok(eval_resolved(table, row, item)),
     }
 }
@@ -5512,6 +5528,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Err(_) => Scalar::Null,
         },
         ResolvedProj::Acos { input, .. } => match acos_scalar(table, row, input) {
+            Ok(value) => value,
+            Err(_) => Scalar::Null,
+        },
+        ResolvedProj::Atan { input, .. } => match atan_scalar(table, row, input) {
             Ok(value) => value,
             Err(_) => Scalar::Null,
         },
@@ -5849,6 +5869,10 @@ fn asin_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar, Er
 
 fn acos_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar, Error> {
     real_apply(table, row, input, f64::acos)
+}
+
+fn atan_scalar(table: &Table, row: usize, input: &SinInput) -> Result<Scalar, Error> {
+    real_apply(table, row, input, f64::atan)
 }
 
 fn real_apply(
@@ -16008,6 +16032,203 @@ mod tests {
             err.message
         );
         let result = execute(&sensors, "SELECT acos(note) FROM sensors LIMIT 0").unwrap();
+        assert_eq!(result.rows.len(), 0);
+    }
+
+    #[test]
+    fn atan_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT atan(0) FROM sensors LIMIT 1",
+                "expected/at_zero_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(1) FROM sensors LIMIT 1",
+                "expected/at_one.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(-1) FROM sensors LIMIT 1",
+                "expected/at_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(0.5) FROM sensors LIMIT 1",
+                "expected/at_half.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(-0.0) FROM sensors LIMIT 1",
+                "expected/at_neg0.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(2) FROM sensors LIMIT 1",
+                "expected/at_two.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(null) FROM sensors LIMIT 1",
+                "expected/at_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(id) FROM sensors",
+                "expected/at_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(reading) FROM sensors",
+                "expected/at_read.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(b) FROM sensors",
+                "expected/at_byte.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(ts) FROM sensors LIMIT 1",
+                "expected/at_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan('0.5') FROM sensors LIMIT 1",
+                "expected/at_text.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan('1.5d') FROM sensors LIMIT 1",
+                "expected/at_suffix.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(' 1') FROM sensors LIMIT 1",
+                "expected/at_ws.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan('NaN') FROM sensors LIMIT 1",
+                "expected/at_nan.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT ATAN(1) FROM sensors LIMIT 1",
+                "expected/at_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(note) FROM sensors WHERE id = 2",
+                "expected/at_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(id) FROM sensors WHERE id = 1",
+                "expected/at_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(id) FROM sensors ORDER BY atan(id)",
+                "expected/at_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(id) FROM sensors LIMIT 0",
+                "expected/at_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT atan(ch) FROM sensors LIMIT 0",
+                "expected/at_ch0.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT atan(id) FROM days ORDER BY ts",
+                "expected/at_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT atan() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `atan` requires arguments: atan(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT atan(1, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `atan`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT atan(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `atan` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT atan(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `atan` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT atan('nope') FROM sensors LIMIT 0").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `nope` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT atan('') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT atan('A') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT atan(note) FROM sensors LIMIT 1").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT atan(ch) FROM sensors WHERE id = 2").unwrap_err();
+        assert!(
+            err.message.contains("[CHAR -> DOUBLE]") && err.message.contains('\0'),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT atan(tag) FROM sensors LIMIT 1").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let result = execute(&sensors, "SELECT atan(note) FROM sensors LIMIT 0").unwrap();
         assert_eq!(result.rows.len(), 0);
     }
 

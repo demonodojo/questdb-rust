@@ -139,6 +139,7 @@ pub enum Proj {
     Tan(TanExpr),
     Asin(AsinExpr),
     Acos(AcosExpr),
+    Atan(AtanExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -551,6 +552,13 @@ pub struct AcosExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `atan(number)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtanExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `power(base, exponent)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerExpr {
@@ -753,6 +761,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_ceil()?.label
             } else if parser.starts_sign_call() {
                 parser.parse_sign()?.label
+            } else if parser.starts_atan_call() {
+                parser.parse_atan()?.label
             } else if parser.starts_acos_call() {
                 parser.parse_acos()?.label
             } else if parser.starts_asin_call() {
@@ -888,6 +898,7 @@ enum SelectPiece {
     Tan(TanExpr),
     Asin(AsinExpr),
     Acos(AcosExpr),
+    Atan(AtanExpr),
     Power(PowerExpr),
     Ln(LnExpr),
     Log(LogExpr),
@@ -1091,6 +1102,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Ceil(self.parse_ceil()?));
             } else if self.starts_sign_call() {
                 pieces.push(SelectPiece::Sign(self.parse_sign()?));
+            } else if self.starts_atan_call() {
+                pieces.push(SelectPiece::Atan(self.parse_atan()?));
             } else if self.starts_acos_call() {
                 pieces.push(SelectPiece::Acos(self.parse_acos()?));
             } else if self.starts_asin_call() {
@@ -1189,6 +1202,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Tan(_)
                     | SelectPiece::Asin(_)
                     | SelectPiece::Acos(_)
+                    | SelectPiece::Atan(_)
                     | SelectPiece::Power(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
@@ -1269,6 +1283,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Tan(expr) => items.push(Proj::Tan(expr)),
                     SelectPiece::Asin(expr) => items.push(Proj::Asin(expr)),
                     SelectPiece::Acos(expr) => items.push(Proj::Acos(expr)),
+                    SelectPiece::Atan(expr) => items.push(Proj::Atan(expr)),
                     SelectPiece::Power(expr) => items.push(Proj::Power(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
@@ -1371,6 +1386,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Tan(_)
                 | SelectPiece::Asin(_)
                 | SelectPiece::Acos(_)
+                | SelectPiece::Atan(_)
                 | SelectPiece::Power(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
@@ -1538,6 +1554,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(PowerExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_atan_call(&self) -> bool {
+        self.starts_named_call("atan")
+    }
+
+    fn parse_atan(&mut self) -> Result<AtanExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `atan` requires arguments: atan(DOUBLE)".to_string(),
+            ));
+        }
+        Ok(AtanExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

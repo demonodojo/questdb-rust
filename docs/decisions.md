@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — atan()
+
+`atan(número)` devuelve `DOUBLE` en radianes. Un nulo sigue NULL. `atan(0)` es `0.0` y `atan(-0.0)` es `-0.0`. Un texto se convierte como en `sin`. `BOOLEAN` y `SYMBOL` no encajan. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — acos()
 
 `acos(número)` devuelve `DOUBLE` en radianes. Un nulo sigue NULL. `acos(1)` es `0.0` y `acos(-0.0)` es el mismo valor que `acos(0)`. Un valor fuera de `[-1, 1]` se imprime como NULL. Un texto se convierte como en `sin`. `BOOLEAN` y `SYMBOL` no encajan. Se contrastó con `/exec` en `sensors` y `days`.
