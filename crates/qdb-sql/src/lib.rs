@@ -45,7 +45,9 @@
 //! the case-sensitive form and names the column `text like pattern`. `switch`
 //! picks a result whose constant case equals the key. An even argument count
 //! makes the last value the else branch. An unmatched key is NULL when there
-//! is no else branch. `strpos` and `position` return the 1-based index of the first
+//! is no else branch. `bar` renders a value between a minimum and a maximum
+//! as a block string of the requested width. A null value, a non-positive
+//! width, or a minimum that is not below the maximum is NULL. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
 //! widest numeric argument and skips nulls. `to_str` formats a timestamp with a

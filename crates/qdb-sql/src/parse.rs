@@ -225,6 +225,7 @@ pub enum Proj {
     Ilike(IlikeExpr),
     Like(LikeExpr),
     Switch(SwitchExpr),
+    Bar(BarExpr),
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
@@ -377,6 +378,13 @@ pub struct LikeExpr {
 /// `switch(key, case, result, ..., [else])` picks a result by key equality.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitchExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `bar(value, min, max, width)` renders a block bar as text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BarExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -895,6 +903,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_like()?.label
             } else if parser.starts_switch_call() {
                 parser.parse_switch()?.label
+            } else if parser.starts_bar_call() {
+                parser.parse_bar()?.label
             } else if parser.starts_strpos_call() {
                 parser.parse_strpos()?.label
             } else if parser.starts_split_part_call() {
@@ -1084,6 +1094,7 @@ enum SelectPiece {
     Ilike(IlikeExpr),
     Like(LikeExpr),
     Switch(SwitchExpr),
+    Bar(BarExpr),
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
@@ -1264,6 +1275,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Like(self.parse_like()?));
             } else if self.starts_switch_call() {
                 pieces.push(SelectPiece::Switch(self.parse_switch()?));
+            } else if self.starts_bar_call() {
+                pieces.push(SelectPiece::Bar(self.parse_bar()?));
             } else if self.starts_strpos_call() {
                 pieces.push(SelectPiece::StrPos(self.parse_strpos()?));
             } else if self.starts_split_part_call() {
@@ -1418,6 +1431,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Ilike(_)
                     | SelectPiece::Like(_)
                     | SelectPiece::Switch(_)
+                    | SelectPiece::Bar(_)
                     | SelectPiece::StrPos(_)
                     | SelectPiece::SplitPart(_)
                     | SelectPiece::Pad(_)
@@ -1507,6 +1521,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Ilike(expr) => items.push(Proj::Ilike(expr)),
                     SelectPiece::Like(expr) => items.push(Proj::Like(expr)),
                     SelectPiece::Switch(expr) => items.push(Proj::Switch(expr)),
+                    SelectPiece::Bar(expr) => items.push(Proj::Bar(expr)),
                     SelectPiece::StrPos(expr) => items.push(Proj::StrPos(expr)),
                     SelectPiece::SplitPart(expr) => items.push(Proj::SplitPart(expr)),
                     SelectPiece::Pad(expr) => items.push(Proj::Pad(expr)),
@@ -1622,6 +1637,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Ilike(_)
                 | SelectPiece::Like(_)
                 | SelectPiece::Switch(_)
+                | SelectPiece::Bar(_)
                 | SelectPiece::StrPos(_)
                 | SelectPiece::SplitPart(_)
                 | SelectPiece::Pad(_)
@@ -2926,6 +2942,24 @@ impl<'a> Parser<'a> {
 
     fn starts_switch_call(&self) -> bool {
         self.starts_named_call("switch")
+    }
+
+    fn starts_bar_call(&self) -> bool {
+        self.starts_named_call("bar")
+    }
+
+    fn parse_bar(&mut self) -> Result<BarExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `bar` requires arguments: bar(DOUBLE, DOUBLE, DOUBLE, INT)",
+            ));
+        }
+        Ok(BarExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn parse_switch(&mut self) -> Result<SwitchExpr, Error> {

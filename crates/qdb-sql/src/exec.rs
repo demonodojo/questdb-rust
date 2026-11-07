@@ -1,9 +1,9 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AggFunc,
-    AggregateExpr, AggregateExtra, AsinExpr, Atan2Expr, AtanExpr, CastExpr, CeilExpr, CmpOp,
-    CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
-    DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, ExpExpr, ExtractExpr,
-    Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr,
+    AggregateExpr, AggregateExtra, AsinExpr, Atan2Expr, AtanExpr, BarExpr, CastExpr, CeilExpr,
+    CmpOp, CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr,
+    DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, ExpExpr,
+    ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr,
     IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
     Md5Expr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr, PiExpr,
     PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
@@ -217,6 +217,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Ilike { label, .. }
             | ResolvedProj::Like { label, .. }
             | ResolvedProj::Switch { label, .. }
+            | ResolvedProj::Bar { label, .. }
             | ResolvedProj::StrPos { label, .. }
             | ResolvedProj::SplitPart { label, .. }
             | ResolvedProj::Pad { label, .. }
@@ -371,6 +372,13 @@ enum ResolvedProj {
         arms: Vec<(Scalar, Scalar)>,
         else_value: Option<Scalar>,
         result_tag: i32,
+    },
+    Bar {
+        label: String,
+        value: SqrtInput,
+        min: SqrtInput,
+        max: SqrtInput,
+        width: SqrtInput,
     },
     StrPos {
         label: String,
@@ -742,6 +750,7 @@ impl ResolvedProj {
             | Self::Ilike { label, .. }
             | Self::Like { label, .. }
             | Self::Switch { label, .. }
+            | Self::Bar { label, .. }
             | Self::StrPos { label, .. }
             | Self::SplitPart { label, .. }
             | Self::Pad { label, .. }
@@ -875,6 +884,7 @@ impl ResolvedProj {
             | Self::Ilike { .. }
             | Self::Like { .. } => qdb_types::TAG_BOOLEAN,
             Self::Switch { result_tag, .. } => *result_tag,
+            Self::Bar { .. } => qdb_types::TAG_VARCHAR,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -921,6 +931,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Ilike(expr) => resolve_ilike(table, expr),
         Proj::Like(expr) => resolve_like(table, expr),
         Proj::Switch(expr) => resolve_switch(table, expr),
+        Proj::Bar(expr) => resolve_bar(table, expr),
         Proj::StrPos(expr) => resolve_strpos(table, expr),
         Proj::SplitPart(expr) => resolve_split_part(table, expr),
         Proj::Pad(expr) => resolve_pad(table, expr),
@@ -5310,6 +5321,140 @@ enum SwitchKey {
     Literal(Scalar),
 }
 
+const BAR_CHARS: [char; 8] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
+const BAR_MAX_WIDTH: i32 = 1_048_576 / 3;
+
+fn resolve_bar(table: &Table, expr: &BarExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 4 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `bar`; expected: 4, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let value = bar_double(table, &expr.args[0], 1)?;
+    let min = bar_double(table, &expr.args[1], 2)?;
+    let max = bar_double(table, &expr.args[2], 3)?;
+    let width = bar_width(table, &expr.args[3])?;
+    Ok(ResolvedProj::Bar {
+        label: expr.label.clone(),
+        value,
+        min,
+        max,
+        width,
+    })
+}
+
+fn bar_double(table: &Table, arg: &ConcatArg, position: usize) -> Result<SqrtInput, Error> {
+    match power_input(table, arg) {
+        Ok(input) => Ok(input),
+        Err(err) if err.message.starts_with("expression type mismatch") => {
+            Err(match concat_arg_type(table, arg) {
+                Ok(actual) => Error::new(format!(
+                    "argument type mismatch for function `bar` at #{position} expected: DOUBLE, actual: {actual}"
+                )),
+                Err(column) => column,
+            })
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn bar_width(table: &Table, arg: &ConcatArg) -> Result<SqrtInput, Error> {
+    let mismatch = |actual: &str| {
+        Error::new(format!(
+            "argument type mismatch for function `bar` at #4 expected: INT, actual: {actual}"
+        ))
+    };
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok(SqrtInput::Null),
+        ConcatArg::Literal(Scalar::Long(number)) if i32::try_from(*number).is_ok() => {
+            Ok(SqrtInput::Long(*number))
+        }
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            let tag = table.meta.columns[index].tag;
+            if matches!(
+                tag,
+                qdb_types::TAG_BYTE
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_LONG
+            ) {
+                Ok(SqrtInput::Column { index })
+            } else {
+                Err(match concat_arg_type(table, arg) {
+                    Ok(actual) => mismatch(&actual),
+                    Err(column) => column,
+                })
+            }
+        }
+        _ => Err(match concat_arg_type(table, arg) {
+            Ok(actual) => mismatch(&actual),
+            Err(column) => column,
+        }),
+    }
+}
+
+fn bar_value(
+    table: &Table,
+    row: usize,
+    value: &SqrtInput,
+    min: &SqrtInput,
+    max: &SqrtInput,
+    width: &SqrtInput,
+) -> Result<Scalar, Error> {
+    let (Some(value), Some(min), Some(max), Some(width)) = (
+        sqrt_number(table, row, value),
+        sqrt_number(table, row, min),
+        sqrt_number(table, row, max),
+        bar_width_number(table, row, width),
+    ) else {
+        return Ok(Scalar::Null);
+    };
+    if value.is_nan() || min.is_nan() || max.is_nan() || width <= 0 || min >= max {
+        return Ok(Scalar::Null);
+    }
+    if width > BAR_MAX_WIDTH {
+        return Err(Error::new(format!(
+            "breached memory limit set for bar(DDDI) [maxWidth={BAR_MAX_WIDTH}, requestedWidth={width}]"
+        )));
+    }
+    let clamped = value.max(min).min(max);
+    let filled = (clamped - min) / (max - min) * f64::from(width);
+    let whole = filled as i32;
+    let fractional = filled - f64::from(whole);
+    let mut out = String::new();
+    for _ in 0..whole {
+        out.push(BAR_CHARS[7]);
+    }
+    if whole < width {
+        let frac_index = (fractional * 8.0) as i32;
+        if frac_index > 0 {
+            out.push(BAR_CHARS[(frac_index - 1) as usize]);
+        }
+    }
+    Ok(Scalar::Text(out))
+}
+
+fn bar_width_number(table: &Table, row: usize, width: &SqrtInput) -> Option<i32> {
+    match width {
+        SqrtInput::Null => None,
+        SqrtInput::Long(number) => i32::try_from(*number).ok(),
+        SqrtInput::Double(number) if number.fract() == 0.0 => i32::try_from(*number as i64).ok(),
+        SqrtInput::Column { index } => match &table.columns[*index][row] {
+            Scalar::Null => None,
+            Scalar::Byte(number) => Some(i32::from(*number)),
+            Scalar::Short(number) => Some(i32::from(*number)),
+            Scalar::Int(number) => Some(*number),
+            Scalar::Long(number) => i32::try_from(*number).ok(),
+            _ => None,
+        },
+        SqrtInput::Double(_) => None,
+    }
+}
+
 fn resolve_switch(table: &Table, expr: &SwitchExpr) -> Result<ResolvedProj, Error> {
     if expr.args.len() < 2 {
         return Err(Error::new("switch requires a key and a value"));
@@ -6261,6 +6406,13 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         ResolvedProj::Degrees { input, .. } => degrees_scalar(table, row, input),
         ResolvedProj::Radians { input, .. } => radians_scalar(table, row, input),
         ResolvedProj::Cot { input, .. } => cot_scalar(table, row, input),
+        ResolvedProj::Bar {
+            value,
+            min,
+            max,
+            width,
+            ..
+        } => bar_value(table, row, value, min, max, width),
         _ => Ok(eval_resolved(table, row, item)),
     }
 }
@@ -6640,6 +6792,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             else_value,
             ..
         } => switch_pick(table, row, key, arms, else_value),
+        ResolvedProj::Bar { .. } => Scalar::Null,
         ResolvedProj::Glob { value, pattern, .. } => {
             let matched = match text_of(table, row, value) {
                 Some(value) => glob_match(value.as_bytes(), pattern),
@@ -14500,6 +14653,108 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn bar_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT bar(flags, 0, 42, 4) FROM sensors",
+                "expected/bn_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bar(reading, 0, 2, 4) FROM sensors WHERE id = 1",
+                "expected/bn_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bar(reading, 0, 2, 4) FROM sensors",
+                "expected/bn_reads.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bar(flags, 0, 42, 4) FROM sensors WHERE id = 2",
+                "expected/bn_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bar(flags, 5, 5, 4) FROM sensors WHERE id = 1",
+                "expected/bn_flat.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bar(flags, 0, 42, 0) FROM sensors WHERE id = 1",
+                "expected/bn_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT BAR(flags, 0, 42, 4) FROM sensors WHERE id = 1",
+                "expected/bn_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bar(flags, 0, 42, 4) FROM sensors WHERE id > 100",
+                "expected/bn_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT bar(flags, 0, 42, 4) FROM sensors LIMIT 0",
+                "expected/bn_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT bar(id, 0, 3, 3) FROM days",
+                "expected/bn_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT bar(id, 0, 3, 3) FROM days WHERE id = 1",
+                "expected/bn_days_one.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT bar() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `bar` requires arguments: bar(DOUBLE, DOUBLE, DOUBLE, INT)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bar(flags, 0, 42) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("wrong number of arguments for function `bar`; expected: 4, provided: 3"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bar(flags, 0, 42, 4.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("at #4 expected: INT, actual: DOUBLE"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bar(flags, 0, 42, 400000) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "breached memory limit set for bar(DDDI) [maxWidth=349525, requestedWidth=400000]"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT bar(missing, 0, 1, 4) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
