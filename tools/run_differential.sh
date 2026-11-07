@@ -1152,7 +1152,30 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tp_case "SELECT TO_TIMESTAMP('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
   tp_order "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM sensors ORDER BY to_timestamp(note, 'yyyy-MM-dd')" \
   tp_where "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1" \
-  tp_zero "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0"
+  tp_zero "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0" \
+  xt_year "SELECT extract(year FROM ts) FROM sensors" \
+  xt_id "SELECT extract(year FROM id) FROM sensors" \
+  xt_hour "SELECT extract(hour FROM ts) FROM sensors" \
+  xt_dow "SELECT extract(dow FROM ts) FROM sensors" \
+  xt_sun "SELECT extract(dow FROM '2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  xt_iso "SELECT extract(isodow FROM '2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  xt_doy "SELECT extract(doy FROM '2020-03-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  xt_week "SELECT extract(week FROM '2019-12-31T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  xt_iy "SELECT extract(isoyear FROM '2019-12-31T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  xt_cen "SELECT extract(century FROM '2000-01-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  xt_dec "SELECT extract(decade FROM '2008-06-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  xt_mil "SELECT extract(millennium FROM '2000-01-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  xt_q "SELECT extract(quarter FROM '2020-05-15T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  xt_ep "SELECT extract(epoch FROM id) FROM sensors" \
+  xt_us "SELECT extract(microseconds FROM '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1" \
+  xt_ms "SELECT extract(milliseconds FROM '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1" \
+  xt_ns "SELECT extract(nanoseconds FROM '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1" \
+  xt_null "SELECT extract(year FROM null) FROM sensors LIMIT 1" \
+  xt_str "SELECT extract('YEAR' FROM ts) FROM sensors LIMIT 1" \
+  xt_case "SELECT EXTRACT(YEAR FROM TS) FROM sensors LIMIT 1" \
+  xt_order "SELECT extract(year FROM id) FROM sensors ORDER BY extract(year FROM id)" \
+  xt_where "SELECT extract(year FROM ts) FROM sensors WHERE id = 1" \
+  xt_zero "SELECT extract(year FROM ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1290,7 +1313,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   em_days "SELECT is_end_of_month(ts) FROM days ORDER BY ts" \
   ds_days "SELECT day_of_week_sunday_first(ts) FROM days ORDER BY ts" \
   tt_days "SELECT to_timestamp(note) FROM days ORDER BY ts" \
-  tp_days "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM days ORDER BY ts"
+  tp_days "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM days ORDER BY ts" \
+  xt_days "SELECT extract(day FROM ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2390,6 +2414,29 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM sensors ORDER BY to_timestamp(note, 'yyyy-MM-dd')"),
     (os.environ["DIFF_H1"], "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT extract(year FROM ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT extract(year FROM id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT extract(hour FROM ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT extract(dow FROM ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT extract(dow FROM '2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(isodow FROM '2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(doy FROM '2020-03-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(week FROM '2019-12-31T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(isoyear FROM '2019-12-31T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(century FROM '2000-01-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(decade FROM '2008-06-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(millennium FROM '2000-01-01T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(quarter FROM '2020-05-15T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(epoch FROM id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT extract(microseconds FROM '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(milliseconds FROM '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(nanoseconds FROM '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(year FROM null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract('YEAR' FROM ts) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT EXTRACT(YEAR FROM TS) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(year FROM id) FROM sensors ORDER BY extract(year FROM id)"),
+    (os.environ["DIFF_H1"], "SELECT extract(year FROM ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT extract(year FROM ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2526,6 +2573,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT day_of_week_sunday_first(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT to_timestamp(note) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT to_timestamp(note, 'yyyy-MM-dd') FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT extract(day FROM ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

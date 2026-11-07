@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — extract()
+
+`extract(parte FROM instante)` devuelve `INT`, y `LONG` si la parte es `epoch`. `dow` cuenta el domingo como 0. `isodow` cuenta el lunes como 1. `week` e `isoyear` siguen la semana ISO. `epoch` son segundos truncados hacia cero. `microseconds` y `milliseconds` son la fracción del segundo; `nanoseconds` es esa fracción por 1000. Un nulo sigue NULL. Una parte desconocida se rechaza. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — to_timestamp() con patrón
 
 `to_timestamp(texto, patrón)` devuelve `TIMESTAMP`. El patrón es una constante. Los campos que faltan salen en 1970-01-01 a medianoche. `yy` suma el siglo en curso: en 2026, `20` es 2020 y `69` es 2069. `h a` lee la hora en 12 horas. Un texto que no encaja sale NULL. Un patrón nulo se rechaza con `pattern is required`. Una columna como patrón no tiene función. Se contrastó con `/exec` en `sensors` y `days`.

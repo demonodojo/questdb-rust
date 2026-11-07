@@ -1,14 +1,14 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, DateDiffExpr, DateTruncExpr,
-    DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, ExpExpr, Filter, FloorExpr,
-    GreatestExpr, GroupedSelect, HourExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr,
-    LnExpr, LogExpr, LowerExpr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr,
-    PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
-    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr,
-    SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TimestampCeilExpr,
-    TimestampFloorExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr,
-    YearExpr,
+    DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, ExpExpr, ExtractExpr,
+    Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr, IsEndOfMonthExpr, IsLeapYearExpr,
+    LeastExpr, LengthExpr, LnExpr, LogExpr, LowerExpr, MicrosExpr, MillisExpr, MinuteExpr,
+    MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
+    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr,
+    SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
+    TimestampCeilExpr, TimestampFloorExpr, ToStrExpr, ToTimestampExpr, TrimEnd, TrimExpr,
+    UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -228,6 +228,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::IsEndOfMonth { label, .. }
             | ResolvedProj::DayOfWeekSundayFirst { label, .. }
             | ResolvedProj::ToTimestamp { label, .. }
+            | ResolvedProj::Extract { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -472,6 +473,11 @@ enum ResolvedProj {
         arg: ResolvedArg,
         pattern: Option<Vec<TimestampToken>>,
     },
+    Extract {
+        label: String,
+        part: ExtractPart,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -633,6 +639,7 @@ impl ResolvedProj {
             | Self::IsEndOfMonth { label, .. }
             | Self::DayOfWeekSundayFirst { label, .. }
             | Self::ToTimestamp { label, .. }
+            | Self::Extract { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -679,6 +686,10 @@ impl ResolvedProj {
             Self::IsEndOfMonth { .. } => qdb_types::TAG_BOOLEAN,
             Self::DayOfWeekSundayFirst { .. } => qdb_types::TAG_INT,
             Self::ToTimestamp { .. } => qdb_types::TAG_TIMESTAMP,
+            Self::Extract { part, .. } => match part {
+                ExtractPart::Epoch => qdb_types::TAG_LONG,
+                _ => qdb_types::TAG_INT,
+            },
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -771,6 +782,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::IsEndOfMonth(expr) => resolve_is_end_of_month(table, expr),
         Proj::DayOfWeekSundayFirst(expr) => resolve_day_of_week_sunday_first(table, expr),
         Proj::ToTimestamp(expr) => resolve_to_timestamp(table, expr),
+        Proj::Extract(expr) => resolve_extract(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1932,6 +1944,94 @@ fn timestamp_from_clock(clock: ParsedClock) -> Option<i64> {
             + i64::from(clock.millis) * 1_000
             + i64::from(clock.micros),
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExtractPart {
+    Year,
+    Month,
+    Day,
+    Hour,
+    Minute,
+    Second,
+    Milliseconds,
+    Microseconds,
+    Nanoseconds,
+    Dow,
+    Doy,
+    IsoDow,
+    IsoYear,
+    Week,
+    Epoch,
+    Century,
+    Decade,
+    Millennium,
+    Quarter,
+}
+
+fn extract_part(part: &str) -> Result<ExtractPart, Error> {
+    match part.to_ascii_lowercase().as_str() {
+        "year" => Ok(ExtractPart::Year),
+        "month" => Ok(ExtractPart::Month),
+        "day" => Ok(ExtractPart::Day),
+        "hour" => Ok(ExtractPart::Hour),
+        "minute" => Ok(ExtractPart::Minute),
+        "second" => Ok(ExtractPart::Second),
+        "milliseconds" => Ok(ExtractPart::Milliseconds),
+        "microseconds" => Ok(ExtractPart::Microseconds),
+        "nanoseconds" => Ok(ExtractPart::Nanoseconds),
+        "dow" => Ok(ExtractPart::Dow),
+        "doy" => Ok(ExtractPart::Doy),
+        "isodow" => Ok(ExtractPart::IsoDow),
+        "isoyear" => Ok(ExtractPart::IsoYear),
+        "week" => Ok(ExtractPart::Week),
+        "epoch" => Ok(ExtractPart::Epoch),
+        "century" => Ok(ExtractPart::Century),
+        "decade" => Ok(ExtractPart::Decade),
+        "millennium" => Ok(ExtractPart::Millennium),
+        "quarter" => Ok(ExtractPart::Quarter),
+        _ => Err(Error::new(format!("unsupported timestamp part: {part}"))),
+    }
+}
+
+fn extract_value(part: ExtractPart, micros: i64) -> Scalar {
+    let (year, month, _day, time) = dateadd_parts(micros);
+    let hour = i32::try_from(time / (3_600 * 1_000_000)).unwrap_or(0);
+    let minute = i32::try_from((time / (60 * 1_000_000)) % 60).unwrap_or(0);
+    let second = i32::try_from((time / 1_000_000) % 60).unwrap_or(0);
+    match part {
+        ExtractPart::Year => Scalar::Int(year),
+        ExtractPart::Month => Scalar::Int(i32::try_from(month).unwrap_or(0)),
+        ExtractPart::Day => Scalar::Int(i32::try_from(dateadd_parts(micros).2).unwrap_or(0)),
+        ExtractPart::Hour => Scalar::Int(hour),
+        ExtractPart::Minute => Scalar::Int(minute),
+        ExtractPart::Second => Scalar::Int(second),
+        ExtractPart::Milliseconds => {
+            Scalar::Int(i32::try_from((time / 1_000) % 1_000).unwrap_or(0))
+        }
+        ExtractPart::Microseconds => Scalar::Int(i32::try_from(time % 1_000_000).unwrap_or(0)),
+        ExtractPart::Nanoseconds => {
+            Scalar::Int(i32::try_from((time % 1_000_000) * 1_000).unwrap_or(0))
+        }
+        ExtractPart::Dow => Scalar::Int(sunday_weekday(micros) - 1),
+        ExtractPart::Doy => Scalar::Int(day_of_year(year, micros)),
+        ExtractPart::IsoDow => Scalar::Int(weekday_monday(micros)),
+        ExtractPart::IsoYear => Scalar::Int(iso_year(micros)),
+        ExtractPart::Week => Scalar::Int(iso_week(micros)),
+        ExtractPart::Epoch => Scalar::Long(micros / 1_000_000),
+        ExtractPart::Century => Scalar::Int((year - 1).div_euclid(100) + 1),
+        ExtractPart::Decade => Scalar::Int(year.div_euclid(10)),
+        ExtractPart::Millennium => Scalar::Int((year - 1).div_euclid(1000) + 1),
+        ExtractPart::Quarter => Scalar::Int((i32::try_from(month).unwrap_or(1) - 1) / 3 + 1),
+    }
+}
+
+fn resolve_extract(table: &Table, expr: &ExtractExpr) -> Result<ResolvedProj, Error> {
+    Ok(ResolvedProj::Extract {
+        label: expr.label.clone(),
+        part: extract_part(&expr.part)?,
+        value: date_trunc_timestamp(table, &expr.arg)?,
+    })
 }
 
 fn resolve_to_timestamp(table: &Table, expr: &ToTimestampExpr) -> Result<ResolvedProj, Error> {
@@ -4701,6 +4801,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::ToStr { ops, value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Text(format_to_str(ops, micros)),
+            None => Scalar::Null,
+        },
+        ResolvedProj::Extract { part, value, .. } => match datediff_micros(table, row, value) {
+            Some(micros) => extract_value(*part, micros),
             None => Scalar::Null,
         },
         ResolvedProj::ToTimestamp { arg, pattern, .. } => match text_of(table, row, arg) {
@@ -13749,6 +13853,168 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn extract_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT extract(year FROM ts) FROM sensors",
+                "expected/xt_year.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(year FROM id) FROM sensors",
+                "expected/xt_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(hour FROM ts) FROM sensors",
+                "expected/xt_hour.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(dow FROM ts) FROM sensors",
+                "expected/xt_dow.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(dow FROM '2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/xt_sun.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(isodow FROM '2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/xt_iso.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(doy FROM '2020-03-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/xt_doy.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(week FROM '2019-12-31T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/xt_week.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(isoyear FROM '2019-12-31T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/xt_iy.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(century FROM '2000-01-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/xt_cen.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(decade FROM '2008-06-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/xt_dec.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(millennium FROM '2000-01-01T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/xt_mil.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(quarter FROM '2020-05-15T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/xt_q.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(epoch FROM id) FROM sensors",
+                "expected/xt_ep.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(microseconds FROM '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1",
+                "expected/xt_us.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(milliseconds FROM '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1",
+                "expected/xt_ms.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(nanoseconds FROM '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1",
+                "expected/xt_ns.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(year FROM null) FROM sensors LIMIT 1",
+                "expected/xt_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract('YEAR' FROM ts) FROM sensors LIMIT 1",
+                "expected/xt_str.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT EXTRACT(YEAR FROM TS) FROM sensors LIMIT 1",
+                "expected/xt_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(year FROM id) FROM sensors ORDER BY extract(year FROM id)",
+                "expected/xt_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(year FROM ts) FROM sensors WHERE id = 1",
+                "expected/xt_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT extract(year FROM ts) FROM sensors LIMIT 0",
+                "expected/xt_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT extract(day FROM ts) FROM days ORDER BY ts",
+                "expected/xt_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT extract() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `extract` requires arguments: extract(STRING constant, TIMESTAMP)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT extract(nope FROM ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("unsupported timestamp part: nope"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT extract(year FROM note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT extract(year FROM missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT extract(year FROM) FROM sensors").unwrap_err();
+        assert!(err.message.contains("missing arguments"), "{}", err.message);
     }
 
     #[test]

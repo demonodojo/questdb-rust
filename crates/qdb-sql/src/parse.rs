@@ -125,6 +125,7 @@ pub enum Proj {
     IsEndOfMonth(IsEndOfMonthExpr),
     DayOfWeekSundayFirst(DayOfWeekSundayFirstExpr),
     ToTimestamp(ToTimestampExpr),
+    Extract(ExtractExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -442,6 +443,14 @@ pub struct ToTimestampExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `extract(part FROM timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractExpr {
+    pub label: String,
+    pub part: String,
+    pub arg: ConcatArg,
+}
+
 /// `floor(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FloorExpr {
@@ -646,6 +655,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_is_leap_year()?.label
             } else if parser.starts_days_in_month_call() {
                 parser.parse_days_in_month()?.label
+            } else if parser.starts_extract_call() {
+                parser.parse_extract()?.label
             } else if parser.starts_to_timestamp_call() {
                 parser.parse_to_timestamp()?.label
             } else if parser.starts_day_of_week_sunday_first_call() {
@@ -773,6 +784,7 @@ enum SelectPiece {
     IsEndOfMonth(IsEndOfMonthExpr),
     DayOfWeekSundayFirst(DayOfWeekSundayFirstExpr),
     ToTimestamp(ToTimestampExpr),
+    Extract(ExtractExpr),
     Floor(FloorExpr),
     Ceil(CeilExpr),
     Sign(SignExpr),
@@ -952,6 +964,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::IsLeapYear(self.parse_is_leap_year()?));
             } else if self.starts_days_in_month_call() {
                 pieces.push(SelectPiece::DaysInMonth(self.parse_days_in_month()?));
+            } else if self.starts_extract_call() {
+                pieces.push(SelectPiece::Extract(self.parse_extract()?));
             } else if self.starts_to_timestamp_call() {
                 pieces.push(SelectPiece::ToTimestamp(self.parse_to_timestamp()?));
             } else if self.starts_day_of_week_sunday_first_call() {
@@ -1044,6 +1058,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::IsEndOfMonth(_)
                     | SelectPiece::DayOfWeekSundayFirst(_)
                     | SelectPiece::ToTimestamp(_)
+                    | SelectPiece::Extract(_)
                     | SelectPiece::Floor(_)
                     | SelectPiece::Ceil(_)
                     | SelectPiece::Sign(_)
@@ -1114,6 +1129,7 @@ impl<'a> Parser<'a> {
                         items.push(Proj::DayOfWeekSundayFirst(expr))
                     }
                     SelectPiece::ToTimestamp(expr) => items.push(Proj::ToTimestamp(expr)),
+                    SelectPiece::Extract(expr) => items.push(Proj::Extract(expr)),
                     SelectPiece::Floor(expr) => items.push(Proj::Floor(expr)),
                     SelectPiece::Ceil(expr) => items.push(Proj::Ceil(expr)),
                     SelectPiece::Sign(expr) => items.push(Proj::Sign(expr)),
@@ -1206,6 +1222,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::IsEndOfMonth(_)
                 | SelectPiece::DayOfWeekSundayFirst(_)
                 | SelectPiece::ToTimestamp(_)
+                | SelectPiece::Extract(_)
                 | SelectPiece::Floor(_)
                 | SelectPiece::Ceil(_)
                 | SelectPiece::Sign(_)
@@ -1454,6 +1471,60 @@ impl<'a> Parser<'a> {
         Ok(FloorExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
+        })
+    }
+
+    fn starts_extract_call(&self) -> bool {
+        self.starts_named_call("extract")
+    }
+
+    fn parse_extract(&mut self) -> Result<ExtractExpr, Error> {
+        self.skip();
+        let name = self.ident_spelling()?;
+        self.skip();
+        if !self.eat(b'(') {
+            return Err(Error::new(
+                "unsupported: expected '(' after extract".to_string(),
+            ));
+        }
+        self.skip();
+        if self.eat(b')') {
+            return Err(Error::new(
+                "function `extract` requires arguments: extract(STRING constant, TIMESTAMP)"
+                    .to_string(),
+            ));
+        }
+        self.skip();
+        let part_start = self.pos;
+        let part = if self.peek() == Some(b'\'') {
+            self.parse_string()?
+        } else {
+            self.ident_spelling()?
+        };
+        let part_src = std::str::from_utf8(&self.src[part_start..self.pos])
+            .unwrap_or(part.as_str())
+            .to_string();
+        self.skip();
+        if self.peek() == Some(b')') {
+            return Err(Error::new("missing arguments".to_string()));
+        }
+        let keyword = self.ident_spelling()?;
+        if !keyword.eq_ignore_ascii_case("from") {
+            return Err(Error::new("missing arguments".to_string()));
+        }
+        self.skip();
+        if self.peek() == Some(b')') {
+            return Err(Error::new("missing arguments".to_string()));
+        }
+        let (arg_label, arg) = self.parse_call_arg(true)?;
+        self.skip();
+        if !self.eat(b')') {
+            return Err(Error::new("missing arguments".to_string()));
+        }
+        Ok(ExtractExpr {
+            label: format!("{name}({part_src}, {arg_label})"),
+            part,
+            arg,
         })
     }
 
