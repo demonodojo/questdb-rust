@@ -472,7 +472,23 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   lp_symbol "SELECT lpad(note, 6, location) FROM sensors" \
   lp_case "SELECT LPAD(NOTE, 6, 'x') FROM sensors" \
   rp_order "SELECT rpad(note, 6, 'x') FROM sensors ORDER BY rpad(note, 6, 'x')" \
-  lp_limit_zero "SELECT lpad(note, 6, 'x') FROM sensors LIMIT 0"
+  lp_limit_zero "SELECT lpad(note, 6, 'x') FROM sensors LIMIT 0" \
+  qi_note "SELECT quote_ident(note) FROM sensors" \
+  qi_quote "SELECT quote_ident('a\"b') FROM sensors LIMIT 1" \
+  qi_space "SELECT quote_ident('a b') FROM sensors LIMIT 1" \
+  qi_dash "SELECT quote_ident('a-b') FROM sensors LIMIT 1" \
+  qi_case_text "SELECT quote_ident('Alpha') FROM sensors LIMIT 1" \
+  qi_dollar "SELECT quote_ident('a\$b') FROM sensors LIMIT 1" \
+  qi_digit "SELECT quote_ident('1a') FROM sensors LIMIT 1" \
+  qi_null "SELECT quote_ident(null) FROM sensors LIMIT 1" \
+  qi_empty "SELECT quote_ident('') FROM sensors LIMIT 1" \
+  qi_ch "SELECT quote_ident(ch) FROM sensors" \
+  qi_tag "SELECT quote_ident(tag) FROM sensors" \
+  qi_case "SELECT QUOTE_IDENT(NOTE) FROM sensors" \
+  qi_order "SELECT quote_ident(note) FROM sensors ORDER BY quote_ident(note)" \
+  qi_with_id "SELECT id, quote_ident(note) FROM sensors ORDER BY quote_ident(note)" \
+  qi_where "SELECT quote_ident(note) FROM sensors WHERE note = ''" \
+  qi_limit_zero "SELECT quote_ident(note) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -562,7 +578,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   tl_note "SELECT to_lowercase(note) FROM days" \
   tu_note "SELECT to_uppercase(note) FROM days ORDER BY ts" \
   tl_location "SELECT to_lowercase(location) FROM days ORDER BY ts" \
-  rp_location "SELECT rpad(location, 8, '.') FROM days ORDER BY ts"
+  rp_location "SELECT rpad(location, 8, '.') FROM days ORDER BY ts" \
+  qi_location "SELECT quote_ident(location) FROM days ORDER BY ts" \
+  qi_note "SELECT quote_ident(note) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -982,6 +1000,22 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT LPAD(NOTE, 6, 'x') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT rpad(note, 6, 'x') FROM sensors ORDER BY rpad(note, 6, 'x')"),
     (os.environ["DIFF_H1"], "SELECT lpad(note, 6, 'x') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident('a\"b') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident('a b') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident('a-b') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident('Alpha') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident('a$b') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident('1a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident('') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident(tag) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT QUOTE_IDENT(NOTE) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident(note) FROM sensors ORDER BY quote_ident(note)"),
+    (os.environ["DIFF_H1"], "SELECT id, quote_ident(note) FROM sensors ORDER BY quote_ident(note)"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident(note) FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -1070,6 +1104,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT to_uppercase(note) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT to_lowercase(location) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT rpad(location, 8, '.') FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT quote_ident(location) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT quote_ident(note) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

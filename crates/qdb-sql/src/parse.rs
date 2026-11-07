@@ -94,6 +94,7 @@ pub enum Proj {
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
+    QuoteIdent(QuoteIdentExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,6 +182,13 @@ pub struct PadExpr {
     pub from_right: bool,
 }
 
+/// `quote_ident(text)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuoteIdentExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConcatExpr {
     pub label: String,
@@ -256,6 +264,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_split_part()?.label
             } else if parser.starts_pad_call() {
                 parser.parse_pad()?.label
+            } else if parser.starts_quote_ident_call() {
+                parser.parse_quote_ident()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -320,6 +330,7 @@ enum SelectPiece {
     StrPos(StrPosExpr),
     SplitPart(SplitPartExpr),
     Pad(PadExpr),
+    QuoteIdent(QuoteIdentExpr),
 }
 
 struct Parser<'a> {
@@ -436,6 +447,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::SplitPart(self.parse_split_part()?));
             } else if self.starts_pad_call() {
                 pieces.push(SelectPiece::Pad(self.parse_pad()?));
+            } else if self.starts_quote_ident_call() {
+                pieces.push(SelectPiece::QuoteIdent(self.parse_quote_ident()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -463,6 +476,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::StrPos(_)
                     | SelectPiece::SplitPart(_)
                     | SelectPiece::Pad(_)
+                    | SelectPiece::QuoteIdent(_)
             )
         });
         if counts > 0 && projected {
@@ -489,6 +503,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::StrPos(expr) => items.push(Proj::StrPos(expr)),
                     SelectPiece::SplitPart(expr) => items.push(Proj::SplitPart(expr)),
                     SelectPiece::Pad(expr) => items.push(Proj::Pad(expr)),
+                    SelectPiece::QuoteIdent(expr) => items.push(Proj::QuoteIdent(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -538,7 +553,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::StartsWith(_)
                 | SelectPiece::StrPos(_)
                 | SelectPiece::SplitPart(_)
-                | SelectPiece::Pad(_) => {
+                | SelectPiece::Pad(_)
+                | SelectPiece::QuoteIdent(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -581,6 +597,25 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_quote_ident_call(&self) -> bool {
+        self.starts_named_call("quote_ident")
+    }
+
+    fn parse_quote_ident(&mut self) -> Result<QuoteIdentExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, false)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(QuoteIdentExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_pad_call(&self) -> bool {

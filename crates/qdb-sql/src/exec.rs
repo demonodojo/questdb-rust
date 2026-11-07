@@ -1,8 +1,8 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
-    ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, PadExpr, Proj, Query, ReplaceExpr,
-    SelectList, SideExpr, SplitPartExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr,
-    UpperExpr,
+    ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, PadExpr, Proj, Query, QuoteIdentExpr,
+    ReplaceExpr, SelectList, SideExpr, SplitPartExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
+    TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -190,7 +190,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::StartsWith { label, .. }
             | ResolvedProj::StrPos { label, .. }
             | ResolvedProj::SplitPart { label, .. }
-            | ResolvedProj::Pad { label, .. } => label.clone(),
+            | ResolvedProj::Pad { label, .. }
+            | ResolvedProj::QuoteIdent { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -281,6 +282,10 @@ enum ResolvedProj {
         fill: Option<ResolvedArg>,
         from_right: bool,
     },
+    QuoteIdent {
+        label: String,
+        arg: ResolvedArg,
+    },
 }
 
 enum ReplaceMode {
@@ -318,7 +323,8 @@ impl ResolvedProj {
             | Self::StartsWith { label, .. }
             | Self::StrPos { label, .. }
             | Self::SplitPart { label, .. }
-            | Self::Pad { label, .. } => Some(label),
+            | Self::Pad { label, .. }
+            | Self::QuoteIdent { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -372,7 +378,15 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::StrPos(expr) => resolve_strpos(table, expr),
         Proj::SplitPart(expr) => resolve_split_part(table, expr),
         Proj::Pad(expr) => resolve_pad(table, expr),
+        Proj::QuoteIdent(expr) => resolve_quote_ident(table, expr),
     }
+}
+
+fn resolve_quote_ident(table: &Table, expr: &QuoteIdentExpr) -> Result<ResolvedProj, Error> {
+    Ok(ResolvedProj::QuoteIdent {
+        label: expr.label.clone(),
+        arg: resolve_one_text(table, &function_name(&expr.label), &expr.args)?,
+    })
 }
 
 fn resolve_pad(table: &Table, expr: &PadExpr) -> Result<ResolvedProj, Error> {
@@ -942,6 +956,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 }
             }
         },
+        ResolvedProj::QuoteIdent { arg, .. } => match text_of(table, row, arg) {
+            Some(text) => Scalar::Text(quote_ident(&text)),
+            None => Scalar::Null,
+        },
         ResolvedProj::Pad {
             value,
             width,
@@ -1032,6 +1050,24 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             None => Scalar::Null,
         },
     }
+}
+
+fn quote_ident(text: &str) -> String {
+    let plain = text
+        .chars()
+        .all(|ch| ch.is_alphabetic() || ch.is_ascii_digit() || ch == '_' || ch == '$');
+    if plain {
+        return text.to_string();
+    }
+    let mut quoted = String::from("\"");
+    for ch in text.chars() {
+        if ch == '"' {
+            quoted.push('"');
+        }
+        quoted.push(ch);
+    }
+    quoted.push('"');
+    quoted
 }
 
 fn pad_utf16(text: &str, width: i32, fill: &str, from_right: bool) -> String {
@@ -5701,6 +5737,138 @@ mod tests {
         let err = execute(&sensors, "SELECT rpad() FROM sensors").unwrap_err();
         assert!(
             err.message.contains("function `rpad` requires arguments"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn quote_ident_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT quote_ident(note) FROM sensors",
+                "expected/qi_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident('a\"b') FROM sensors LIMIT 1",
+                "expected/qi_quote.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident('a b') FROM sensors LIMIT 1",
+                "expected/qi_space.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident('a-b') FROM sensors LIMIT 1",
+                "expected/qi_dash.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident('Alpha') FROM sensors LIMIT 1",
+                "expected/qi_case_text.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident('a$b') FROM sensors LIMIT 1",
+                "expected/qi_dollar.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident('1a') FROM sensors LIMIT 1",
+                "expected/qi_digit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident(null) FROM sensors LIMIT 1",
+                "expected/qi_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident('') FROM sensors LIMIT 1",
+                "expected/qi_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident(ch) FROM sensors",
+                "expected/qi_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident(tag) FROM sensors",
+                "expected/qi_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT QUOTE_IDENT(NOTE) FROM sensors",
+                "expected/qi_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident(note) FROM sensors ORDER BY quote_ident(note)",
+                "expected/qi_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, quote_ident(note) FROM sensors ORDER BY quote_ident(note)",
+                "expected/qi_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident(note) FROM sensors WHERE note = ''",
+                "expected/qi_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT quote_ident(note) FROM sensors LIMIT 0",
+                "expected/qi_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT quote_ident(location) FROM days ORDER BY ts",
+                "expected/qi_location.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT quote_ident(note) FROM days",
+                "expected/qi_note.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT quote_ident() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `quote_ident` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quote_ident(note, 'a') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `quote_ident` with the argument types: (STRING, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quote_ident(id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `quote_ident` with the argument types: (LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT quote_ident(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );
