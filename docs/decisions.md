@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — strpos() y position()
+
+10.1.0 no tiene `ends_with`. `strpos` y `position` son la misma función y devuelven `INT`. El índice es 1-based y cuenta unidades UTF-16. Si no hay coincidencia el resultado es `0`. Un NULL en el texto o en la búsqueda deja NULL. Una búsqueda vacía vale `1`, salvo que el texto sea NULL. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — starts_with()
 
 `starts_with` devuelve `BOOLEAN`. Un NULL en el texto o en el prefijo es `false`. Un prefijo vacío coincide con cualquier texto no nulo, incluida la cadena vacía. Distingue mayúsculas. Se contrastó con `/exec` en `sensors` y `days`.

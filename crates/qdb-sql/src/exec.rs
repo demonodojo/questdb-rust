@@ -1,7 +1,7 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
     ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, ReplaceExpr, SelectList,
-    SideExpr, StartsWithExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    SideExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -186,7 +186,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Substr { label, .. }
             | ResolvedProj::Trim { label, .. }
             | ResolvedProj::Replace { label, .. }
-            | ResolvedProj::StartsWith { label, .. } => label.clone(),
+            | ResolvedProj::StartsWith { label, .. }
+            | ResolvedProj::StrPos { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -258,6 +259,12 @@ enum ResolvedProj {
         value: ResolvedArg,
         prefix: ResolvedArg,
     },
+    StrPos {
+        label: String,
+        value: ResolvedArg,
+        needle: ResolvedArg,
+        needle_null: bool,
+    },
 }
 
 enum ReplaceMode {
@@ -292,14 +299,15 @@ impl ResolvedProj {
             | Self::Substr { label, .. }
             | Self::Trim { label, .. }
             | Self::Replace { label, .. }
-            | Self::StartsWith { label, .. } => Some(label),
+            | Self::StartsWith { label, .. }
+            | Self::StrPos { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
 
     fn expr_tag(&self) -> i32 {
         match self {
-            Self::Length { .. } => qdb_types::TAG_INT,
+            Self::Length { .. } | Self::StrPos { .. } => qdb_types::TAG_INT,
             Self::StartsWith { .. } => qdb_types::TAG_BOOLEAN,
             _ => qdb_types::TAG_STRING,
         }
@@ -343,7 +351,25 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Trim(expr) => resolve_trim(table, expr),
         Proj::Replace(expr) => resolve_replace(table, expr),
         Proj::StartsWith(expr) => resolve_starts_with(table, expr),
+        Proj::StrPos(expr) => resolve_strpos(table, expr),
     }
+}
+
+fn resolve_strpos(table: &Table, expr: &StrPosExpr) -> Result<ResolvedProj, Error> {
+    let name = expr
+        .label
+        .split_once('(')
+        .map(|(name, _)| name.to_ascii_lowercase())
+        .unwrap_or_else(|| "strpos".to_string());
+    if expr.args.len() != 2 || expr.args.iter().any(|arg| !replace_text_ok(table, arg)) {
+        return Err(text_type_error(table, &name, &expr.args));
+    }
+    Ok(ResolvedProj::StrPos {
+        label: expr.label.clone(),
+        value: resolve_concat_arg(table, &expr.args[0])?,
+        needle: resolve_concat_arg(table, &expr.args[1])?,
+        needle_null: matches!(expr.args[1], ConcatArg::Literal(Scalar::Null)),
+    })
 }
 
 fn resolve_starts_with(table: &Table, expr: &StartsWithExpr) -> Result<ResolvedProj, Error> {
@@ -776,6 +802,24 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 }
             }
         },
+        ResolvedProj::StrPos {
+            value,
+            needle,
+            needle_null,
+            ..
+        } => {
+            if *needle_null {
+                Scalar::Null
+            } else {
+                match text_of(table, row, value) {
+                    None => Scalar::Null,
+                    Some(value) => match text_of(table, row, needle) {
+                        None => Scalar::Null,
+                        Some(needle) => Scalar::Int(strpos_utf16(&value, &needle)),
+                    },
+                }
+            }
+        }
         ResolvedProj::StartsWith { value, prefix, .. } => {
             let matched = match (text_of(table, row, value), text_of(table, row, prefix)) {
                 (Some(value), Some(prefix)) => value.starts_with(&prefix),
@@ -804,6 +848,24 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             None => Scalar::Null,
         },
     }
+}
+
+fn strpos_utf16(value: &str, needle: &str) -> i32 {
+    let value_units: Vec<u16> = value.encode_utf16().collect();
+    let needle_units: Vec<u16> = needle.encode_utf16().collect();
+    if needle_units.is_empty() {
+        return 1;
+    }
+    if value_units.len() < needle_units.len() {
+        return 0;
+    }
+    let last = value_units.len() - needle_units.len();
+    for index in 0..=last {
+        if value_units[index..index + needle_units.len()] == needle_units[..] {
+            return i32::try_from(index + 1).unwrap_or(i32::MAX);
+        }
+    }
+    0
 }
 
 fn replace_utf16(value: &str, term: &str, with: &str) -> String {
@@ -4693,6 +4755,155 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT starts_with(missing, 'a') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn strpos_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT strpos(note, 'a') FROM sensors",
+                "expected/sp_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos(note, 'ph') FROM sensors",
+                "expected/sp_ph.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos(note, 'z') FROM sensors",
+                "expected/sp_miss.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos(note, '') FROM sensors",
+                "expected/sp_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos(note, null) FROM sensors",
+                "expected/sp_null_needle.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos(null, 'a') FROM sensors LIMIT 1",
+                "expected/sp_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos('', 'a') FROM sensors LIMIT 1",
+                "expected/sp_empty_text.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos('βeta', 'β') FROM sensors LIMIT 1",
+                "expected/sp_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos('aaa', 'aa') FROM sensors LIMIT 1",
+                "expected/sp_overlap.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT STRPOS(NOTE, 'a') FROM sensors",
+                "expected/sp_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos(note, 'a') FROM sensors ORDER BY strpos(note, 'a')",
+                "expected/sp_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, strpos(note, 'a') FROM sensors ORDER BY strpos(note, 'a')",
+                "expected/sp_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos(note, 'a') FROM sensors WHERE note = ''",
+                "expected/sp_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos(note, 'a') FROM sensors LIMIT 0",
+                "expected/sp_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos(note, location) FROM sensors",
+                "expected/sp_symbol.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos(tag, '0') FROM sensors",
+                "expected/sp_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT strpos(ch, 'A') FROM sensors",
+                "expected/sp_ch.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT position(note, 'a') FROM sensors",
+                "expected/sp_position.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT strpos(note, 'a') FROM days",
+                "expected/sp_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT strpos(location, 'id') FROM days ORDER BY ts",
+                "expected/sp_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT strpos() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT strpos(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `strpos` with the argument types: (STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT strpos(id, '1') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `strpos` with the argument types: (LONG, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT position(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `position` with the argument types: (STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT strpos(missing, 'a') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

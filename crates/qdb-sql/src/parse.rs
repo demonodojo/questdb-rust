@@ -91,6 +91,7 @@ pub enum Proj {
     Trim(TrimExpr),
     Replace(ReplaceExpr),
     StartsWith(StartsWithExpr),
+    StrPos(StrPosExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +153,13 @@ pub struct ReplaceExpr {
 /// `starts_with(text, prefix)` returns a boolean.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartsWithExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `strpos` or `position`: 1-based index of the first match.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrPosExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -225,6 +233,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_replace()?.label
             } else if parser.starts_starts_with_call() {
                 parser.parse_starts_with()?.label
+            } else if parser.starts_strpos_call() {
+                parser.parse_strpos()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -286,6 +296,7 @@ enum SelectPiece {
     Trim(TrimExpr),
     Replace(ReplaceExpr),
     StartsWith(StartsWithExpr),
+    StrPos(StrPosExpr),
 }
 
 struct Parser<'a> {
@@ -396,6 +407,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Replace(self.parse_replace()?));
             } else if self.starts_starts_with_call() {
                 pieces.push(SelectPiece::StartsWith(self.parse_starts_with()?));
+            } else if self.starts_strpos_call() {
+                pieces.push(SelectPiece::StrPos(self.parse_strpos()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -420,6 +433,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Trim(_)
                     | SelectPiece::Replace(_)
                     | SelectPiece::StartsWith(_)
+                    | SelectPiece::StrPos(_)
             )
         });
         if counts > 0 && projected {
@@ -443,6 +457,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Trim(expr) => items.push(Proj::Trim(expr)),
                     SelectPiece::Replace(expr) => items.push(Proj::Replace(expr)),
                     SelectPiece::StartsWith(expr) => items.push(Proj::StartsWith(expr)),
+                    SelectPiece::StrPos(expr) => items.push(Proj::StrPos(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -489,7 +504,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Substr(_)
                 | SelectPiece::Trim(_)
                 | SelectPiece::Replace(_)
-                | SelectPiece::StartsWith(_) => {
+                | SelectPiece::StartsWith(_)
+                | SelectPiece::StrPos(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -532,6 +548,25 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_strpos_call(&self) -> bool {
+        self.starts_named_call("strpos") || self.starts_named_call("position")
+    }
+
+    fn parse_strpos(&mut self) -> Result<StrPosExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, false)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(StrPosExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_starts_with_call(&self) -> bool {

@@ -405,7 +405,25 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sw_limit_zero "SELECT starts_with(note, 'a') FROM sensors LIMIT 0" \
   sw_ch "SELECT starts_with(ch, 'A') FROM sensors" \
   sw_tag "SELECT starts_with(tag, '0') FROM sensors" \
-  sw_location "SELECT starts_with(location, '東') FROM sensors"
+  sw_location "SELECT starts_with(location, '東') FROM sensors" \
+  sp_note "SELECT strpos(note, 'a') FROM sensors" \
+  sp_ph "SELECT strpos(note, 'ph') FROM sensors" \
+  sp_miss "SELECT strpos(note, 'z') FROM sensors" \
+  sp_empty "SELECT strpos(note, '') FROM sensors" \
+  sp_null_needle "SELECT strpos(note, null) FROM sensors" \
+  sp_null "SELECT strpos(null, 'a') FROM sensors LIMIT 1" \
+  sp_empty_text "SELECT strpos('', 'a') FROM sensors LIMIT 1" \
+  sp_beta "SELECT strpos('βeta', 'β') FROM sensors LIMIT 1" \
+  sp_overlap "SELECT strpos('aaa', 'aa') FROM sensors LIMIT 1" \
+  sp_case "SELECT STRPOS(NOTE, 'a') FROM sensors" \
+  sp_order "SELECT strpos(note, 'a') FROM sensors ORDER BY strpos(note, 'a')" \
+  sp_with_id "SELECT id, strpos(note, 'a') FROM sensors ORDER BY strpos(note, 'a')" \
+  sp_where "SELECT strpos(note, 'a') FROM sensors WHERE note = ''" \
+  sp_limit_zero "SELECT strpos(note, 'a') FROM sensors LIMIT 0" \
+  sp_symbol "SELECT strpos(note, location) FROM sensors" \
+  sp_tag "SELECT strpos(tag, '0') FROM sensors" \
+  sp_ch "SELECT strpos(ch, 'A') FROM sensors" \
+  sp_position "SELECT position(note, 'a') FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -487,7 +505,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   rep_note "SELECT replace(note, 'a', 'X') FROM days" \
   rep_location "SELECT replace(location, 'a', 'A') FROM days ORDER BY ts" \
   sw_note "SELECT starts_with(note, 'al') FROM days" \
-  sw_location "SELECT starts_with(location, 'mad') FROM days ORDER BY ts"
+  sw_location "SELECT starts_with(location, 'mad') FROM days ORDER BY ts" \
+  sp_note "SELECT strpos(note, 'a') FROM days" \
+  sp_location "SELECT strpos(location, 'id') FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -840,6 +860,24 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT starts_with(ch, 'A') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT starts_with(tag, '0') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT starts_with(location, '東') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT strpos(note, 'a') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT strpos(note, 'ph') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT strpos(note, 'z') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT strpos(note, '') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT strpos(note, null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT strpos(null, 'a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT strpos('', 'a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT strpos('βeta', 'β') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT strpos('aaa', 'aa') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT STRPOS(NOTE, 'a') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT strpos(note, 'a') FROM sensors ORDER BY strpos(note, 'a')"),
+    (os.environ["DIFF_H1"], "SELECT id, strpos(note, 'a') FROM sensors ORDER BY strpos(note, 'a')"),
+    (os.environ["DIFF_H1"], "SELECT strpos(note, 'a') FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT strpos(note, 'a') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT strpos(note, location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT strpos(tag, '0') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT strpos(ch, 'A') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT position(note, 'a') FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -920,6 +958,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT replace(location, 'a', 'A') FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT starts_with(note, 'al') FROM days"),
     (os.environ["DIFF_H2"], "SELECT starts_with(location, 'mad') FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT strpos(note, 'a') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT strpos(location, 'id') FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
