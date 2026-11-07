@@ -1,0 +1,2 @@
+to_str(null, 'yyyy')
+NULL

@@ -1,0 +1,2 @@
+to_str(ts, 'yyyy-MM-dd')
+2020-01-02

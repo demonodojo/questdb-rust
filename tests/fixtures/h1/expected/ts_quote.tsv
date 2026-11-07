@@ -1,0 +1,2 @@
+to_str(ts, 'yyyy''Q''MM')
+2020'Q'01

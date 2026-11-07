@@ -6,8 +6,8 @@ use crate::parse::{
     MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj,
     Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
     SecondExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, TimestampCeilExpr, TimestampFloorExpr, TrimEnd,
-    TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, TimestampCeilExpr, TimestampFloorExpr, ToStrExpr,
+    TrimEnd, TrimExpr, UpperExpr, WeekOfYearExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -223,6 +223,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::TimestampCeil { label, .. }
             | ResolvedProj::IsLeapYear { label, .. }
             | ResolvedProj::DaysInMonth { label, .. }
+            | ResolvedProj::ToStr { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -449,6 +450,11 @@ enum ResolvedProj {
         label: String,
         value: DateDiffSide,
     },
+    ToStr {
+        label: String,
+        ops: Vec<ToStrOp>,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -606,6 +612,7 @@ impl ResolvedProj {
             | Self::TimestampCeil { label, .. }
             | Self::IsLeapYear { label, .. }
             | Self::DaysInMonth { label, .. }
+            | Self::ToStr { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -648,6 +655,7 @@ impl ResolvedProj {
             }
             Self::IsLeapYear { .. } => qdb_types::TAG_BOOLEAN,
             Self::DaysInMonth { .. } => qdb_types::TAG_INT,
+            Self::ToStr { .. } => qdb_types::TAG_STRING,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -736,6 +744,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::TimestampCeil(expr) => resolve_timestamp_ceil(table, expr),
         Proj::IsLeapYear(expr) => resolve_is_leap_year(table, expr),
         Proj::DaysInMonth(expr) => resolve_days_in_month(table, expr),
+        Proj::ToStr(expr) => resolve_to_str(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1391,6 +1400,263 @@ enum DateDiffSide {
     Column { index: usize },
     Null,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ToStrOp {
+    Lit(String),
+    Year(u8),
+    IsoYear,
+    Month(u8),
+    Day(u8),
+    DowName(bool),
+    DowSun,
+    Doy,
+    Week(bool),
+    AmPm,
+    Hour24(bool),
+    Hour12(bool),
+    HourK(bool),
+    HourCapK(bool),
+    Minute(bool),
+    Second(bool),
+    Millis(bool),
+    Micros(bool),
+    Nanos(bool),
+    Era,
+    Zone,
+}
+
+fn resolve_to_str(table: &Table, expr: &ToStrExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2
+        || !matches!(
+            &expr.args[1],
+            ConcatArg::Literal(Scalar::Null | Scalar::Text(_) | Scalar::Char(_))
+        )
+    {
+        return Err(Error::new(format!(
+            "there is no matching function `to_str` with the argument types: ({})",
+            timestamp_floor_types(table, &expr.args)?
+        )));
+    }
+    let format = match &expr.args[1] {
+        ConcatArg::Literal(Scalar::Null) => return Err(Error::new("format must not be null")),
+        ConcatArg::Literal(Scalar::Text(text)) => text.clone(),
+        ConcatArg::Literal(Scalar::Char(unit)) => char::from_u32(u32::from(*unit))
+            .unwrap_or('\u{0}')
+            .to_string(),
+        _ => String::new(),
+    };
+    Ok(ResolvedProj::ToStr {
+        label: expr.label.clone(),
+        ops: compile_to_str(&format)?,
+        value: date_trunc_timestamp(table, &expr.args[0])?,
+    })
+}
+
+type ToStrToken = (&'static str, fn() -> ToStrOp);
+
+fn compile_to_str(pattern: &str) -> Result<Vec<ToStrOp>, Error> {
+    const TOKENS: &[ToStrToken] = &[
+        ("yyyy", || ToStrOp::Year(4)),
+        ("YYYY", || ToStrOp::IsoYear),
+        ("MMMM", || ToStrOp::Month(4)),
+        ("yyy", || ToStrOp::Year(3)),
+        ("MMM", || ToStrOp::Month(3)),
+        ("SSS", || ToStrOp::Millis(true)),
+        ("UUU", || ToStrOp::Micros(true)),
+        ("NNN", || ToStrOp::Nanos(true)),
+        ("zzz", || ToStrOp::Zone),
+        ("xxx", || ToStrOp::Zone),
+        ("HH", || ToStrOp::Hour24(true)),
+        ("hh", || ToStrOp::Hour12(true)),
+        ("kk", || ToStrOp::HourK(true)),
+        ("KK", || ToStrOp::HourCapK(true)),
+        ("mm", || ToStrOp::Minute(true)),
+        ("ss", || ToStrOp::Second(true)),
+        ("EE", || ToStrOp::DowName(true)),
+        ("ww", || ToStrOp::Week(true)),
+        ("dd", || ToStrOp::Day(2)),
+        ("yy", || ToStrOp::Year(2)),
+        ("MM", || ToStrOp::Month(2)),
+        ("zz", || ToStrOp::Zone),
+        ("xx", || ToStrOp::Zone),
+        ("y", || ToStrOp::Year(1)),
+        ("M", || ToStrOp::Month(1)),
+        ("d", || ToStrOp::Day(1)),
+        ("E", || ToStrOp::DowName(false)),
+        ("u", || ToStrOp::DowSun),
+        ("D", || ToStrOp::Doy),
+        ("w", || ToStrOp::Week(false)),
+        ("a", || ToStrOp::AmPm),
+        ("H", || ToStrOp::Hour24(false)),
+        ("h", || ToStrOp::Hour12(false)),
+        ("k", || ToStrOp::HourK(false)),
+        ("K", || ToStrOp::HourCapK(false)),
+        ("m", || ToStrOp::Minute(false)),
+        ("s", || ToStrOp::Second(false)),
+        ("S", || ToStrOp::Millis(false)),
+        ("U", || ToStrOp::Micros(false)),
+        ("N", || ToStrOp::Nanos(false)),
+        ("G", || ToStrOp::Era),
+        ("Z", || ToStrOp::Zone),
+        ("z", || ToStrOp::Zone),
+        ("x", || ToStrOp::Zone),
+    ];
+    let mut ops = Vec::new();
+    let mut index = 0;
+    while index < pattern.len() {
+        let rest = &pattern[index..];
+        if let Some((token, op)) = TOKENS.iter().find(|(token, _)| rest.starts_with(token)) {
+            ops.push(op());
+            index += token.len();
+        } else {
+            let ch = rest.chars().next().unwrap_or('\u{0}');
+            ops.push(ToStrOp::Lit(ch.to_string()));
+            index += ch.len_utf8();
+        }
+    }
+    Ok(ops)
+}
+
+fn format_to_str(ops: &[ToStrOp], micros: i64) -> String {
+    let (year, month, day, time) = dateadd_parts(micros);
+    let hour = i32::try_from(time / (3_600 * 1_000_000)).unwrap_or(0);
+    let minute = i32::try_from((time / (60 * 1_000_000)) % 60).unwrap_or(0);
+    let second = i32::try_from((time / 1_000_000) % 60).unwrap_or(0);
+    let millis = i32::try_from((time / 1_000) % 1_000).unwrap_or(0);
+    let micros_of_milli = i32::try_from(time % 1_000).unwrap_or(0);
+    let mut out = String::new();
+    for op in ops {
+        match op {
+            ToStrOp::Lit(text) => out.push_str(text),
+            ToStrOp::Year(1) => out.push_str(&year.to_string()),
+            ToStrOp::Year(2) => push_padded(&mut out, year.rem_euclid(100), 2),
+            ToStrOp::Year(3) => push_padded(&mut out, year.rem_euclid(1000), 3),
+            ToStrOp::Year(_) => push_padded(&mut out, year, 4),
+            ToStrOp::IsoYear => push_padded(&mut out, iso_year(micros), 4),
+            ToStrOp::Month(1) => out.push_str(&month.to_string()),
+            ToStrOp::Month(2) => push_padded(&mut out, i32::try_from(month).unwrap_or(0), 2),
+            ToStrOp::Month(3) => out.push_str(SHORT_MONTHS[month_index(month)]),
+            ToStrOp::Month(_) => out.push_str(LONG_MONTHS[month_index(month)]),
+            ToStrOp::Day(1) => out.push_str(&day.to_string()),
+            ToStrOp::Day(_) => push_padded(&mut out, i32::try_from(day).unwrap_or(0), 2),
+            ToStrOp::DowName(long) => {
+                let index = usize::try_from(sunday_weekday(micros) - 1).unwrap_or(0);
+                out.push_str(if *long {
+                    LONG_DAYS[index.min(6)]
+                } else {
+                    SHORT_DAYS[index.min(6)]
+                });
+            }
+            ToStrOp::DowSun => out.push_str(&sunday_weekday(micros).to_string()),
+            ToStrOp::Doy => out.push_str(&day_of_year(year, micros).to_string()),
+            ToStrOp::Week(true) => push_padded(&mut out, week_of_doy(year, micros), 2),
+            ToStrOp::Week(false) => out.push_str(&week_of_doy(year, micros).to_string()),
+            ToStrOp::AmPm => out.push_str(if hour < 12 { "AM" } else { "PM" }),
+            ToStrOp::Hour24(true) => push_padded(&mut out, hour, 2),
+            ToStrOp::Hour24(false) => out.push_str(&hour.to_string()),
+            ToStrOp::Hour12(padded) => push_hour(&mut out, hour_12(hour), *padded),
+            ToStrOp::HourK(padded) => {
+                push_hour(&mut out, if hour == 0 { 24 } else { hour }, *padded)
+            }
+            ToStrOp::HourCapK(padded) => push_hour(&mut out, hour.rem_euclid(12), *padded),
+            ToStrOp::Minute(padded) => push_hour(&mut out, minute, *padded),
+            ToStrOp::Second(padded) => push_hour(&mut out, second, *padded),
+            ToStrOp::Millis(true) => push_padded(&mut out, millis, 3),
+            ToStrOp::Millis(false) => out.push_str(&millis.to_string()),
+            ToStrOp::Micros(true) => push_padded(&mut out, micros_of_milli, 3),
+            ToStrOp::Micros(false) => out.push_str(&micros_of_milli.to_string()),
+            ToStrOp::Nanos(true) => out.push_str("000"),
+            ToStrOp::Nanos(false) => out.push('0'),
+            ToStrOp::Era => out.push_str(if year > 0 { "AD" } else { "BC" }),
+            ToStrOp::Zone => out.push('Z'),
+        }
+    }
+    out
+}
+
+fn push_hour(out: &mut String, value: i32, padded: bool) {
+    if padded {
+        push_padded(out, value, 2);
+    } else {
+        out.push_str(&value.to_string());
+    }
+}
+
+fn push_padded(out: &mut String, value: i32, width: usize) {
+    let text = value.to_string();
+    if text.len() >= width {
+        out.push_str(&text);
+    } else {
+        for _ in 0..(width - text.len()) {
+            out.push('0');
+        }
+        out.push_str(&text);
+    }
+}
+
+fn hour_12(hour: i32) -> i32 {
+    match hour.rem_euclid(12) {
+        0 => 12,
+        other => other,
+    }
+}
+
+fn month_index(month: u32) -> usize {
+    usize::try_from(month.saturating_sub(1))
+        .unwrap_or(0)
+        .min(11)
+}
+
+fn sunday_weekday(micros: i64) -> i32 {
+    match weekday_monday(micros) {
+        7 => 1,
+        day => day + 1,
+    }
+}
+
+fn day_of_year(year: i32, micros: i64) -> i32 {
+    let january = qdb_types::unix_days_from_civil(year, 1, 1).unwrap_or(0);
+    i32::try_from(micros.div_euclid(DATEADD_DAY) - january + 1).unwrap_or(0)
+}
+
+fn week_of_doy(year: i32, micros: i64) -> i32 {
+    day_of_year(year, micros) / 7 + 1
+}
+
+fn iso_year(micros: i64) -> i32 {
+    let days = micros.div_euclid(DATEADD_DAY);
+    let thursday = days + (4 - i64::from(weekday_monday(micros)));
+    qdb_types::civil_from_unix_days(thursday).0
+}
+
+const SHORT_DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const LONG_DAYS: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
+const SHORT_MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const LONG_MONTHS: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
 
 fn resolve_days_in_month(table: &Table, expr: &DaysInMonthExpr) -> Result<ResolvedProj, Error> {
     if expr.args.len() != 1 {
@@ -4011,6 +4277,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 let (year, month, _, _) = dateadd_parts(micros);
                 Scalar::Int(days_in_month(year, month))
             }
+            None => Scalar::Null,
+        },
+        ResolvedProj::ToStr { ops, value, .. } => match datediff_micros(table, row, value) {
+            Some(micros) => Scalar::Text(format_to_str(ops, micros)),
             None => Scalar::Null,
         },
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
@@ -12877,6 +13147,159 @@ mod tests {
         let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn to_str_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors",
+                "expected/ts_day.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str(id, 'yyyy-MM-dd') FROM sensors",
+                "expected/ts_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str('2020-01-02T03:04:05.123456Z', 'SSS UUU') FROM sensors LIMIT 1",
+                "expected/ts_frac.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str('2020-01-02T15:07:09.000000Z', 'h:mm a') FROM sensors LIMIT 1",
+                "expected/ts_ampm.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str('2020-01-02T00:00:00.000000Z', 'k') FROM sensors LIMIT 1",
+                "expected/ts_k.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str(ts, 'EEE MMM') FROM sensors LIMIT 1",
+                "expected/ts_names.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str('2019-12-31T00:00:00.000000Z', 'w ww YYYY') FROM sensors LIMIT 1",
+                "expected/ts_week.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str(ts, 'yyyy''Q''MM') FROM sensors LIMIT 1",
+                "expected/ts_quote.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str('2020-03-01T00:00:00.000000Z', 'D') FROM sensors LIMIT 1",
+                "expected/ts_doy.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str('2020-01-05T00:00:00.000000Z', 'u') FROM sensors LIMIT 1",
+                "expected/ts_dow.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str('0001-01-01T00:00:00.000000Z', 'G yyyy') FROM sensors LIMIT 1",
+                "expected/ts_era.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str(null, 'yyyy') FROM sensors LIMIT 1",
+                "expected/ts_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT TO_STR(TS, 'yyyy') FROM sensors LIMIT 1",
+                "expected/ts_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str(id, 'yyyy-MM-dd') FROM sensors ORDER BY to_str(id, 'yyyy-MM-dd')",
+                "expected/ts_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors WHERE id = 1",
+                "expected/ts_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors LIMIT 0",
+                "expected/ts_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT to_str(ts, 'yyyy-MM-dd') FROM days ORDER BY ts",
+                "expected/ts_days.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT to_str() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("function `to_str` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_str(ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_str` with the argument types: (TIMESTAMP)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_str(ts, null) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("format must not be null"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_str(ts, note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_str` with the argument types: (TIMESTAMP, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_str(note, 'yyyy') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_str(missing, 'yyyy') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_str('nope', 'yyyy') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_str(ts, 'yyyy', 'x') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `to_str` with the argument types: (TIMESTAMP, STRING, CHAR)"
+            ),
             "{}",
             err.message
         );

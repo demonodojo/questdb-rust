@@ -41,7 +41,8 @@
 //! non-null text. `strpos` and `position` return the 1-based index of the first
 //! match, `0` when it is missing, and NULL when the text or the search is
 //! null. `pi` returns the `DOUBLE` constant for every row. `greatest` returns the
-//! widest numeric argument and skips nulls. `days_in_month` returns the length of
+//! widest numeric argument and skips nulls. `to_str` formats a timestamp with a
+//! constant pattern. `days_in_month` returns the length of
 //! the timestamp's month. `is_leap_year` reports the Gregorian
 //! leap year and returns false for null. `timestamp_ceil` advances a timestamp
 //! to the next period boundary. `timestamp_floor` floors a timestamp

@@ -1079,7 +1079,23 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   dm_case "SELECT DAYS_IN_MONTH(TS) FROM sensors LIMIT 1" \
   dm_order "SELECT days_in_month(id) FROM sensors ORDER BY days_in_month(id)" \
   dm_where "SELECT days_in_month(ts) FROM sensors WHERE id = 1" \
-  dm_zero "SELECT days_in_month(ts) FROM sensors LIMIT 0"
+  dm_zero "SELECT days_in_month(ts) FROM sensors LIMIT 0" \
+  ts_day "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors" \
+  ts_id "SELECT to_str(id, 'yyyy-MM-dd') FROM sensors" \
+  ts_frac "SELECT to_str('2020-01-02T03:04:05.123456Z', 'SSS UUU') FROM sensors LIMIT 1" \
+  ts_ampm "SELECT to_str('2020-01-02T15:07:09.000000Z', 'h:mm a') FROM sensors LIMIT 1" \
+  ts_k "SELECT to_str('2020-01-02T00:00:00.000000Z', 'k') FROM sensors LIMIT 1" \
+  ts_names "SELECT to_str(ts, 'EEE MMM') FROM sensors LIMIT 1" \
+  ts_week "SELECT to_str('2019-12-31T00:00:00.000000Z', 'w ww YYYY') FROM sensors LIMIT 1" \
+  ts_quote "SELECT to_str(ts, 'yyyy''Q''MM') FROM sensors LIMIT 1" \
+  ts_doy "SELECT to_str('2020-03-01T00:00:00.000000Z', 'D') FROM sensors LIMIT 1" \
+  ts_dow "SELECT to_str('2020-01-05T00:00:00.000000Z', 'u') FROM sensors LIMIT 1" \
+  ts_era "SELECT to_str('0001-01-01T00:00:00.000000Z', 'G yyyy') FROM sensors LIMIT 1" \
+  ts_null "SELECT to_str(null, 'yyyy') FROM sensors LIMIT 1" \
+  ts_case "SELECT TO_STR(TS, 'yyyy') FROM sensors LIMIT 1" \
+  ts_order "SELECT to_str(id, 'yyyy-MM-dd') FROM sensors ORDER BY to_str(id, 'yyyy-MM-dd')" \
+  ts_where "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors WHERE id = 1" \
+  ts_zero "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1212,7 +1228,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   tf_hour "SELECT timestamp_floor('h', ts) FROM days ORDER BY ts" \
   tc_hour "SELECT timestamp_ceil('h', ts) FROM days ORDER BY ts" \
   ly_days "SELECT is_leap_year(ts) FROM days ORDER BY ts" \
-  dm_days "SELECT days_in_month(ts) FROM days ORDER BY ts"
+  dm_days "SELECT days_in_month(ts) FROM days ORDER BY ts" \
+  ts_days "SELECT to_str(ts, 'yyyy-MM-dd') FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2239,6 +2256,22 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT days_in_month(id) FROM sensors ORDER BY days_in_month(id)"),
     (os.environ["DIFF_H1"], "SELECT days_in_month(ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT days_in_month(ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_str(id, 'yyyy-MM-dd') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_str('2020-01-02T03:04:05.123456Z', 'SSS UUU') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_str('2020-01-02T15:07:09.000000Z', 'h:mm a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_str('2020-01-02T00:00:00.000000Z', 'k') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_str(ts, 'EEE MMM') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_str('2019-12-31T00:00:00.000000Z', 'w ww YYYY') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_str(ts, 'yyyy''Q''MM') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_str('2020-03-01T00:00:00.000000Z', 'D') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_str('2020-01-05T00:00:00.000000Z', 'u') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_str('0001-01-01T00:00:00.000000Z', 'G yyyy') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_str(null, 'yyyy') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT TO_STR(TS, 'yyyy') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_str(id, 'yyyy-MM-dd') FROM sensors ORDER BY to_str(id, 'yyyy-MM-dd')"),
+    (os.environ["DIFF_H1"], "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2370,6 +2403,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT timestamp_ceil('h', ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT is_leap_year(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT days_in_month(ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT to_str(ts, 'yyyy-MM-dd') FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
