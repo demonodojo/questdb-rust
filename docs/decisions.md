@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — menor que
+
+`value < other` compara una columna con una constante y devuelve un `BOOLEAN`. Un nulo no es menor que nada, ni siquiera que nulo. `-0.0` no es menor que `0`. `id < 1` es `false`, `false`, `false` y `true`. En `days` es `false` en las cuatro filas. `id < null` y `reading < 0` son `false` en las cuatro filas. `note < 'alpha'` es `false`, `false`, `true` y `false`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — desigualdad
 
 `value <> other` niega la igualdad y devuelve un `BOOLEAN`. Un nulo es distinto de cualquier otro valor y no es distinto de nulo. `-0.0` no es distinto de `0`. `id <> 1` es `false`, `true`, `true` y `true`. En `days` es `false`, `true`, `true` y `true`. `id <> null` es `true`, `true`, `false` y `true`. `note <> 'alpha'` es `false`, `true`, `true` y `true`. `note <> ''` es `true`, `true`, `false` y `true`. `reading <> 0` es `true`, `true`, `false` y `false`. `id != 1` es la misma comparación y conserva el operador escrito. Se contrastó con `/exec` en `sensors` y `days`.

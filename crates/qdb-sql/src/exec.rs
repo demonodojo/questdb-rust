@@ -1696,10 +1696,10 @@ fn eq_value(
 ) -> Result<Scalar, Error> {
     let tag = table.meta.columns[index].tag;
     let left = &table.columns[index][row];
-    let equal = sql_cmp(left, tag, CmpOp::Eq, literal)?;
     let result = match op {
-        CmpOp::NotEq => !equal,
-        _ => equal,
+        CmpOp::NotEq => !sql_cmp(left, tag, CmpOp::Eq, literal)?,
+        CmpOp::Eq => sql_cmp(left, tag, CmpOp::Eq, literal)?,
+        other => sql_cmp(left, tag, other, literal)?,
     };
     Ok(Scalar::Boolean(result))
 }
@@ -15476,6 +15476,66 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn lt_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id < 1 FROM sensors",
+                "expected/lt_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id < 1 FROM sensors WHERE id = 1",
+                "expected/lt_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id < 1 FROM sensors WHERE id = -1",
+                "expected/lt_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id < 1 FROM sensors WHERE id > 100",
+                "expected/lt_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id < null FROM sensors",
+                "expected/lt_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT reading < 0 FROM sensors",
+                "expected/lt_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note < 'alpha' FROM sensors",
+                "expected/lt_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id < 1 FROM sensors LIMIT 0",
+                "expected/lt_lim0.tsv",
+            ),
+            (&days, "SELECT id < 1 FROM days", "expected/lt_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT missing < 1 FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",
