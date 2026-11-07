@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — atan2()
+
+`atan2(y, x)` devuelve `DOUBLE` en radianes. Un nulo en cualquiera de los dos argumentos deja el resultado NULL. `atan2(0, 1)` es `0.0`, `atan2(-0.0, 1)` es `-0.0`, `atan2(0, -1)` es π y `atan2(-0.0, -0.0)` es -π. Si un argumento no admite conversión a `DOUBLE`, el error nombra el primer argumento cuyo tipo no es ya `DOUBLE`: un entero que cabe en `INT` se nombra `INT`, y `-2147483648` se nombra `LONG`. Un texto se convierte como en `sin`. `atan2(3, 7)` imprime `0.4048917862850834` en 10.1.0 y `0.40489178628508343` en Rust. `atan2(1.25, 1.5)` imprime `0.6947382761967033` y `0.6947382761967031`. Esas dos consultas no se capturan. Se contrastó el resto con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — atan()
 
 `atan(número)` devuelve `DOUBLE` en radianes. Un nulo sigue NULL. `atan(0)` es `0.0` y `atan(-0.0)` es `-0.0`. Un texto se convierte como en `sin`. `BOOLEAN` y `SYMBOL` no encajan. Se contrastó con `/exec` en `sensors` y `days`.

@@ -1,0 +1,2 @@
+atan2('NaN', 1)
+NULL
