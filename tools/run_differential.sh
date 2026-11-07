@@ -2163,7 +2163,26 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   io_grp "SELECT isOrdered(id) FROM sensors GROUP BY location ORDER BY location" \
   io_grp_ts "SELECT isOrdered(ts) FROM sensors GROUP BY location ORDER BY location" \
   io_lim0 "SELECT isOrdered(id) FROM sensors LIMIT 0" \
-  io_case "SELECT ISORDERED(ts) FROM sensors"
+  io_case "SELECT ISORDERED(ts) FROM sensors" \
+  pd_flags "SELECT percentile_disc(flags, 0.5) FROM sensors" \
+  pd_one "SELECT percentile_disc(flags, 0.5) FROM sensors WHERE id = 1" \
+  pd_none "SELECT percentile_disc(flags, 0.5) FROM sensors WHERE id > 100" \
+  pd_zero "SELECT percentile_disc(flags, 0) FROM sensors" \
+  pd_high "SELECT percentile_disc(flags, 1) FROM sensors" \
+  pd_neg "SELECT percentile_disc(flags, 0.5) FROM sensors WHERE id = -1" \
+  pd_read "SELECT percentile_disc(reading, 0.5) FROM sensors" \
+  pd_read0 "SELECT percentile_disc(reading, 0) FROM sensors" \
+  pd_read1 "SELECT percentile_disc(reading, 1) FROM sensors" \
+  pd_score "SELECT percentile_disc(score, 0.5) FROM sensors" \
+  pd_id "SELECT percentile_disc(id, 0.5) FROM sensors" \
+  pd_byte "SELECT percentile_disc(b, 0.5) FROM sensors" \
+  pd_code "SELECT percentile_disc(code, 0.5) FROM sensors" \
+  pd_day "SELECT percentile_disc(day, 0.5) FROM sensors" \
+  pd_ts "SELECT percentile_disc(ts, 0.5) FROM sensors" \
+  pd_grp "SELECT percentile_disc(flags, 0.5) FROM sensors GROUP BY location ORDER BY location" \
+  pd_grp_r "SELECT percentile_disc(reading, 0.5) FROM sensors GROUP BY location ORDER BY location" \
+  pd_lim0 "SELECT percentile_disc(flags, 0.5) FROM sensors LIMIT 0" \
+  pd_case "SELECT PERCENTILE_DISC(flags, 0.5) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2408,7 +2427,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   wr_days_grp "SELECT weighted_stddev_rel(id, id) FROM days GROUP BY location ORDER BY location" \
   io_days "SELECT isOrdered(id) FROM days" \
   io_days_ts "SELECT isOrdered(ts) FROM days" \
-  io_days_grp "SELECT isOrdered(id) FROM days GROUP BY location ORDER BY location"
+  io_days_grp "SELECT isOrdered(id) FROM days GROUP BY location ORDER BY location" \
+  pd_days "SELECT percentile_disc(id, 0.5) FROM days" \
+  pd_days_grp "SELECT percentile_disc(id, 0.5) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4519,6 +4540,25 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT isOrdered(ts) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT isOrdered(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT ISORDERED(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(flags, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(flags, 0.5) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(flags, 0.5) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(flags, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(flags, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(flags, 0.5) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(reading, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(reading, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(reading, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(score, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(id, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(b, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(code, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(day, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(ts, 0.5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(flags, 0.5) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(reading, 0.5) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT percentile_disc(flags, 0.5) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT PERCENTILE_DISC(flags, 0.5) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4762,6 +4802,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT isOrdered(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT isOrdered(ts) FROM days"),
     (os.environ["DIFF_H2"], "SELECT isOrdered(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT percentile_disc(id, 0.5) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT percentile_disc(id, 0.5) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

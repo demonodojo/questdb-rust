@@ -7369,6 +7369,12 @@ enum Accumulator {
         ordered: bool,
         previous: Option<i64>,
     },
+    PercentileDisc {
+        longs: Vec<i64>,
+        doubles: Vec<f64>,
+        floating: bool,
+        percentile: f64,
+    },
     BitAnd {
         bits: Option<i64>,
         tag: i32,
@@ -7573,6 +7579,12 @@ impl Accumulator {
                 ordered: true,
                 previous: None,
             },
+            AggFunc::PercentileDisc => Self::PercentileDisc {
+                longs: Vec::new(),
+                doubles: Vec::new(),
+                floating: false,
+                percentile: 0.5,
+            },
         }
     }
 
@@ -7762,6 +7774,7 @@ impl Accumulator {
                 }
             }
             Self::IsOrdered { ordered, .. } => Scalar::Boolean(*ordered),
+            Self::PercentileDisc { .. } => Scalar::Null,
         }
     }
 }
@@ -8025,6 +8038,7 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     let (precision, percentile) = match aggregate.func {
         AggFunc::ApproxMedian => (median_precision(table, tag, aggregate)?, 0.5),
         AggFunc::ApproxPercentile => percentile_spec(table, tag, aggregate)?,
+        AggFunc::PercentileDisc => (1, percentile_disc_spec(table, tag, aggregate)?),
         _ => (1, 0.5),
     };
     Ok(AggColumn {
@@ -8083,6 +8097,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         AggFunc::ArgMax => arg_max_result_tag(input.tag, input.pair_tag),
         AggFunc::ArgMin => arg_min_result_tag(input.tag, input.pair_tag),
         AggFunc::BoolAnd | AggFunc::BoolOr | AggFunc::IsOrdered => qdb_types::TAG_BOOLEAN,
+        AggFunc::PercentileDisc => percentile_disc_tag(input.tag),
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
             if matches!(input.tag, qdb_types::TAG_BYTE | qdb_types::TAG_SHORT) =>
@@ -8171,7 +8186,8 @@ fn contribution(
         | AggFunc::WeightedStdDevRel
         | AggFunc::WeightedStdDevFreq
         | AggFunc::Twap
-        | AggFunc::IsOrdered => Ok(None),
+        | AggFunc::IsOrdered
+        | AggFunc::PercentileDisc => Ok(None),
     }
 }
 
@@ -8339,6 +8355,10 @@ fn feed(
         update_is_ordered(accumulator, columns, row, input)?;
         return Ok(());
     }
+    if input.func == AggFunc::PercentileDisc {
+        update_percentile_disc(accumulator, columns, row, input)?;
+        return Ok(());
+    }
     absorb(accumulator, contribution(columns, row, input)?, input.func);
     Ok(())
 }
@@ -8430,6 +8450,14 @@ const SPARK_CHARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇',
 fn accumulator_value(accumulator: &Accumulator) -> Result<Scalar, Error> {
     if let Accumulator::Sparkline { values, params } = accumulator {
         sparkline_scalar(values, *params)
+    } else if let Accumulator::PercentileDisc {
+        longs,
+        doubles,
+        floating,
+        percentile,
+    } = accumulator
+    {
+        percentile_disc_scalar(longs, doubles, *floating, *percentile)
     } else {
         Ok(accumulator.finish())
     }
@@ -8842,6 +8870,15 @@ fn start_accumulator(aggregate: &AggregateExpr, input: &AggColumn) -> Accumulato
                 | qdb_types::TAG_VARCHAR
         );
         *histogram = HdrHistogram::new(input.precision);
+        *percentile = input.percentile;
+    }
+    if let Accumulator::PercentileDisc {
+        floating,
+        percentile,
+        ..
+    } = &mut accumulator
+    {
+        *floating = percentile_disc_tag(input.tag) == qdb_types::TAG_DOUBLE;
         *percentile = input.percentile;
     }
     accumulator
@@ -10137,7 +10174,7 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
         | Accumulator::WeightedAvg { .. }
         | Accumulator::WeightedStdDev { .. }
         | Accumulator::Twap { .. } => {}
-        Accumulator::IsOrdered { .. } => {}
+        Accumulator::IsOrdered { .. } | Accumulator::PercentileDisc { .. } => {}
         Accumulator::BoolAnd { value, count } => {
             let Scalar::Boolean(bit) = next else {
                 return;
@@ -10402,6 +10439,239 @@ fn cmp_f64(left: f64, right: f64) -> Result<Ordering, Error> {
 
 fn cmp_text(left: &str, right: &str) -> Result<Ordering, Error> {
     Ok(left.cmp(right))
+}
+
+fn percentile_disc_tag(tag: i32) -> i32 {
+    match tag {
+        qdb_types::TAG_FLOAT
+        | qdb_types::TAG_DOUBLE
+        | qdb_types::TAG_STRING
+        | qdb_types::TAG_VARCHAR => qdb_types::TAG_DOUBLE,
+        _ => qdb_types::TAG_LONG,
+    }
+}
+
+fn percentile_disc_spec(table: &Table, tag: i32, aggregate: &AggregateExpr) -> Result<f64, Error> {
+    let second = percentile_disc_second_type(table, aggregate)?;
+    if let Some(rest) = &aggregate.fourth_type {
+        let mut parts = vec![qdb_types::type_name(tag).to_string(), second];
+        for token in rest.split(", ") {
+            if let Some(column) = token.strip_prefix("col:") {
+                let other = table
+                    .column_index(column)
+                    .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
+                parts.push(qdb_types::type_name(table.meta.columns[other].tag).to_string());
+            } else {
+                parts.push(token.to_string());
+            }
+        }
+        return Err(Error::new(format!(
+            "there is no matching function `percentile_disc` with the argument types: ({})",
+            parts.join(", ")
+        )));
+    }
+    if aggregate.precision.is_none() && aggregate.extra.is_none() {
+        return Err(Error::new(format!(
+            "there is no matching function `percentile_disc` with the argument types: ({})",
+            qdb_types::type_name(tag)
+        )));
+    }
+    if matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL) {
+        return Err(Error::new(format!(
+            "there is no matching function `percentile_disc` with the argument types: ({}, {second})",
+            qdb_types::type_name(tag)
+        )));
+    }
+    if matches!(aggregate.extra, Some(AggregateExtra::Column(_))) {
+        return Err(Error::new(
+            "percentile must be a constant or runtime constant",
+        ));
+    }
+    match &aggregate.precision {
+        Some(Scalar::Double(number)) => Ok(*number),
+        Some(Scalar::Long(number)) => Ok(*number as f64),
+        Some(Scalar::Null) | None => Ok(f64::NAN),
+        Some(_) => Err(Error::new(
+            "percentile must be a constant or runtime constant",
+        )),
+    }
+}
+
+fn percentile_disc_second_type(table: &Table, aggregate: &AggregateExpr) -> Result<String, Error> {
+    if let Some(number) = &aggregate.precision {
+        return Ok(match number {
+            Scalar::Double(_) => "DOUBLE",
+            Scalar::Long(value) if i32::try_from(*value).is_ok() => "INT",
+            Scalar::Long(_) => "LONG",
+            Scalar::Null => "NULL",
+            _ => "DOUBLE",
+        }
+        .to_string());
+    }
+    match &aggregate.extra {
+        Some(AggregateExtra::Type(kind)) => Ok(kind.clone()),
+        Some(AggregateExtra::Column(name)) => {
+            let other = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            Ok(qdb_types::type_name(table.meta.columns[other].tag).to_string())
+        }
+        None => Ok("DOUBLE".to_string()),
+    }
+}
+
+fn update_percentile_disc(
+    accumulator: &mut Accumulator,
+    columns: &[Vec<Scalar>],
+    row: usize,
+    input: &AggColumn,
+) -> Result<(), Error> {
+    let Accumulator::PercentileDisc {
+        longs,
+        doubles,
+        floating,
+        ..
+    } = accumulator
+    else {
+        return Err(Error::new("internal: percentile_disc accumulator"));
+    };
+    let index = input
+        .index
+        .ok_or_else(|| Error::new("internal: percentile_disc column"))?;
+    let value = &columns[index][row];
+    if *floating {
+        if let Some(number) = percentile_disc_double(value, input)? {
+            doubles.push(number);
+        }
+    } else if let Some(number) = percentile_disc_long(value, input)? {
+        longs.push(number);
+    }
+    Ok(())
+}
+
+fn percentile_disc_double(value: &Scalar, input: &AggColumn) -> Result<Option<f64>, Error> {
+    match input.tag {
+        qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE => {
+            if value.is_null() {
+                return Ok(None);
+            }
+            let number = as_f64(value)?;
+            if number.is_finite() {
+                Ok(Some(number))
+            } else {
+                Ok(None)
+            }
+        }
+        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR => {
+            if value.is_null() {
+                return Ok(None);
+            }
+            let text = scalar_text(value);
+            let kind = qdb_types::type_name(input.tag);
+            let Some(number) = parse_questdb_f64(&text).filter(|number| number.is_finite()) else {
+                return Err(Error::new(format!(
+                    "inconvertible value: `{text}` [{kind} -> DOUBLE]"
+                )));
+            };
+            Ok(Some(number))
+        }
+        _ => Err(Error::new("internal: percentile_disc double column")),
+    }
+}
+
+fn percentile_disc_long(value: &Scalar, input: &AggColumn) -> Result<Option<i64>, Error> {
+    match input.tag {
+        qdb_types::TAG_LONG => match value {
+            Scalar::Long(number) => Ok(Some(*number)),
+            Scalar::Null => Ok(None),
+            _ => Err(Error::new("internal: long column value")),
+        },
+        qdb_types::TAG_INT => match value {
+            Scalar::Int(number) => Ok(Some(i64::from(*number))),
+            Scalar::Null => Ok(None),
+            _ => Err(Error::new("internal: int column value")),
+        },
+        qdb_types::TAG_BYTE => match value {
+            Scalar::Byte(number) => Ok(Some(i64::from(*number))),
+            Scalar::Null => Ok(Some(0)),
+            _ => Err(Error::new("internal: byte column value")),
+        },
+        qdb_types::TAG_SHORT => match value {
+            Scalar::Short(number) => Ok(Some(i64::from(*number))),
+            Scalar::Null => Ok(Some(0)),
+            _ => Err(Error::new("internal: short column value")),
+        },
+        qdb_types::TAG_DATE => match value {
+            Scalar::Date(millis) => Ok(Some(*millis)),
+            Scalar::Null => Ok(None),
+            _ => Err(Error::new("internal: date column value")),
+        },
+        qdb_types::TAG_TIMESTAMP => match value {
+            Scalar::Timestamp(micros) => Ok(Some(*micros)),
+            Scalar::Null => Ok(None),
+            _ => Err(Error::new("internal: timestamp column value")),
+        },
+        qdb_types::TAG_CHAR => {
+            let Scalar::Char(unit) = value else {
+                return Err(Error::new("internal: char column value"));
+            };
+            let delta = i32::from(*unit) - i32::from(u16::from(b'0'));
+            let narrowed = delta as i8;
+            if narrowed > -1 && narrowed < 10 {
+                Ok(Some(i64::from(narrowed)))
+            } else {
+                let shown = char::from_u32(u32::from(*unit)).unwrap_or('\u{FFFD}');
+                Err(Error::new(format!(
+                    "inconvertible value: {shown} [CHAR -> LONG]"
+                )))
+            }
+        }
+        _ => Err(Error::new("internal: percentile_disc long column")),
+    }
+}
+
+fn percentile_disc_scalar(
+    longs: &[i64],
+    doubles: &[f64],
+    floating: bool,
+    percentile: f64,
+) -> Result<Scalar, Error> {
+    let size = if floating { doubles.len() } else { longs.len() };
+    if size == 0 {
+        return Ok(Scalar::Null);
+    }
+    if !(0.0..=1.0).contains(&percentile) {
+        return Err(Error::new(format!(
+            "invalid percentile [expected=range(0.0, 1.0), actual={:?}]",
+            percentile
+        )));
+    }
+    let index = percentile_disc_index(percentile, size);
+    if floating {
+        let mut values = doubles.to_vec();
+        values.sort_by(f64::total_cmp);
+        Ok(Scalar::Double(values[index]))
+    } else {
+        let mut values = longs.to_vec();
+        values.sort_unstable();
+        Ok(Scalar::Long(values[index]))
+    }
+}
+
+fn percentile_disc_index(percentile: f64, size: usize) -> usize {
+    let size_f = size as f64;
+    let mut k = (percentile * size_f).ceil() as i64;
+    if k < 1 {
+        k = 1;
+    }
+    let size_i = size as i64;
+    while k > 1 && ((k - 1) as f64) / size_f >= percentile {
+        k -= 1;
+    }
+    while k < size_i && (k as f64) / size_f < percentile {
+        k += 1;
+    }
+    (k - 1) as usize
 }
 
 fn update_is_ordered(
@@ -26432,6 +26702,261 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT isOrdered(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn percentile_disc_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT percentile_disc(flags, 0.5) FROM sensors",
+                "expected/pd_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(flags, 0.5) FROM sensors WHERE id = 1",
+                "expected/pd_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(flags, 0.5) FROM sensors WHERE id > 100",
+                "expected/pd_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(flags, 0) FROM sensors",
+                "expected/pd_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(flags, 1) FROM sensors",
+                "expected/pd_high.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(flags, 0.5) FROM sensors WHERE id = -1",
+                "expected/pd_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(reading, 0.5) FROM sensors",
+                "expected/pd_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(reading, 0) FROM sensors",
+                "expected/pd_read0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(reading, 1) FROM sensors",
+                "expected/pd_read1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(score, 0.5) FROM sensors",
+                "expected/pd_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(id, 0.5) FROM sensors",
+                "expected/pd_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(b, 0.5) FROM sensors",
+                "expected/pd_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(code, 0.5) FROM sensors",
+                "expected/pd_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(day, 0.5) FROM sensors",
+                "expected/pd_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(ts, 0.5) FROM sensors",
+                "expected/pd_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(flags, 0.5) FROM sensors GROUP BY location ORDER BY location",
+                "expected/pd_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(reading, 0.5) FROM sensors GROUP BY location ORDER BY location",
+                "expected/pd_grp_r.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT percentile_disc(flags, 0.5) FROM sensors LIMIT 0",
+                "expected/pd_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT PERCENTILE_DISC(flags, 0.5) FROM sensors",
+                "expected/pd_case.tsv",
+            ),
+            (
+                &days,
+                "SELECT percentile_disc(id, 0.5) FROM days",
+                "expected/pd_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT percentile_disc(id, 0.5) FROM days GROUP BY location ORDER BY location",
+                "expected/pd_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT percentile_disc() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `percentile_disc` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT percentile_disc(flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `percentile_disc` with the argument types: (INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT percentile_disc(flags, 0.5, 1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `percentile_disc` with the argument types: (INT, DOUBLE, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT percentile_disc(flags, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("percentile must be a constant or runtime constant"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT percentile_disc(flags, 1.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("invalid percentile [expected=range(0.0, 1.0), actual=1.5]"),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT percentile_disc(flags, -0.1) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("invalid percentile [expected=range(0.0, 1.0), actual=-0.1]"),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT percentile_disc(flags, null) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("invalid percentile [expected=range(0.0, 1.0), actual=NaN]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT percentile_disc(ok, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `percentile_disc` with the argument types: (BOOLEAN, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT percentile_disc(location, 0.5) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `percentile_disc` with the argument types: (SYMBOL, DOUBLE)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT percentile_disc(note, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT percentile_disc(tag, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT percentile_disc(note, 0.5) FROM sensors WHERE note = ''",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT percentile_disc(ch, 0.5) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT percentile_disc(ch, 0.5) FROM sensors WHERE id = 2",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: \0 [CHAR -> LONG]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT percentile_disc(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT percentile_disc(missing, 0.5) FROM sensors",
+        )
+        .unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

@@ -73,6 +73,7 @@ pub enum AggFunc {
     BoolAnd,
     BoolOr,
     IsOrdered,
+    PercentileDisc,
     FirstNotNull,
     LastNotNull,
     BitAnd,
@@ -3175,6 +3176,7 @@ impl<'a> Parser<'a> {
                 | "bool_and"
                 | "bool_or"
                 | "isordered"
+                | "percentile_disc"
                 | "first_not_null"
                 | "last_not_null"
                 | "bit_and"
@@ -3252,6 +3254,7 @@ impl<'a> Parser<'a> {
             "bool_and" => AggFunc::BoolAnd,
             "bool_or" => AggFunc::BoolOr,
             "isordered" => AggFunc::IsOrdered,
+            "percentile_disc" => AggFunc::PercentileDisc,
             "first_not_null" => AggFunc::FirstNotNull,
             "last_not_null" => AggFunc::LastNotNull,
             "bit_and" => AggFunc::BitAnd,
@@ -3707,6 +3710,69 @@ impl<'a> Parser<'a> {
             }
             spark_label = Some(format!("{column_name}, {}", parsed.suffix));
             fourth_type = parsed.mismatch;
+        }
+        if func == AggFunc::PercentileDisc && self.peek() == Some(b',') {
+            self.pos += 1;
+            self.skip();
+            let start = self.pos;
+            if self
+                .peek()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+            {
+                let word = self.ident_spelling()?;
+                extra = if word.eq_ignore_ascii_case("null") {
+                    Some(AggregateExtra::Type("NULL".to_string()))
+                } else {
+                    Some(AggregateExtra::Column(word))
+                };
+            } else if self.starts_limit_int()
+                || self.peek() == Some(b'.')
+                || self.peek() == Some(b'-')
+            {
+                precision = Some(self.parse_number()?);
+            } else {
+                return Err(Error::new(
+                    "unsupported: percentile_disc expects a percentile",
+                ));
+            }
+            precision_label = Some(
+                std::str::from_utf8(&self.src[start..self.pos])
+                    .unwrap_or("")
+                    .to_string(),
+            );
+            self.skip();
+            if self.peek() == Some(b',') {
+                let mut extras = Vec::new();
+                while self.peek() == Some(b',') {
+                    self.pos += 1;
+                    self.skip();
+                    let token_start = self.pos;
+                    if self
+                        .peek()
+                        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+                    {
+                        let word = self.ident_spelling()?;
+                        extras.push(if word.eq_ignore_ascii_case("null") {
+                            "NULL".to_string()
+                        } else {
+                            format!("col:{word}")
+                        });
+                    } else if self.starts_limit_int()
+                        || self.peek() == Some(b'.')
+                        || self.peek() == Some(b'-')
+                    {
+                        let number = self.parse_number()?;
+                        extras.push(median_literal_type(&number).to_string());
+                    } else {
+                        return Err(Error::new(
+                            "unsupported: percentile_disc expects a percentile",
+                        ));
+                    }
+                    let _ = token_start;
+                    self.skip();
+                }
+                fourth_type = Some(extras.join(", "));
+            }
         }
         if !self.eat(b')') {
             return Err(Error::new(format!(
