@@ -1,7 +1,7 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
     ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, ReplaceExpr, SelectList,
-    SideExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    SideExpr, SplitPartExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -187,7 +187,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Trim { label, .. }
             | ResolvedProj::Replace { label, .. }
             | ResolvedProj::StartsWith { label, .. }
-            | ResolvedProj::StrPos { label, .. } => label.clone(),
+            | ResolvedProj::StrPos { label, .. }
+            | ResolvedProj::SplitPart { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -265,6 +266,12 @@ enum ResolvedProj {
         needle: ResolvedArg,
         needle_null: bool,
     },
+    SplitPart {
+        label: String,
+        value: ResolvedArg,
+        delimiter: ResolvedArg,
+        index: Option<i32>,
+    },
 }
 
 enum ReplaceMode {
@@ -300,7 +307,8 @@ impl ResolvedProj {
             | Self::Trim { label, .. }
             | Self::Replace { label, .. }
             | Self::StartsWith { label, .. }
-            | Self::StrPos { label, .. } => Some(label),
+            | Self::StrPos { label, .. }
+            | Self::SplitPart { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -352,6 +360,69 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Replace(expr) => resolve_replace(table, expr),
         Proj::StartsWith(expr) => resolve_starts_with(table, expr),
         Proj::StrPos(expr) => resolve_strpos(table, expr),
+        Proj::SplitPart(expr) => resolve_split_part(table, expr),
+    }
+}
+
+fn resolve_split_part(table: &Table, expr: &SplitPartExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 3
+        || expr
+            .args
+            .first()
+            .is_none_or(|arg| !replace_text_ok(table, arg))
+        || expr
+            .args
+            .get(1)
+            .is_none_or(|arg| !replace_text_ok(table, arg))
+        || split_index(&expr.args[2], table).is_err()
+    {
+        return Err(text_type_error(table, "split_part", &expr.args));
+    }
+    let index = match split_index(&expr.args[2], table).expect("index type already checked") {
+        SplitIndex::Null => None,
+        SplitIndex::Fixed(0) => {
+            return Err(Error::new("field position must not be zero"));
+        }
+        SplitIndex::Fixed(index) => Some(index),
+        SplitIndex::Column => {
+            return Err(Error::new(
+                "index must be either a constant expression or a placeholder",
+            ));
+        }
+    };
+    Ok(ResolvedProj::SplitPart {
+        label: expr.label.clone(),
+        value: resolve_concat_arg(table, &expr.args[0])?,
+        delimiter: resolve_concat_arg(table, &expr.args[1])?,
+        index,
+    })
+}
+
+enum SplitIndex {
+    Null,
+    Fixed(i32),
+    Column,
+}
+
+fn split_index(arg: &ConcatArg, table: &Table) -> Result<SplitIndex, ()> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok(SplitIndex::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => i32::try_from(*number)
+            .map(SplitIndex::Fixed)
+            .map_err(|_| ()),
+        ConcatArg::Literal(_) => Err(()),
+        ConcatArg::Column(name) => {
+            let index = table.column_index(name).ok_or(())?;
+            let tag = table.meta.columns[index].tag;
+            if matches!(
+                tag,
+                qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT
+            ) {
+                Ok(SplitIndex::Column)
+            } else {
+                Err(())
+            }
+        }
     }
 }
 
@@ -447,6 +518,14 @@ fn replace_arg_type(table: &Table, arg: &ConcatArg) -> Result<String, Error> {
             Ok("CHAR".to_string())
         }
         ConcatArg::Literal(Scalar::Text(_)) => Ok("STRING".to_string()),
+        ConcatArg::Literal(Scalar::Long(number)) => {
+            if i32::try_from(*number).is_ok() {
+                Ok("INT".to_string())
+            } else {
+                Ok("LONG".to_string())
+            }
+        }
+        ConcatArg::Literal(Scalar::Double(_)) => Ok("DOUBLE".to_string()),
         ConcatArg::Literal(_) => Ok("STRING".to_string()),
         ConcatArg::Column(name) => {
             let index = table
@@ -802,6 +881,22 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 }
             }
         },
+        ResolvedProj::SplitPart {
+            value,
+            delimiter,
+            index,
+            ..
+        } => {
+            let Some(index) = *index else {
+                return Scalar::Null;
+            };
+            match (text_of(table, row, value), text_of(table, row, delimiter)) {
+                (Some(value), Some(delimiter)) => {
+                    Scalar::Text(split_part_utf16(&value, &delimiter, index))
+                }
+                _ => Scalar::Null,
+            }
+        }
         ResolvedProj::StrPos {
             value,
             needle,
@@ -848,6 +943,153 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             None => Scalar::Null,
         },
     }
+}
+
+fn split_part_utf16(value: &str, delimiter: &str, index: i32) -> String {
+    if index == 0 {
+        return String::new();
+    }
+    let seq: Vec<u16> = value.encode_utf16().collect();
+    let term: Vec<u16> = delimiter.encode_utf16().collect();
+    let len = i32::try_from(seq.len()).unwrap_or(i32::MAX);
+    let (start, end) = if index > 0 {
+        let start = if index == 1 {
+            0
+        } else {
+            let found = index_of_nth(&seq, 0, len, &term, index - 1);
+            if found < 0 {
+                return String::new();
+            }
+            found + term.len() as i32
+        };
+        let end = index_of_first(&seq, start, len, &term);
+        (start, if end < 0 { len } else { end })
+    } else {
+        let end = if index == -1 {
+            len
+        } else {
+            let found = index_of_nth(&seq, 0, len, &term, index + 1);
+            if found < 0 {
+                return String::new();
+            }
+            found
+        };
+        let found = index_of_nth(&seq, 0, end, &term, -1);
+        let start = if found < 0 {
+            0
+        } else {
+            found + term.len() as i32
+        };
+        (start, end)
+    };
+    utf16_slice(&seq, start, end)
+}
+
+fn index_of_first(seq: &[u16], lo: i32, hi: i32, term: &[u16]) -> i32 {
+    let term_len = term.len() as i32;
+    if term_len == 0 {
+        return 0;
+    }
+    let first = term[0];
+    let max = hi - term_len;
+    let mut index = lo;
+    while index <= max {
+        if seq[index as usize] != first {
+            loop {
+                index += 1;
+                if index > max || seq[index as usize] == first {
+                    break;
+                }
+            }
+        }
+        if index <= max {
+            let mut cursor = index + 1;
+            let end = cursor + term_len - 1;
+            let mut term_index = 1i32;
+            while cursor < end && seq[cursor as usize] == term[term_index as usize] {
+                term_index += 1;
+                cursor += 1;
+            }
+            if cursor == end {
+                return index;
+            }
+        }
+        index += 1;
+    }
+    -1
+}
+
+fn index_of_nth(seq: &[u16], lo: i32, hi: i32, term: &[u16], occurrence: i32) -> i32 {
+    let term_len = term.len() as i32;
+    if term_len == 0 {
+        return 0;
+    }
+    if occurrence == 0 {
+        return -1;
+    }
+    let mut found = -1i32;
+    let mut count = 0i32;
+    if occurrence > 0 {
+        let mut index = lo;
+        while index < hi {
+            if found == -1 {
+                if hi - index < term_len {
+                    return -1;
+                }
+                if seq[index as usize] == term[0] {
+                    found = index;
+                }
+            } else if seq[index as usize] != term[(index - found) as usize] {
+                index = found;
+                found = -1;
+            }
+            if found != -1 && index - found == term_len - 1 {
+                count += 1;
+                if count == occurrence {
+                    return found;
+                }
+                found = -1;
+            }
+            index += 1;
+        }
+    } else {
+        let mut index = hi - 1;
+        while index >= lo {
+            if found == -1 {
+                if index - lo + 1 < term_len {
+                    return -1;
+                }
+                if seq[index as usize] == term[(term_len - 1) as usize] {
+                    found = index;
+                }
+            } else if seq[index as usize] != term[(term_len - 1 + index - found) as usize] {
+                index = found;
+                found = -1;
+            }
+            if found != -1 && found - index == term_len - 1 {
+                count -= 1;
+                if count == occurrence {
+                    return found + 1 - term_len;
+                }
+                found = -1;
+            }
+            index -= 1;
+        }
+    }
+    -1
+}
+
+fn utf16_slice(units: &[u16], start: i32, end: i32) -> String {
+    if start < 0 || end < start {
+        return String::new();
+    }
+    let start = start as usize;
+    let end = (end as usize).min(units.len());
+    if start >= end || start > units.len() {
+        return String::new();
+    }
+    let slice = &units[start..end];
+    String::from_utf16(slice).unwrap_or_else(|_| String::from_utf16_lossy(slice))
 }
 
 fn strpos_utf16(value: &str, needle: &str) -> i32 {
@@ -4904,6 +5146,164 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT strpos(missing, 'a') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn split_part_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT split_part(note, 'a', 1) FROM sensors",
+                "expected/part_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part(note, 'a', 2) FROM sensors",
+                "expected/part_second.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part(note, 'a', 3) FROM sensors",
+                "expected/part_third.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part('a-b-c', '-', 2) FROM sensors LIMIT 1",
+                "expected/part_dash.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part('a-b-c', '-', -1) FROM sensors LIMIT 1",
+                "expected/part_last.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part('a-b-c', '-', 4) FROM sensors LIMIT 1",
+                "expected/part_past.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part('a--b', '-', 2) FROM sensors LIMIT 1",
+                "expected/part_double.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part(note, '', 1) FROM sensors",
+                "expected/part_empty_delim.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part('abc', '', -1) FROM sensors LIMIT 1",
+                "expected/part_empty_neg.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part(null, 'a', 1) FROM sensors LIMIT 1",
+                "expected/part_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part('ab', null, 1) FROM sensors LIMIT 1",
+                "expected/part_null_delim.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part(note, 'a', null) FROM sensors",
+                "expected/part_null_index.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT SPLIT_PART(NOTE, 'a', 1) FROM sensors",
+                "expected/part_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part(note, 'a', 1) FROM sensors ORDER BY split_part(note, 'a', 1)",
+                "expected/part_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, split_part(note, 'a', 1) FROM sensors ORDER BY split_part(note, 'a', 1)",
+                "expected/part_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part(note, 'a', 1) FROM sensors WHERE note = ''",
+                "expected/part_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part(note, 'a', 1) FROM sensors LIMIT 0",
+                "expected/part_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT split_part(note, 'a', 1) FROM days",
+                "expected/part_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT split_part(location, 'a', 2) FROM days ORDER BY ts",
+                "expected/part_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT split_part() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT split_part(note, 'a') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `split_part` with the argument types: (STRING, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT split_part(id, 'a', 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `split_part` with the argument types: (LONG, CHAR, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT split_part(note, 'a', id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `split_part` with the argument types: (STRING, CHAR, LONG)"
+            ),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT split_part(note, 'a', flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("index must be either a constant expression or a placeholder"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT split_part('a-b-c', '-', 0) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("field position must not be zero"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT split_part(missing, 'a', 1) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

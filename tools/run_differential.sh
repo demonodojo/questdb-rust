@@ -423,7 +423,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sp_symbol "SELECT strpos(note, location) FROM sensors" \
   sp_tag "SELECT strpos(tag, '0') FROM sensors" \
   sp_ch "SELECT strpos(ch, 'A') FROM sensors" \
-  sp_position "SELECT position(note, 'a') FROM sensors"
+  sp_position "SELECT position(note, 'a') FROM sensors" \
+  part_note "SELECT split_part(note, 'a', 1) FROM sensors" \
+  part_second "SELECT split_part(note, 'a', 2) FROM sensors" \
+  part_third "SELECT split_part(note, 'a', 3) FROM sensors" \
+  part_dash "SELECT split_part('a-b-c', '-', 2) FROM sensors LIMIT 1" \
+  part_last "SELECT split_part('a-b-c', '-', -1) FROM sensors LIMIT 1" \
+  part_past "SELECT split_part('a-b-c', '-', 4) FROM sensors LIMIT 1" \
+  part_double "SELECT split_part('a--b', '-', 2) FROM sensors LIMIT 1" \
+  part_empty_delim "SELECT split_part(note, '', 1) FROM sensors" \
+  part_empty_neg "SELECT split_part('abc', '', -1) FROM sensors LIMIT 1" \
+  part_null "SELECT split_part(null, 'a', 1) FROM sensors LIMIT 1" \
+  part_null_delim "SELECT split_part('ab', null, 1) FROM sensors LIMIT 1" \
+  part_null_index "SELECT split_part(note, 'a', null) FROM sensors" \
+  part_case "SELECT SPLIT_PART(NOTE, 'a', 1) FROM sensors" \
+  part_order "SELECT split_part(note, 'a', 1) FROM sensors ORDER BY split_part(note, 'a', 1)" \
+  part_with_id "SELECT id, split_part(note, 'a', 1) FROM sensors ORDER BY split_part(note, 'a', 1)" \
+  part_where "SELECT split_part(note, 'a', 1) FROM sensors WHERE note = ''" \
+  part_limit_zero "SELECT split_part(note, 'a', 1) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -507,7 +524,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   sw_note "SELECT starts_with(note, 'al') FROM days" \
   sw_location "SELECT starts_with(location, 'mad') FROM days ORDER BY ts" \
   sp_note "SELECT strpos(note, 'a') FROM days" \
-  sp_location "SELECT strpos(location, 'id') FROM days ORDER BY ts"
+  sp_location "SELECT strpos(location, 'id') FROM days ORDER BY ts" \
+  part_note "SELECT split_part(note, 'a', 1) FROM days" \
+  part_location "SELECT split_part(location, 'a', 2) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -878,6 +897,23 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT strpos(tag, '0') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT strpos(ch, 'A') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT position(note, 'a') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', 3) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT split_part('a-b-c', '-', 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT split_part('a-b-c', '-', -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT split_part('a-b-c', '-', 4) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT split_part('a--b', '-', 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT split_part(note, '', 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT split_part('abc', '', -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT split_part(null, 'a', 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT split_part('ab', null, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT SPLIT_PART(NOTE, 'a', 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', 1) FROM sensors ORDER BY split_part(note, 'a', 1)"),
+    (os.environ["DIFF_H1"], "SELECT id, split_part(note, 'a', 1) FROM sensors ORDER BY split_part(note, 'a', 1)"),
+    (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', 1) FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', 1) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -960,6 +996,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT starts_with(location, 'mad') FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT strpos(note, 'a') FROM days"),
     (os.environ["DIFF_H2"], "SELECT strpos(location, 'id') FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT split_part(note, 'a', 1) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT split_part(location, 'a', 2) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

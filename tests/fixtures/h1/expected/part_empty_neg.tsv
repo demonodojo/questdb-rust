@@ -1,0 +1,2 @@
+split_part('abc', '', -(1))
+abc

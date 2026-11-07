@@ -1,0 +1,2 @@
+split_part('ab', null, 1)
+NULL

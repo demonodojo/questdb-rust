@@ -1,0 +1,2 @@
+split_part(note, 'a', 1)
+

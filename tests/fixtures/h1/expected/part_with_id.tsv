@@ -1,0 +1,5 @@
+id	split_part(note, 'a', 1)
+2	NULL
+1	
+NULL	
+-1	βet
