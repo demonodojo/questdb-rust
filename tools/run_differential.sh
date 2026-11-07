@@ -369,7 +369,26 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ltrim_order "SELECT ltrim(note) FROM sensors ORDER BY ltrim(note)" \
   rtrim_with_id "SELECT id, rtrim(note) FROM sensors ORDER BY rtrim(note)" \
   ltrim_where_empty "SELECT ltrim(note) FROM sensors WHERE note = ''" \
-  rtrim_limit_zero "SELECT rtrim(note) FROM sensors LIMIT 0"
+  rtrim_limit_zero "SELECT rtrim(note) FROM sensors LIMIT 0" \
+  rep_note "SELECT replace(note, 'a', 'X') FROM sensors" \
+  rep_drop "SELECT replace(note, 'ta', '') FROM sensors" \
+  rep_beta "SELECT replace('βeta', 'β', 'B') FROM sensors LIMIT 1" \
+  rep_null "SELECT replace(null, 'a', 'b') FROM sensors LIMIT 1" \
+  rep_null_old "SELECT replace('ab', null, 'c') FROM sensors LIMIT 1" \
+  rep_null_new "SELECT replace('ab', 'a', null) FROM sensors LIMIT 1" \
+  rep_empty "SELECT replace('', 'a', 'b') FROM sensors LIMIT 1" \
+  rep_grow "SELECT replace('aaa', 'a', 'bb') FROM sensors LIMIT 1" \
+  rep_overlap "SELECT replace('aaa', 'aa', 'b') FROM sensors LIMIT 1" \
+  rep_empty_old "SELECT replace('abc', '', 'x') FROM sensors LIMIT 1" \
+  rep_case "SELECT REPLACE(NOTE, 'a', 'A') FROM sensors" \
+  rep_order "SELECT replace(note, 'a', 'X') FROM sensors ORDER BY replace(note, 'a', 'X')" \
+  rep_with_id "SELECT id, replace(note, 'a', 'X') FROM sensors ORDER BY replace(note, 'a', 'X')" \
+  rep_where_empty "SELECT replace(note, 'a', 'X') FROM sensors WHERE note = ''" \
+  rep_limit_zero "SELECT replace(note, 'a', 'X') FROM sensors LIMIT 0" \
+  rep_symbol "SELECT replace(note, 'a', location) FROM sensors" \
+  rep_const_symbol "SELECT replace('ab', location, 'x') FROM sensors" \
+  rep_empty_value "SELECT replace('', location, 'x') FROM sensors" \
+  rep_tag "SELECT replace(tag, '0', 'x') FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -447,7 +466,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   trim_note "SELECT trim(note) FROM days" \
   trim_location "SELECT trim(location) FROM days ORDER BY ts" \
   ltrim_note "SELECT ltrim(note) FROM days" \
-  rtrim_location "SELECT rtrim(location) FROM days ORDER BY ts"
+  rtrim_location "SELECT rtrim(location) FROM days ORDER BY ts" \
+  rep_note "SELECT replace(note, 'a', 'X') FROM days" \
+  rep_location "SELECT replace(location, 'a', 'A') FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -764,6 +785,25 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id, rtrim(note) FROM sensors ORDER BY rtrim(note)"),
     (os.environ["DIFF_H1"], "SELECT ltrim(note) FROM sensors WHERE note = ''"),
     (os.environ["DIFF_H1"], "SELECT rtrim(note) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT replace(note, 'a', 'X') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT replace(note, 'ta', '') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT replace('βeta', 'β', 'B') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT replace(null, 'a', 'b') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT replace('ab', null, 'c') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT replace('ab', 'a', null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT replace('', 'a', 'b') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT replace('aaa', 'a', 'bb') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT replace('aaa', 'aa', 'b') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT replace('abc', '', 'x') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT REPLACE(NOTE, 'a', 'A') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT replace(note, 'a', 'X') FROM sensors ORDER BY replace(note, 'a', 'X')"),
+    (os.environ["DIFF_H1"], "SELECT id, replace(note, 'a', 'X') FROM sensors ORDER BY replace(note, 'a', 'X')"),
+    (os.environ["DIFF_H1"], "SELECT replace(note, 'a', 'X') FROM sensors WHERE note = ''"),
+    (os.environ["DIFF_H1"], "SELECT replace(note, 'a', 'X') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT replace(note, 'a', location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT replace('ab', location, 'x') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT replace('', location, 'x') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT replace(tag, '0', 'x') FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -840,6 +880,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT trim(location) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT ltrim(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT rtrim(location) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT replace(note, 'a', 'X') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT replace(location, 'a', 'A') FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — replace()
+
+`replace(value, old, new)` devuelve `STRING` y sustituye coincidencias sin solaparse, contando unidades UTF-16. Un NULL en cualquiera de los tres argumentos deja NULL, salvo una búsqueda vacía constante, que devuelve el texto original, y un texto constante vacío, que devuelve cadena vacía. `replace('aaa', 'aa', 'b')` es `ba`. Un literal de un carácter se informa como `CHAR` en el error de tipos. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — ltrim() y rtrim()
 
 `ltrim` y `rtrim` devuelven `STRING` y quitan el espacio ASCII ` ` solo por la izquierda o por la derecha. Un tabulador se conserva. Un NULL sigue siendo NULL. Se contrastó con `/exec` en `sensors` y `days`.

@@ -1,0 +1,5 @@
+id	replace(note, 'a', 'X')
+2	NULL
+NULL	
+1	XlphX
+-1	βetX

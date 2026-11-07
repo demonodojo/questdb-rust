@@ -1,0 +1,5 @@
+replace(tag, '0', 'x')
+v1
+NULL
+héllo
+x123456789ABCDEF

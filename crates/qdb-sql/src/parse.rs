@@ -89,6 +89,7 @@ pub enum Proj {
     Side(SideExpr),
     Substr(SubstrExpr),
     Trim(TrimExpr),
+    Replace(ReplaceExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +139,13 @@ pub struct TrimExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
     pub end: TrimEnd,
+}
+
+/// `replace(value, old, new)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,6 +213,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_substr()?.label
             } else if parser.starts_trim_call() {
                 parser.parse_trim()?.label
+            } else if parser.starts_replace_call() {
+                parser.parse_replace()?.label
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
@@ -264,6 +274,7 @@ enum SelectPiece {
     Side(SideExpr),
     Substr(SubstrExpr),
     Trim(TrimExpr),
+    Replace(ReplaceExpr),
 }
 
 struct Parser<'a> {
@@ -370,6 +381,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Substr(self.parse_substr()?));
             } else if self.starts_trim_call() {
                 pieces.push(SelectPiece::Trim(self.parse_trim()?));
+            } else if self.starts_replace_call() {
+                pieces.push(SelectPiece::Replace(self.parse_replace()?));
             } else {
                 pieces.push(SelectPiece::Column(self.ident_spelling()?));
             }
@@ -392,6 +405,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Side(_)
                     | SelectPiece::Substr(_)
                     | SelectPiece::Trim(_)
+                    | SelectPiece::Replace(_)
             )
         });
         if counts > 0 && projected {
@@ -413,6 +427,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Side(expr) => items.push(Proj::Side(expr)),
                     SelectPiece::Substr(expr) => items.push(Proj::Substr(expr)),
                     SelectPiece::Trim(expr) => items.push(Proj::Trim(expr)),
+                    SelectPiece::Replace(expr) => items.push(Proj::Replace(expr)),
                     SelectPiece::Aggregate(_) => {
                         return Err(Error::new("internal: aggregate piece"));
                     }
@@ -457,7 +472,8 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Upper(_)
                 | SelectPiece::Side(_)
                 | SelectPiece::Substr(_)
-                | SelectPiece::Trim(_) => {
+                | SelectPiece::Trim(_)
+                | SelectPiece::Replace(_) => {
                     return Err(Error::new("internal: projection piece"));
                 }
             }
@@ -500,6 +516,25 @@ impl<'a> Parser<'a> {
 
     fn starts_substr_call(&self) -> bool {
         self.starts_named_call("substring")
+    }
+
+    fn starts_replace_call(&self) -> bool {
+        self.starts_named_call("replace")
+    }
+
+    fn parse_replace(&mut self) -> Result<ReplaceExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, false)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{}` requires arguments",
+                name.to_ascii_lowercase()
+            )));
+        }
+        Ok(ReplaceExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_trim_call(&self) -> bool {

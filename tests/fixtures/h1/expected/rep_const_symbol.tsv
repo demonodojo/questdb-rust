@@ -1,0 +1,5 @@
+replace('ab', location, 'x')
+ab
+NULL
+ab
+ab

@@ -1,7 +1,7 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AggFunc, AggregateExpr, CmpOp,
-    ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, SelectList, SideExpr,
-    SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
+    ConcatArg, Filter, GroupedSelect, LengthExpr, LowerExpr, Proj, Query, ReplaceExpr, SelectList,
+    SideExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -184,7 +184,8 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Upper { label, .. }
             | ResolvedProj::Side { label, .. }
             | ResolvedProj::Substr { label, .. }
-            | ResolvedProj::Trim { label, .. } => label.clone(),
+            | ResolvedProj::Trim { label, .. }
+            | ResolvedProj::Replace { label, .. } => label.clone(),
         })
         .collect();
     let rows = row_ids
@@ -247,6 +248,21 @@ enum ResolvedProj {
         arg: ResolvedArg,
         end: TrimEnd,
     },
+    Replace {
+        label: String,
+        mode: ReplaceMode,
+    },
+}
+
+enum ReplaceMode {
+    Null,
+    Empty,
+    Value(ResolvedArg),
+    Run {
+        value: ResolvedArg,
+        old: ResolvedArg,
+        new: ResolvedArg,
+    },
 }
 
 enum SubstrMode {
@@ -268,7 +284,8 @@ impl ResolvedProj {
             | Self::Upper { label, .. }
             | Self::Side { label, .. }
             | Self::Substr { label, .. }
-            | Self::Trim { label, .. } => Some(label),
+            | Self::Trim { label, .. }
+            | Self::Replace { label, .. } => Some(label),
             Self::Column { .. } => None,
         }
     }
@@ -316,6 +333,81 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Side(expr) => resolve_side(table, expr),
         Proj::Substr(expr) => resolve_substr(table, expr),
         Proj::Trim(expr) => resolve_trim(table, expr),
+        Proj::Replace(expr) => resolve_replace(table, expr),
+    }
+}
+
+fn resolve_replace(table: &Table, expr: &ReplaceExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 3 || expr.args.iter().any(|arg| !replace_text_ok(table, arg)) {
+        return Err(replace_type_error(table, &expr.args));
+    }
+    let mode = if matches!(expr.args[2], ConcatArg::Literal(Scalar::Null))
+        || matches!(expr.args[1], ConcatArg::Literal(Scalar::Null))
+    {
+        ReplaceMode::Null
+    } else if matches!(&expr.args[1], ConcatArg::Literal(Scalar::Text(text)) if text.is_empty()) {
+        ReplaceMode::Value(resolve_concat_arg(table, &expr.args[0])?)
+    } else if matches!(expr.args[0], ConcatArg::Literal(Scalar::Null)) {
+        ReplaceMode::Null
+    } else if matches!(&expr.args[0], ConcatArg::Literal(Scalar::Text(text)) if text.is_empty()) {
+        ReplaceMode::Empty
+    } else {
+        ReplaceMode::Run {
+            value: resolve_concat_arg(table, &expr.args[0])?,
+            old: resolve_concat_arg(table, &expr.args[1])?,
+            new: resolve_concat_arg(table, &expr.args[2])?,
+        }
+    };
+    Ok(ResolvedProj::Replace {
+        label: expr.label.clone(),
+        mode,
+    })
+}
+
+fn replace_text_ok(table: &Table, arg: &ConcatArg) -> bool {
+    match arg {
+        ConcatArg::Literal(Scalar::Text(_)) | ConcatArg::Literal(Scalar::Null) => true,
+        ConcatArg::Literal(_) => false,
+        ConcatArg::Column(name) => table.column_index(name).is_some_and(|index| {
+            matches!(
+                table.meta.columns[index].tag,
+                qdb_types::TAG_STRING
+                    | qdb_types::TAG_SYMBOL
+                    | qdb_types::TAG_VARCHAR
+                    | qdb_types::TAG_CHAR
+            )
+        }),
+    }
+}
+
+fn replace_type_error(table: &Table, args: &[ConcatArg]) -> Error {
+    let mut types = Vec::new();
+    for arg in args {
+        match replace_arg_type(table, arg) {
+            Ok(type_name) => types.push(type_name),
+            Err(err) => return err,
+        }
+    }
+    Error::new(format!(
+        "there is no matching function `replace` with the argument types: ({})",
+        types.join(", ")
+    ))
+}
+
+fn replace_arg_type(table: &Table, arg: &ConcatArg) -> Result<String, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok("NULL".to_string()),
+        ConcatArg::Literal(Scalar::Text(text)) if text.encode_utf16().count() == 1 => {
+            Ok("CHAR".to_string())
+        }
+        ConcatArg::Literal(Scalar::Text(_)) => Ok("STRING".to_string()),
+        ConcatArg::Literal(_) => Ok("STRING".to_string()),
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            Ok(qdb_types::type_name(table.meta.columns[index].tag).to_string())
+        }
     }
 }
 
@@ -664,11 +756,55 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 }
             }
         },
+        ResolvedProj::Replace { mode, .. } => match mode {
+            ReplaceMode::Null => Scalar::Null,
+            ReplaceMode::Empty => Scalar::Text(String::new()),
+            ReplaceMode::Value(arg) => match text_of(table, row, arg) {
+                Some(text) => Scalar::Text(text),
+                None => Scalar::Null,
+            },
+            ReplaceMode::Run { value, old, new } => match text_of(table, row, value) {
+                None => Scalar::Null,
+                Some(value) if value.is_empty() => Scalar::Text(String::new()),
+                Some(value) => match (text_of(table, row, old), text_of(table, row, new)) {
+                    (Some(old), Some(new)) => Scalar::Text(replace_utf16(&value, &old, &new)),
+                    _ => Scalar::Null,
+                },
+            },
+        },
         ResolvedProj::Trim { arg, end, .. } => match text_of(table, row, arg) {
             Some(text) => Scalar::Text(trim_ascii_space(&text, *end)),
             None => Scalar::Null,
         },
     }
+}
+
+fn replace_utf16(value: &str, term: &str, with: &str) -> String {
+    if term.is_empty() {
+        return value.to_string();
+    }
+    let value_units: Vec<u16> = value.encode_utf16().collect();
+    let term_units: Vec<u16> = term.encode_utf16().collect();
+    let with_units: Vec<u16> = with.encode_utf16().collect();
+    if value_units.is_empty() || term_units.is_empty() {
+        return value.to_string();
+    }
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < value_units.len() {
+        let rest = &value_units[index..];
+        if rest.starts_with(&term_units) {
+            out.extend_from_slice(&with_units);
+            index += term_units.len();
+        } else if rest.len() < term_units.len() && rest[0] == term_units[0] {
+            out.extend_from_slice(rest);
+            break;
+        } else {
+            out.push(value_units[index]);
+            index += 1;
+        }
+    }
+    String::from_utf16(&out).unwrap_or_else(|_| String::from_utf16_lossy(&out))
 }
 
 fn trim_ascii_space(text: &str, end: TrimEnd) -> String {
@@ -4232,6 +4368,168 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT rtrim(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn replace_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT replace(note, 'a', 'X') FROM sensors",
+                "expected/rep_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace(note, 'ta', '') FROM sensors",
+                "expected/rep_drop.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace('βeta', 'β', 'B') FROM sensors LIMIT 1",
+                "expected/rep_beta.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace(null, 'a', 'b') FROM sensors LIMIT 1",
+                "expected/rep_null.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace('ab', null, 'c') FROM sensors LIMIT 1",
+                "expected/rep_null_old.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace('ab', 'a', null) FROM sensors LIMIT 1",
+                "expected/rep_null_new.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace('', 'a', 'b') FROM sensors LIMIT 1",
+                "expected/rep_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace('aaa', 'a', 'bb') FROM sensors LIMIT 1",
+                "expected/rep_grow.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace('aaa', 'aa', 'b') FROM sensors LIMIT 1",
+                "expected/rep_overlap.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace('abc', '', 'x') FROM sensors LIMIT 1",
+                "expected/rep_empty_old.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT REPLACE(NOTE, 'a', 'A') FROM sensors",
+                "expected/rep_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace(note, 'a', 'X') FROM sensors ORDER BY replace(note, 'a', 'X')",
+                "expected/rep_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT id, replace(note, 'a', 'X') FROM sensors ORDER BY replace(note, 'a', 'X')",
+                "expected/rep_with_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace(note, 'a', 'X') FROM sensors WHERE note = ''",
+                "expected/rep_where_empty.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace(note, 'a', 'X') FROM sensors LIMIT 0",
+                "expected/rep_limit_zero.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace(note, 'a', location) FROM sensors",
+                "expected/rep_symbol.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace('ab', location, 'x') FROM sensors",
+                "expected/rep_const_symbol.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace('', location, 'x') FROM sensors",
+                "expected/rep_empty_value.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace(tag, '0', 'x') FROM sensors",
+                "expected/rep_tag.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT replace(note, 'a', 'X') FROM days",
+                "expected/rep_note.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT replace(location, 'a', 'A') FROM days ORDER BY ts",
+                "expected/rep_location.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT replace() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT replace(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `replace` with the argument types: (STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT replace(note, 'a') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `replace` with the argument types: (STRING, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT replace(note, 'ab') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `replace` with the argument types: (STRING, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT replace(id, '1', '2') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `replace` with the argument types: (LONG, CHAR, CHAR)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

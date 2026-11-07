@@ -24,15 +24,15 @@ Tests que pasaron:
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
 | qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
-| qdb-sql | 23 ok, incluido `ltrim_rtrim_matches_captured_exec` |
+| qdb-sql | 24 ok, incluido `replace_matches_captured_exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
-captured-oracle: 310 queries match tests/fixtures/h1/expected
-captured-oracle: 76 queries match tests/fixtures/h2/expected
-live-reference: 386 queries matched row counts against http://127.0.0.1:19011/exec
+captured-oracle: 329 queries match tests/fixtures/h1/expected
+captured-oracle: 78 queries match tests/fixtures/h2/expected
+live-reference: 407 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
 Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
@@ -44,11 +44,11 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 - `PARTITION BY NONE` y `DAY`, WAL desactivado, `_meta` versión 426, ficheros de columna sin sufijo de txn.
 - HOUR, MONTH, YEAR, WEEK, Parquet y particiones composite se rechazan.
 - La última partición usa `transient_row_count`. El tamaño guardado en su registro puede ser 0.
-- `LIMIT`, `ORDER BY`, `count()`, `min()`, `max()`, `sum()`, `avg()`, `first()`, `last()`, `count_distinct()`, `concat()`, `length()`, `lower()`, `upper()`, `left()`, `right()`, `substring()`, `trim()`, `ltrim()`, `rtrim()` y `GROUP BY` de una columna están verificados. Un `SELECT` admite un solo agregado. El resto de SQL no.
+- `LIMIT`, `ORDER BY`, `count()`, `min()`, `max()`, `sum()`, `avg()`, `first()`, `last()`, `count_distinct()`, `concat()`, `length()`, `lower()`, `upper()`, `left()`, `right()`, `substring()`, `trim()`, `ltrim()`, `rtrim()`, `replace()` y `GROUP BY` de una columna están verificados. Un `SELECT` admite un solo agregado. El resto de SQL no.
 - Sin escritura, sin red, sin el resto de tipos ni de SQL.
 - BOOLEAN/BYTE/SHORT/CHAR no separan NULL de 0; es el formato upstream.
 - Maven no está instalado, así que la suite Java no se ejecutó (`docs/blockers.md`).
 
 ## Próxima tarea
 
-Añadir `replace()` de tres textos, y comprobarlo contra `/exec` en `sensors` y `days`. No abrir WAL en ese paso.
+Añadir `starts_with()` de dos textos, y comprobarlo contra `/exec` en `sensors` y `days`. No abrir WAL en ese paso.
