@@ -2050,7 +2050,18 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   vw_grp "SELECT vwap(reading, flags) FROM sensors GROUP BY location ORDER BY location" \
   vw_lim0 "SELECT vwap(reading, flags) FROM sensors LIMIT 0" \
   vw_case "SELECT VWAP(reading, flags) FROM sensors" \
-  vw_neg "SELECT vwap(reading, flags) FROM sensors WHERE id = -1"
+  vw_neg "SELECT vwap(reading, flags) FROM sensors WHERE id = -1" \
+  tw_read "SELECT twap(reading, ts) FROM sensors" \
+  tw_one "SELECT twap(reading, ts) FROM sensors WHERE id = 1" \
+  tw_none "SELECT twap(reading, ts) FROM sensors WHERE id > 100" \
+  tw_neg "SELECT twap(reading, ts) FROM sensors WHERE id = -1" \
+  tw_score "SELECT twap(score, ts) FROM sensors" \
+  tw_id "SELECT twap(id, ts) FROM sensors" \
+  tw_byte "SELECT twap(b, ts) FROM sensors" \
+  tw_flags "SELECT twap(flags, ts) FROM sensors" \
+  tw_grp "SELECT twap(reading, ts) FROM sensors GROUP BY location ORDER BY location" \
+  tw_lim0 "SELECT twap(reading, ts) FROM sensors LIMIT 0" \
+  tw_case "SELECT TWAP(reading, ts) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2280,7 +2291,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   wp_days "SELECT skewness_pop(id) FROM days" \
   wp_days_grp "SELECT skewness_pop(id) FROM days GROUP BY location ORDER BY location" \
   vw_days "SELECT vwap(id, id) FROM days" \
-  vw_days_grp "SELECT vwap(id, id) FROM days GROUP BY location ORDER BY location"
+  vw_days_grp "SELECT vwap(id, id) FROM days GROUP BY location ORDER BY location" \
+  tw_days "SELECT twap(id, ts) FROM days" \
+  tw_days_grp "SELECT twap(id, ts) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -4278,6 +4291,17 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT vwap(reading, flags) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT VWAP(reading, flags) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT vwap(reading, flags) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT twap(reading, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT twap(reading, ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT twap(reading, ts) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT twap(reading, ts) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT twap(score, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT twap(id, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT twap(b, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT twap(flags, ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT twap(reading, ts) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT twap(reading, ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT TWAP(reading, ts) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4506,6 +4530,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT skewness_pop(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT vwap(id, id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT vwap(id, id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT twap(id, ts) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT twap(id, ts) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

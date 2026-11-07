@@ -60,6 +60,7 @@ pub enum AggFunc {
     StringDistinctAgg,
     CovarPop,
     Vwap,
+    Twap,
     CovarSamp,
     Corr,
     RegrSlope,
@@ -3106,6 +3107,7 @@ impl<'a> Parser<'a> {
                 | "string_distinct_agg"
                 | "covar_pop"
                 | "vwap"
+                | "twap"
                 | "covar_samp"
                 | "corr"
                 | "regr_slope"
@@ -3176,6 +3178,7 @@ impl<'a> Parser<'a> {
             "string_distinct_agg" => AggFunc::StringDistinctAgg,
             "covar_pop" => AggFunc::CovarPop,
             "vwap" => AggFunc::Vwap,
+            "twap" => AggFunc::Twap,
             "covar_samp" => AggFunc::CovarSamp,
             "corr" => AggFunc::Corr,
             "regr_slope" => AggFunc::RegrSlope,
@@ -3480,6 +3483,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::RegrIntercept
                 | AggFunc::RegrR2
                 | AggFunc::Vwap
+                | AggFunc::Twap
         ) && self.peek() == Some(b',')
         {
             self.pos += 1;
@@ -3490,6 +3494,8 @@ impl<'a> Parser<'a> {
             {
                 let message = if func == AggFunc::Vwap {
                     "unsupported: vwap expects a column"
+                } else if func == AggFunc::Twap {
+                    "unsupported: twap expects a column"
                 } else {
                     "unsupported: covariance expects a column"
                 };
@@ -3632,6 +3638,11 @@ impl<'a> Parser<'a> {
                 "function `{fname}` requires arguments: {fname}(DOUBLE)"
             )));
         }
+        if func == AggFunc::Twap && column.is_none() {
+            return Err(Error::new(
+                "function `twap` requires arguments: twap(DOUBLE, TIMESTAMP)",
+            ));
+        }
         if matches!(
             func,
             AggFunc::CovarPop
@@ -3657,6 +3668,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::RegrIntercept
                 | AggFunc::RegrR2
                 | AggFunc::Vwap
+                | AggFunc::Twap
         ) && pair.is_none()
         {
             return Err(Error::new(format!(

@@ -7327,6 +7327,9 @@ enum Accumulator {
         notional: f64,
         volume: f64,
     },
+    Twap {
+        samples: Vec<(i64, f64)>,
+    },
     Corr {
         mean_y: f64,
         sum_y: f64,
@@ -7491,6 +7494,9 @@ impl Accumulator {
                 notional: 0.0,
                 volume: 0.0,
             },
+            AggFunc::Twap => Self::Twap {
+                samples: Vec::new(),
+            },
             AggFunc::CovarPop | AggFunc::CovarSamp => Self::Covar {
                 mean_y: 0.0,
                 mean_x: 0.0,
@@ -7591,6 +7597,7 @@ impl Accumulator {
                     Scalar::Null
                 }
             }
+            Self::Twap { samples } => twap_scalar(samples),
             Self::Vwap { notional, volume } => {
                 if *volume > 0.0 {
                     let result = *notional / *volume;
@@ -7842,6 +7849,8 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             | AggFunc::Vwap
     ) {
         covar_pair(table, tag, aggregate)?
+    } else if aggregate.func == AggFunc::Twap {
+        twap_pair(table, tag, aggregate)?
     } else if matches!(aggregate.func, AggFunc::ArgMax | AggFunc::ArgMin) {
         arg_max_pair(table, tag, aggregate)?
     } else {
@@ -7930,6 +7939,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::NSum
         | AggFunc::CovarPop
         | AggFunc::Vwap
+        | AggFunc::Twap
         | AggFunc::CovarSamp
         | AggFunc::Corr
         | AggFunc::RegrSlope
@@ -8020,7 +8030,8 @@ fn contribution(
         | AggFunc::RegrR2
         | AggFunc::ArgMax
         | AggFunc::ArgMin
-        | AggFunc::Vwap => Ok(None),
+        | AggFunc::Vwap
+        | AggFunc::Twap => Ok(None),
     }
 }
 
@@ -8102,6 +8113,25 @@ fn feed(
         let weight = covar_value(&columns[weight_index][row], input.pair_tag)?;
         if let (Some(price), Some(weight)) = (price, weight) {
             update_vwap(accumulator, price, weight);
+        }
+        return Ok(());
+    }
+    if input.func == AggFunc::Twap {
+        let price_index = input
+            .index
+            .ok_or_else(|| Error::new("internal: twap column"))?;
+        let ts_index = input
+            .pair_index
+            .ok_or_else(|| Error::new("internal: twap timestamp"))?;
+        let price = covar_value(&columns[price_index][row], input.tag)?;
+        let timestamp = match &columns[ts_index][row] {
+            Scalar::Timestamp(micros) => Some(*micros),
+            _ => None,
+        };
+        if let (Some(price), Some(timestamp)) = (price, timestamp) {
+            if let Accumulator::Twap { samples } = accumulator {
+                samples.push((timestamp, price));
+            }
         }
         return Ok(());
     }
@@ -8221,6 +8251,58 @@ fn covar_value(value: &Scalar, tag: i32) -> Result<Option<f64>, Error> {
         Ok(Some(number))
     } else {
         Ok(None)
+    }
+}
+
+fn twap_pair(
+    table: &Table,
+    tag: i32,
+    aggregate: &AggregateExpr,
+) -> Result<(Option<usize>, i32), Error> {
+    reject_covar_type(tag)?;
+    let name = aggregate
+        .pair
+        .as_deref()
+        .ok_or_else(|| Error::new("internal: twap timestamp"))?;
+    let index = table
+        .column_index(name)
+        .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+    if index as i32 != table.meta.timestamp_index {
+        return Err(Error::new(
+            "twap() requires the table's designated timestamp as the second argument",
+        ));
+    }
+    Ok((Some(index), table.meta.columns[index].tag))
+}
+
+fn twap_scalar(samples: &[(i64, f64)]) -> Scalar {
+    if samples.is_empty() {
+        return Scalar::Null;
+    }
+    if samples.len() == 1 {
+        return Scalar::Double(samples[0].1);
+    }
+    let mut weighted = 0.0;
+    let mut price_sum = samples[0].1;
+    let first = samples[0].0;
+    let mut previous_ts = first;
+    let mut previous_price = samples[0].1;
+    for &(timestamp, price) in &samples[1..] {
+        weighted += previous_price * ((timestamp - previous_ts) as f64);
+        price_sum += price;
+        previous_ts = timestamp;
+        previous_price = price;
+    }
+    let duration = previous_ts - first;
+    let result = if duration > 0 {
+        weighted / (duration as f64)
+    } else {
+        price_sum / (samples.len() as f64)
+    };
+    if result.is_finite() {
+        Scalar::Double(result)
+    } else {
+        Scalar::Null
     }
 }
 
@@ -9655,7 +9737,10 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             text.push_str(&piece);
             *has_value = true;
         }
-        Accumulator::Covar { .. } | Accumulator::Corr { .. } | Accumulator::Vwap { .. } => {}
+        Accumulator::Covar { .. }
+        | Accumulator::Corr { .. }
+        | Accumulator::Vwap { .. }
+        | Accumulator::Twap { .. } => {}
         Accumulator::BoolAnd { value, count } => {
             let Scalar::Boolean(bit) = next else {
                 return;
@@ -24307,6 +24392,188 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn twap_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT twap(reading, ts) FROM sensors",
+                "expected/tw_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT twap(reading, ts) FROM sensors WHERE id = 1",
+                "expected/tw_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT twap(reading, ts) FROM sensors WHERE id > 100",
+                "expected/tw_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT twap(reading, ts) FROM sensors WHERE id = -1",
+                "expected/tw_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT twap(score, ts) FROM sensors",
+                "expected/tw_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT twap(id, ts) FROM sensors",
+                "expected/tw_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT twap(b, ts) FROM sensors",
+                "expected/tw_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT twap(flags, ts) FROM sensors",
+                "expected/tw_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT twap(reading, ts) FROM sensors GROUP BY location ORDER BY location",
+                "expected/tw_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT twap(reading, ts) FROM sensors LIMIT 0",
+                "expected/tw_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT TWAP(reading, ts) FROM sensors",
+                "expected/tw_case.tsv",
+            ),
+            (
+                &days,
+                "SELECT twap(id, ts) FROM days",
+                "expected/tw_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT twap(id, ts) FROM days GROUP BY location ORDER BY location",
+                "expected/tw_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT twap() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `twap` requires arguments: twap(DOUBLE, TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(reading) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `twap`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(reading, ts, id) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `twap`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(missing, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(reading, missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(reading, flags) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "twap() requires the table's designated timestamp as the second argument"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(reading, day) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "twap() requires the table's designated timestamp as the second argument"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(ok, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(note, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(location, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: DOUBLE, actual: SYMBOL"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(ch, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT twap(tag, ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `v1` [VARCHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(
+            &sensors,
+            "SELECT twap(reading, ts) FROM sensors ORDER BY ts DESC",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("ORDER BY expressions must appear in select list. Invalid column: ts"),
             "{}",
             err.message
         );

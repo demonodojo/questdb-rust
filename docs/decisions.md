@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-07 — twap()
+
+`twap(value, ts)` devuelve la media ponderada por el tiempo como `DOUBLE`. Cada valor se mantiene hasta la marca siguiente y el segundo argumento tiene que ser el timestamp designado. `twap(reading, ts)` es `1.0`. Una fila con `id = 1` es `1.5`. Sin filas el resultado es NULL. Si todas las marcas coinciden, el resultado es la media aritmética. `twap(day, ts)` y `twap(ts, ts)` salen en notación científica con `E` mayúscula y quedan fuera del TSV capturado. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-07 — vwap()
 
 `vwap(value, weight)` devuelve la media ponderada como `DOUBLE` y solo suma pesos positivos y finitos. `vwap(reading, flags)` es `0.28846153846153844`. Una fila con `id = 1` es `1.5`. Sin filas el resultado es NULL. Un único `-0.0` se conserva. `vwap(day, flags)` y `vwap(ts, flags)` salen en notación científica con `E` mayúscula y quedan fuera del TSV capturado. Se contrastó con `/exec` en `sensors` y `days`.
