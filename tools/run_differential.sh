@@ -1861,7 +1861,23 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   gm_nullread "SELECT geomean(reading) FROM sensors WHERE id = 2" \
   gm_neg "SELECT geomean(score) FROM sensors WHERE id = 2" \
   gm_flag1 "SELECT geomean(flags) FROM sensors WHERE id = 1" \
-  gm_byte1 "SELECT geomean(b) FROM sensors WHERE id = 1"
+  gm_byte1 "SELECT geomean(b) FROM sensors WHERE id = 1" \
+  sk_flags "SELECT skewness(flags) FROM sensors" \
+  sk_one "SELECT skewness(flags) FROM sensors WHERE id = 1" \
+  sk_none "SELECT skewness(flags) FROM sensors WHERE id > 100" \
+  sk_read "SELECT skewness(reading) FROM sensors" \
+  sk_score "SELECT skewness(score) FROM sensors" \
+  sk_byte "SELECT skewness(b) FROM sensors" \
+  sk_code "SELECT skewness(code) FROM sensors" \
+  sk_id "SELECT skewness(id) FROM sensors" \
+  sk_idpos "SELECT skewness(id) FROM sensors WHERE id > 0" \
+  sk_flagpos "SELECT skewness(flags) FROM sensors WHERE flags > 0" \
+  sk_grp "SELECT skewness(flags) FROM sensors GROUP BY location ORDER BY location" \
+  sk_read_grp "SELECT skewness(reading) FROM sensors GROUP BY location ORDER BY location" \
+  sk_lim0 "SELECT skewness(flags) FROM sensors LIMIT 0" \
+  sk_case "SELECT SKEWNESS(flags) FROM sensors" \
+  sk_day "SELECT skewness(day) FROM sensors" \
+  sk_ts "SELECT skewness(ts) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2061,7 +2077,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   bx_days "SELECT bit_xor(id) FROM days" \
   bx_days_grp "SELECT bit_xor(id) FROM days GROUP BY location ORDER BY location" \
   gm_days "SELECT geomean(id) FROM days" \
-  gm_days_grp "SELECT geomean(id) FROM days GROUP BY location ORDER BY location"
+  gm_days_grp "SELECT geomean(id) FROM days GROUP BY location ORDER BY location" \
+  sk_days "SELECT skewness(id) FROM days" \
+  sk_days_grp "SELECT skewness(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3870,6 +3888,22 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT geomean(score) FROM sensors WHERE id = 2"),
     (os.environ["DIFF_H1"], "SELECT geomean(flags) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT geomean(b) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT skewness(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness(flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT skewness(flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT skewness(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness(id) FROM sensors WHERE id > 0"),
+    (os.environ["DIFF_H1"], "SELECT skewness(flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT skewness(flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT skewness(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT skewness(flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT SKEWNESS(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT skewness(ts) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4068,6 +4102,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT bit_xor(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT geomean(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT geomean(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT skewness(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT skewness(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -71,6 +71,7 @@ pub enum AggFunc {
     BitOr,
     BitXor,
     GeoMean,
+    Skewness,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3068,6 +3069,7 @@ impl<'a> Parser<'a> {
                 | "ksum"
                 | "nsum"
                 | "geomean"
+                | "skewness"
                 | "approx_count_distinct"
                 | "string_agg"
                 | "covar_pop"
@@ -3128,6 +3130,7 @@ impl<'a> Parser<'a> {
             "ksum" => AggFunc::KSum,
             "nsum" => AggFunc::NSum,
             "geomean" => AggFunc::GeoMean,
+            "skewness" => AggFunc::Skewness,
             "approx_count_distinct" => AggFunc::ApproxCountDistinct,
             "string_agg" => AggFunc::StringAgg,
             "covar_pop" => AggFunc::CovarPop,
@@ -3160,6 +3163,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::KSum
                 | AggFunc::NSum
                 | AggFunc::GeoMean
+                | AggFunc::Skewness
                 | AggFunc::BoolAnd
                 | AggFunc::BoolOr
         ) && self.peek() != Some(b')')
@@ -3368,6 +3372,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::KSum
                 | AggFunc::NSum
                 | AggFunc::GeoMean
+                | AggFunc::Skewness
         ) && column.is_none()
         {
             let fname = name.to_ascii_lowercase();

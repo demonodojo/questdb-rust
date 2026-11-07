@@ -7344,6 +7344,12 @@ enum Accumulator {
         count: i64,
         invalid: bool,
     },
+    Skewness {
+        mean: f64,
+        m2: f64,
+        m3: f64,
+        count: i64,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -7381,6 +7387,12 @@ impl Accumulator {
                 sum_ln: 0.0,
                 count: 0,
                 invalid: false,
+            },
+            AggFunc::Skewness => Self::Skewness {
+                mean: 0.0,
+                m2: 0.0,
+                m3: 0.0,
+                count: 0,
             },
             AggFunc::Avg => Self::Average {
                 total: None,
@@ -7549,6 +7561,7 @@ impl Accumulator {
                 PairKind::R2 => r2_result(*sum_xy, *sum_y, *sum_x, *count),
                 PairKind::Corr => corr_result(*sum_xy, *sum_y, *sum_x, *count),
             },
+            Self::Skewness { m2, m3, count, .. } => skewness_scalar(*m2, *m3, *count),
             Self::GeoMean {
                 sum_ln,
                 count,
@@ -7672,11 +7685,16 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
             qdb_types::type_name(tag)
         )));
     }
-    if aggregate.func == AggFunc::GeoMean
+    if matches!(aggregate.func, AggFunc::GeoMean | AggFunc::Skewness)
         && matches!(tag, qdb_types::TAG_BOOLEAN | qdb_types::TAG_SYMBOL)
     {
+        let fname = if aggregate.func == AggFunc::Skewness {
+            "skewness"
+        } else {
+            "geomean"
+        };
         return Err(Error::new(format!(
-            "argument type mismatch for function `geomean` at #1 expected: DOUBLE, actual: {}",
+            "argument type mismatch for function `{fname}` at #1 expected: DOUBLE, actual: {}",
             qdb_types::type_name(tag)
         )));
     }
@@ -7762,7 +7780,8 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::RegrSlope
         | AggFunc::RegrIntercept
         | AggFunc::RegrR2
-        | AggFunc::GeoMean => qdb_types::TAG_DOUBLE,
+        | AggFunc::GeoMean
+        | AggFunc::Skewness => qdb_types::TAG_DOUBLE,
         AggFunc::BoolAnd | AggFunc::BoolOr => qdb_types::TAG_BOOLEAN,
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
@@ -7799,7 +7818,8 @@ fn contribution(
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => {
             bit_and_addend(value, input, bit_agg_name(input.func))
         }
-        AggFunc::GeoMean => geomean_addend(value, input),
+        AggFunc::GeoMean => geomean_addend(value, input, "geomean"),
+        AggFunc::Skewness => geomean_addend(value, input, "skewness"),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::CountDistinct => Ok(Some(value.clone())),
         AggFunc::ApproxCountDistinct => approx_distinct_value(value, input),
@@ -8457,7 +8477,20 @@ fn stddev_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Er
     }
 }
 
-fn geomean_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Error> {
+fn skewness_scalar(m2: f64, m3: f64, count: i64) -> Scalar {
+    if count < 3 || m2 == 0.0 {
+        return Scalar::Null;
+    }
+    let n = count as f64;
+    let result = (n * (n - 1.0).sqrt() / (n - 2.0)) * m3 / (m2 * m2.sqrt());
+    if result.is_finite() {
+        Scalar::Double(result)
+    } else {
+        Scalar::Null
+    }
+}
+
+fn geomean_addend(value: &Scalar, input: &AggColumn, fname: &str) -> Result<Option<Scalar>, Error> {
     let number = match input.tag {
         qdb_types::TAG_BYTE
         | qdb_types::TAG_SHORT
@@ -8496,7 +8529,7 @@ fn geomean_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, E
         }
         _ => {
             return Err(Error::new(format!(
-                "argument type mismatch for function `geomean` at #1 expected: DOUBLE, actual: {}",
+                "argument type mismatch for function `{fname}` at #1 expected: DOUBLE, actual: {}",
                 qdb_types::type_name(input.tag)
             )));
         }
@@ -8682,6 +8715,28 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             } else {
                 *sum_ln += next.ln();
             }
+        }
+        Accumulator::Skewness {
+            mean,
+            m2,
+            m3,
+            count,
+        } => {
+            let Scalar::Double(value) = next else {
+                return;
+            };
+            if !value.is_finite() {
+                return;
+            }
+            *count += 1;
+            let n = *count as f64;
+            let delta = value - *mean;
+            let delta_n = delta / n;
+            let term1 = delta * delta_n * (n - 1.0);
+            let new_m3 = *m3 + term1 * delta_n * (n - 2.0) - 3.0 * delta_n * *m2;
+            *m2 += term1;
+            *m3 = new_m3;
+            *mean += delta_n;
         }
         Accumulator::BoolOr { value, count } => {
             let Scalar::Boolean(bit) = next else {
@@ -23011,6 +23066,167 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT geomean(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn skewness_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT skewness(flags) FROM sensors",
+                "expected/sk_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(flags) FROM sensors WHERE id = 1",
+                "expected/sk_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(flags) FROM sensors WHERE id > 100",
+                "expected/sk_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(reading) FROM sensors",
+                "expected/sk_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(score) FROM sensors",
+                "expected/sk_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(b) FROM sensors",
+                "expected/sk_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(code) FROM sensors",
+                "expected/sk_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(id) FROM sensors",
+                "expected/sk_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(id) FROM sensors WHERE id > 0",
+                "expected/sk_idpos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(flags) FROM sensors WHERE flags > 0",
+                "expected/sk_flagpos.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(flags) FROM sensors GROUP BY location ORDER BY location",
+                "expected/sk_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(reading) FROM sensors GROUP BY location ORDER BY location",
+                "expected/sk_read_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(flags) FROM sensors LIMIT 0",
+                "expected/sk_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT SKEWNESS(flags) FROM sensors",
+                "expected/sk_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(day) FROM sensors",
+                "expected/sk_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT skewness(ts) FROM sensors",
+                "expected/sk_ts.tsv",
+            ),
+            (
+                &days,
+                "SELECT skewness(id) FROM days",
+                "expected/sk_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT skewness(id) FROM days GROUP BY location ORDER BY location",
+                "expected/sk_days_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT skewness() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `skewness` requires arguments: skewness(DOUBLE)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness(flags, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `skewness`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `skewness` at #1 expected: DOUBLE, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `skewness` at #1 expected: DOUBLE, actual: SYMBOL"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT skewness(ch) FROM sensors").unwrap_err();
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),
