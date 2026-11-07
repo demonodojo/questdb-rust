@@ -1806,7 +1806,26 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   bw_day "SELECT bit_and(day) FROM sensors" \
   bw_ts "SELECT bit_and(ts) FROM sensors" \
   bw_grp "SELECT bit_and(flags) FROM sensors GROUP BY location ORDER BY location" \
-  bw_grp_id "SELECT bit_and(id) FROM sensors GROUP BY location ORDER BY location"
+  bw_grp_id "SELECT bit_and(id) FROM sensors GROUP BY location ORDER BY location" \
+  br_flags "SELECT bit_or(flags) FROM sensors" \
+  br_id "SELECT bit_or(id) FROM sensors" \
+  br_byte "SELECT bit_or(b) FROM sensors" \
+  br_code "SELECT bit_or(code) FROM sensors" \
+  br_one "SELECT bit_or(flags) FROM sensors WHERE id = 1" \
+  br_none "SELECT bit_or(flags) FROM sensors WHERE id > 100" \
+  br_byte0 "SELECT bit_or(b) FROM sensors WHERE id > 100" \
+  br_short0 "SELECT bit_or(code) FROM sensors WHERE id > 100" \
+  br_ch0 "SELECT bit_or(ch) FROM sensors WHERE id > 100" \
+  br_nullid "SELECT bit_or(id) FROM sensors WHERE id = NULL" \
+  br_neg "SELECT bit_or(id) FROM sensors WHERE id = -1" \
+  br_case "SELECT BIT_OR(flags) FROM sensors" \
+  br_lim0 "SELECT bit_or(flags) FROM sensors LIMIT 0" \
+  br_loc "SELECT bit_or(location) FROM sensors" \
+  br_loc_grp "SELECT bit_or(location) FROM sensors GROUP BY location ORDER BY location" \
+  br_day "SELECT bit_or(day) FROM sensors" \
+  br_ts "SELECT bit_or(ts) FROM sensors" \
+  br_grp "SELECT bit_or(flags) FROM sensors GROUP BY location ORDER BY location" \
+  br_grp_id "SELECT bit_or(id) FROM sensors GROUP BY location ORDER BY location"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2000,7 +2019,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   lz_days_note "SELECT last_not_null(note) FROM days" \
   lz_days_grp "SELECT last_not_null(note) FROM days GROUP BY location ORDER BY location" \
   bw_days "SELECT bit_and(id) FROM days" \
-  bw_days_grp "SELECT bit_and(id) FROM days GROUP BY location ORDER BY location"
+  bw_days_grp "SELECT bit_and(id) FROM days GROUP BY location ORDER BY location" \
+  br_days "SELECT bit_or(id) FROM days" \
+  br_days_grp "SELECT bit_or(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3754,6 +3775,25 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT bit_and(ts) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT bit_and(flags) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H1"], "SELECT bit_and(id) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(b) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(code) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(ch) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(id) FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(id) FROM sensors WHERE id = -1"),
+    (os.environ["DIFF_H1"], "SELECT BIT_OR(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(location) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT bit_or(id) FROM sensors GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -3946,6 +3986,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT last_not_null(note) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT bit_and(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT bit_and(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT bit_or(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT bit_or(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
