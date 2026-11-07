@@ -7350,6 +7350,9 @@ enum Accumulator {
         m3: f64,
         count: i64,
     },
+    Mode {
+        seen: Vec<(Scalar, i64)>,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -7394,6 +7397,7 @@ impl Accumulator {
                 m3: 0.0,
                 count: 0,
             },
+            AggFunc::Mode => Self::Mode { seen: Vec::new() },
             AggFunc::Avg => Self::Average {
                 total: None,
                 count: 0,
@@ -7562,6 +7566,7 @@ impl Accumulator {
                 PairKind::Corr => corr_result(*sum_xy, *sum_y, *sum_x, *count),
             },
             Self::Skewness { m2, m3, count, .. } => skewness_scalar(*m2, *m3, *count),
+            Self::Mode { seen } => mode_scalar(seen),
             Self::GeoMean {
                 sum_ln,
                 count,
@@ -7628,9 +7633,13 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
     }
     if matches!(
         aggregate.func,
-        AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor
+        AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor | AggFunc::Mode
     ) {
-        let fname = bit_agg_name(aggregate.func);
+        let fname = if aggregate.func == AggFunc::Mode {
+            "mode"
+        } else {
+            bit_agg_name(aggregate.func)
+        };
         if let Some(extra) = &aggregate.extra {
             let second = match extra {
                 AggregateExtra::Type(kind) => kind.clone(),
@@ -7646,10 +7655,12 @@ fn aggregate_input(table: &Table, aggregate: &AggregateExpr) -> Result<AggColumn
                 qdb_types::type_name(tag)
             )));
         }
-        if matches!(
-            tag,
-            qdb_types::TAG_BOOLEAN | qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE
-        ) {
+        if aggregate.func != AggFunc::Mode
+            && matches!(
+                tag,
+                qdb_types::TAG_BOOLEAN | qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE
+            )
+        {
             return Err(Error::new(format!(
                 "there is no matching function `{fname}` with the argument types: ({})",
                 qdb_types::type_name(tag)
@@ -7782,6 +7793,7 @@ fn aggregate_order_tag(input: &AggColumn) -> i32 {
         | AggFunc::RegrR2
         | AggFunc::GeoMean
         | AggFunc::Skewness => qdb_types::TAG_DOUBLE,
+        AggFunc::Mode => mode_result_tag(input.tag),
         AggFunc::BoolAnd | AggFunc::BoolOr => qdb_types::TAG_BOOLEAN,
         AggFunc::BitAnd | AggFunc::BitOr | AggFunc::BitXor => bit_and_result_tag(input.tag),
         AggFunc::FirstNotNull | AggFunc::LastNotNull
@@ -7820,6 +7832,7 @@ fn contribution(
         }
         AggFunc::GeoMean => geomean_addend(value, input, "geomean"),
         AggFunc::Skewness => geomean_addend(value, input, "skewness"),
+        AggFunc::Mode => mode_addend(value, input),
         AggFunc::Count => Ok(Some(Scalar::Long(1))),
         AggFunc::CountDistinct => Ok(Some(value.clone())),
         AggFunc::ApproxCountDistinct => approx_distinct_value(value, input),
@@ -8477,6 +8490,55 @@ fn stddev_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Er
     }
 }
 
+fn mode_result_tag(tag: i32) -> i32 {
+    match tag {
+        qdb_types::TAG_BYTE
+        | qdb_types::TAG_SHORT
+        | qdb_types::TAG_INT
+        | qdb_types::TAG_LONG
+        | qdb_types::TAG_DATE
+        | qdb_types::TAG_TIMESTAMP => qdb_types::TAG_LONG,
+        qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE => qdb_types::TAG_DOUBLE,
+        qdb_types::TAG_CHAR | qdb_types::TAG_STRING => qdb_types::TAG_STRING,
+        qdb_types::TAG_VARCHAR => qdb_types::TAG_VARCHAR,
+        qdb_types::TAG_BOOLEAN => qdb_types::TAG_BOOLEAN,
+        _ => tag,
+    }
+}
+
+fn mode_scalar(seen: &[(Scalar, i64)]) -> Scalar {
+    let mut best: Option<&(Scalar, i64)> = None;
+    for item in seen {
+        if best.is_none_or(|(_, count)| item.1 > *count) {
+            best = Some(item);
+        }
+    }
+    best.map(|(value, _)| value.clone()).unwrap_or(Scalar::Null)
+}
+
+fn mode_addend(value: &Scalar, input: &AggColumn) -> Result<Option<Scalar>, Error> {
+    let scalar = match input.tag {
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT | qdb_types::TAG_LONG => {
+            Scalar::Long(as_i64(value)?)
+        }
+        qdb_types::TAG_DATE => match value {
+            Scalar::Date(millis) => Scalar::Long(*millis),
+            _ => return Err(Error::new("internal: date column value")),
+        },
+        qdb_types::TAG_TIMESTAMP => match value {
+            Scalar::Timestamp(micros) => Scalar::Long(*micros),
+            _ => return Err(Error::new("internal: timestamp column value")),
+        },
+        qdb_types::TAG_FLOAT => match value {
+            Scalar::Float(number) => Scalar::Double(f64::from(*number)),
+            _ => return Err(Error::new("internal: float column value")),
+        },
+        qdb_types::TAG_CHAR => Scalar::Text(char_text(value)?),
+        _ => value.clone(),
+    };
+    Ok(Some(scalar))
+}
+
 fn skewness_scalar(m2: f64, m3: f64, count: i64) -> Scalar {
     if count < 3 || m2 == 0.0 {
         return Scalar::Null;
@@ -8737,6 +8799,13 @@ fn absorb(accumulator: &mut Accumulator, next: Option<Scalar>, func: AggFunc) {
             *m2 += term1;
             *m3 = new_m3;
             *mean += delta_n;
+        }
+        Accumulator::Mode { seen } => {
+            if let Some((_, count)) = seen.iter_mut().find(|(found, _)| found == &next) {
+                *count += 1;
+            } else {
+                seen.push((next, 1));
+            }
         }
         Accumulator::BoolOr { value, count } => {
             let Scalar::Boolean(bit) = next else {
@@ -23230,6 +23299,116 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: A [CHAR -> DOUBLE]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn mode_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT mode(location) FROM sensors",
+                "expected/me_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mode(location) FROM sensors WHERE id = 1",
+                "expected/me_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mode(location) FROM sensors WHERE id > 100",
+                "expected/me_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mode(location) FROM sensors LIMIT 0",
+                "expected/me_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT MODE(location) FROM sensors",
+                "expected/me_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mode(location) FROM sensors GROUP BY location ORDER BY location",
+                "expected/me_grp.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mode(flags) FROM sensors WHERE id = 1",
+                "expected/me_flag1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mode(id) FROM sensors",
+                "expected/me_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mode(ok) FROM sensors",
+                "expected/me_ok.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT mode(ch) FROM sensors",
+                "expected/me_ch.tsv",
+            ),
+            (
+                &days,
+                "SELECT mode(location) FROM days",
+                "expected/me_days_loc.tsv",
+            ),
+            (
+                &days,
+                "SELECT mode(id) FROM days",
+                "expected/me_days_id.tsv",
+            ),
+            (
+                &days,
+                "SELECT mode(id) FROM days GROUP BY location ORDER BY location",
+                "expected/me_days_grp.tsv",
+            ),
+            (
+                &days,
+                "SELECT mode(location) FROM days GROUP BY location ORDER BY location",
+                "expected/me_days_loc_grp.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT mode() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("function `mode` requires arguments"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT mode(location, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching function `mode` with the argument types: (SYMBOL, INT)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT mode(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT mode(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );

@@ -72,6 +72,7 @@ pub enum AggFunc {
     BitXor,
     GeoMean,
     Skewness,
+    Mode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3070,6 +3071,7 @@ impl<'a> Parser<'a> {
                 | "nsum"
                 | "geomean"
                 | "skewness"
+                | "mode"
                 | "approx_count_distinct"
                 | "string_agg"
                 | "covar_pop"
@@ -3131,6 +3133,7 @@ impl<'a> Parser<'a> {
             "nsum" => AggFunc::NSum,
             "geomean" => AggFunc::GeoMean,
             "skewness" => AggFunc::Skewness,
+            "mode" => AggFunc::Mode,
             "approx_count_distinct" => AggFunc::ApproxCountDistinct,
             "string_agg" => AggFunc::StringAgg,
             "covar_pop" => AggFunc::CovarPop,
@@ -3319,6 +3322,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::BitAnd
                 | AggFunc::BitOr
                 | AggFunc::BitXor
+                | AggFunc::Mode
         ) && self.peek() == Some(b',')
         {
             self.pos += 1;

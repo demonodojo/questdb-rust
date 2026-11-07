@@ -1877,7 +1877,17 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sk_lim0 "SELECT skewness(flags) FROM sensors LIMIT 0" \
   sk_case "SELECT SKEWNESS(flags) FROM sensors" \
   sk_day "SELECT skewness(day) FROM sensors" \
-  sk_ts "SELECT skewness(ts) FROM sensors"
+  sk_ts "SELECT skewness(ts) FROM sensors" \
+  me_loc "SELECT mode(location) FROM sensors" \
+  me_one "SELECT mode(location) FROM sensors WHERE id = 1" \
+  me_none "SELECT mode(location) FROM sensors WHERE id > 100" \
+  me_lim0 "SELECT mode(location) FROM sensors LIMIT 0" \
+  me_case "SELECT MODE(location) FROM sensors" \
+  me_grp "SELECT mode(location) FROM sensors GROUP BY location ORDER BY location" \
+  me_flag1 "SELECT mode(flags) FROM sensors WHERE id = 1" \
+  me_id "SELECT mode(id) FROM sensors" \
+  me_ok "SELECT mode(ok) FROM sensors" \
+  me_ch "SELECT mode(ch) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -2079,7 +2089,11 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   gm_days "SELECT geomean(id) FROM days" \
   gm_days_grp "SELECT geomean(id) FROM days GROUP BY location ORDER BY location" \
   sk_days "SELECT skewness(id) FROM days" \
-  sk_days_grp "SELECT skewness(id) FROM days GROUP BY location ORDER BY location"
+  sk_days_grp "SELECT skewness(id) FROM days GROUP BY location ORDER BY location" \
+  me_days_loc "SELECT mode(location) FROM days" \
+  me_days_id "SELECT mode(id) FROM days" \
+  me_days_grp "SELECT mode(id) FROM days GROUP BY location ORDER BY location" \
+  me_days_loc_grp "SELECT mode(location) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -3904,6 +3918,16 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT SKEWNESS(flags) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT skewness(day) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT skewness(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT mode(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT mode(location) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT mode(location) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT mode(location) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT MODE(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT mode(location) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT mode(flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT mode(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT mode(ok) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT mode(ch) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -4104,6 +4128,10 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT geomean(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT skewness(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT skewness(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT mode(location) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT mode(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT mode(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT mode(location) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
