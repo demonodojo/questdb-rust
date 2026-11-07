@@ -1,16 +1,16 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AggFunc,
-    AggregateExpr, AggregateExtra, AsinExpr, Atan2Expr, AtanExpr, BarExpr, CastExpr, CeilExpr,
-    CmpOp, CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr, DateTruncExpr,
-    DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, ExpExpr,
-    ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr,
-    IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
-    Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NotExpr, NullIfExpr, PadExpr,
-    PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr,
-    RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr,
-    SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr,
-    SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
-    TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr,
+    AggregateExpr, AggregateExtra, AsinExpr, Atan2Expr, AtanExpr, BarExpr, BetweenExpr, CastExpr,
+    CeilExpr, CmpOp, CoalesceExpr, ConcatArg, CosExpr, CotExpr, DateAddExpr, DateDiffExpr,
+    DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr,
+    ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr,
+    IlikeExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr,
+    LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NotExpr,
+    NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr,
+    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr,
+    Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr,
+    SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr,
+    TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr,
     ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
@@ -285,6 +285,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Spread { label, .. }
             | ResolvedProj::SpreadBps { label, .. }
             | ResolvedProj::Wmid { label, .. }
+            | ResolvedProj::Between { label, .. }
             | ResolvedProj::Ln { label, .. }
             | ResolvedProj::Log { label, .. }
             | ResolvedProj::Exp { label, .. }
@@ -676,6 +677,12 @@ enum ResolvedProj {
         ask_price: SqrtInput,
         ask_size: SqrtInput,
     },
+    Between {
+        label: String,
+        value: BetweenInput,
+        low: BetweenInput,
+        high: BetweenInput,
+    },
     Ln {
         label: String,
         input: SqrtInput,
@@ -851,6 +858,7 @@ impl ResolvedProj {
             | Self::Spread { label, .. }
             | Self::SpreadBps { label, .. }
             | Self::Wmid { label, .. }
+            | Self::Between { label, .. }
             | Self::Ln { label, .. }
             | Self::Log { label, .. }
             | Self::Exp { label, .. }
@@ -889,7 +897,9 @@ impl ResolvedProj {
             Self::IsLeapYear { .. } => qdb_types::TAG_BOOLEAN,
             Self::DaysInMonth { .. } => qdb_types::TAG_INT,
             Self::ToStr { .. } => qdb_types::TAG_STRING,
-            Self::IsEndOfMonth { .. } | Self::Not { .. } => qdb_types::TAG_BOOLEAN,
+            Self::IsEndOfMonth { .. } | Self::Not { .. } | Self::Between { .. } => {
+                qdb_types::TAG_BOOLEAN
+            }
             Self::DayOfWeekSundayFirst { .. } => qdb_types::TAG_INT,
             Self::ToTimestamp { .. } => qdb_types::TAG_TIMESTAMP,
             Self::ToDate { .. } => qdb_types::TAG_DATE,
@@ -1042,6 +1052,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Spread(expr) => resolve_spread(table, expr),
         Proj::SpreadBps(expr) => resolve_spread_bps(table, expr),
         Proj::Wmid(expr) => resolve_wmid(table, expr),
+        Proj::Between(expr) => resolve_between(table, expr),
         Proj::Ln(expr) => resolve_ln(table, expr),
         Proj::Log(expr) => resolve_log(table, expr),
         Proj::Exp(expr) => resolve_exp(table, expr),
@@ -1518,6 +1529,116 @@ fn spread_value(table: &Table, row: usize, bid: &SqrtInput, ask: &SqrtInput) -> 
         return Scalar::Null;
     }
     Scalar::Double(ask - bid)
+}
+
+enum BetweenInput {
+    Null,
+    Constant(i64),
+    Column { index: usize },
+}
+
+fn resolve_between(table: &Table, expr: &BetweenExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() < 3 {
+        return Err(Error::new(format!(
+            "too few arguments for 'between' [found={},expected=3]",
+            expr.args.len()
+        )));
+    }
+    if expr.args.len() > 3 {
+        return Err(Error::new(format!(
+            "too many arguments for 'between' [found={},expected=3]",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::Between {
+        label: expr.label.clone(),
+        value: between_input(table, &expr.args[0])?,
+        low: between_input(table, &expr.args[1])?,
+        high: between_input(table, &expr.args[2])?,
+    })
+}
+
+fn between_input(table: &Table, arg: &ConcatArg) -> Result<BetweenInput, Error> {
+    match arg {
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            match table.meta.columns[index].tag {
+                qdb_types::TAG_TIMESTAMP
+                | qdb_types::TAG_DATE
+                | qdb_types::TAG_LONG
+                | qdb_types::TAG_INT
+                | qdb_types::TAG_SHORT
+                | qdb_types::TAG_BYTE => Ok(BetweenInput::Column { index }),
+                tag => Err(between_type_rejected(qdb_types::type_name(tag))),
+            }
+        }
+        ConcatArg::Literal(Scalar::Null) => Ok(BetweenInput::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(BetweenInput::Constant(*number)),
+        other => Err(between_type_rejected(between_literal_type(other))),
+    }
+}
+
+fn between_literal_type(arg: &ConcatArg) -> &'static str {
+    match arg {
+        ConcatArg::Literal(Scalar::Double(_)) => "DOUBLE",
+        ConcatArg::Literal(Scalar::Float(_)) => "FLOAT",
+        ConcatArg::Literal(Scalar::Boolean(_)) => "BOOLEAN",
+        ConcatArg::Literal(Scalar::Char(_)) => "CHAR",
+        ConcatArg::Literal(Scalar::Text(text)) if text.chars().count() == 1 => "CHAR",
+        ConcatArg::Literal(Scalar::Text(_)) => "STRING",
+        ConcatArg::Literal(Scalar::Timestamp(_)) => "TIMESTAMP",
+        ConcatArg::Literal(Scalar::Date(_)) => "DATE",
+        ConcatArg::Literal(Scalar::Long(number)) if i32::try_from(*number).is_ok() => "INT",
+        ConcatArg::Literal(Scalar::Long(_)) => "LONG",
+        ConcatArg::Literal(Scalar::Null) => "NULL",
+        _ => "UNSUPPORTED",
+    }
+}
+
+fn between_type_rejected(actual: &str) -> Error {
+    Error::new(format!(
+        "there is no matching operator `between` with the argument type: {actual}"
+    ))
+}
+
+fn between_long(table: &Table, row: usize, input: &BetweenInput) -> Option<i64> {
+    match input {
+        BetweenInput::Null => None,
+        BetweenInput::Constant(number) if *number == i64::MIN => None,
+        BetweenInput::Constant(number) => Some(*number),
+        BetweenInput::Column { index } => match table.columns[*index][row] {
+            Scalar::Null => None,
+            Scalar::Long(number) | Scalar::Timestamp(number) | Scalar::Date(number) => Some(number),
+            Scalar::Int(number) => Some(i64::from(number)),
+            Scalar::Short(number) => Some(i64::from(number)),
+            Scalar::Byte(number) => Some(i64::from(number)),
+            _ => None,
+        },
+    }
+}
+
+fn between_value(
+    table: &Table,
+    row: usize,
+    value: &BetweenInput,
+    low: &BetweenInput,
+    high: &BetweenInput,
+) -> Scalar {
+    let (Some(value), Some(low), Some(high)) = (
+        between_long(table, row, value),
+        between_long(table, row, low),
+        between_long(table, row, high),
+    ) else {
+        return Scalar::Boolean(false);
+    };
+    let (low, high) = if low <= high {
+        (low, high)
+    } else {
+        (high, low)
+    };
+    Scalar::Boolean(low <= value && value <= high)
 }
 
 fn resolve_wmid(table: &Table, expr: &WmidExpr) -> Result<ResolvedProj, Error> {
@@ -6808,6 +6929,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             ask_size,
             ..
         } => wmid_value(table, row, bid_size, bid_price, ask_price, ask_size),
+        ResolvedProj::Between {
+            value, low, high, ..
+        } => between_value(table, row, value, low, high),
         ResolvedProj::Log { input, .. } => log_value(table, row, input, f64::log10),
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
@@ -15182,6 +15306,101 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT replace(missing, 'a', 'b') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn between_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT between(id, 1, 2) FROM sensors",
+                "expected/bt_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT between(id, 1, 2) FROM sensors WHERE id = 1",
+                "expected/bt_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT between(id, 1, 2) FROM sensors WHERE id = 2",
+                "expected/bt_two.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT between(id, 1, 2) FROM sensors WHERE id > 100",
+                "expected/bt_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT between(id, 2, 1) FROM sensors",
+                "expected/bt_rev.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT between(ts, ts, ts) FROM sensors",
+                "expected/bt_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT between(day, day, day) FROM sensors",
+                "expected/bt_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT between(id, null, 2) FROM sensors WHERE id = 1",
+                "expected/bt_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT between(id, 1, 2) FROM sensors LIMIT 0",
+                "expected/bt_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT between(id, 1, 2) FROM days",
+                "expected/bt_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT between(id, 1, 2) FROM days WHERE id = 1",
+                "expected/bt_days_one.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT between() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for 'between' [found=0,expected=3]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT between(id, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for 'between' [found=2,expected=3]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT between(reading, 0, 2) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching operator `between` with the argument type: DOUBLE"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT between(missing, 1, 2) FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid column: missing"),
             "{}",

@@ -288,6 +288,7 @@ pub enum Proj {
     Spread(SpreadExpr),
     SpreadBps(SpreadBpsExpr),
     Wmid(WmidExpr),
+    Between(BetweenExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -825,6 +826,13 @@ pub struct WmidExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `between(value, low, high)` reports whether `value` lies inside a closed interval.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BetweenExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `ln(number)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LnExpr {
@@ -1064,6 +1072,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_mid()?.label
             } else if parser.starts_wmid_call() {
                 parser.parse_wmid()?.label
+            } else if parser.starts_between_call() {
+                parser.parse_between()?.label
             } else if parser.starts_spread_bps_call() {
                 parser.parse_spread_bps()?.label
             } else if parser.starts_spread_call() {
@@ -1207,6 +1217,7 @@ enum SelectPiece {
     Spread(SpreadExpr),
     SpreadBps(SpreadBpsExpr),
     Wmid(WmidExpr),
+    Between(BetweenExpr),
     Ln(LnExpr),
     Log(LogExpr),
     Exp(ExpExpr),
@@ -1455,6 +1466,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Mid(self.parse_mid()?));
             } else if self.starts_wmid_call() {
                 pieces.push(SelectPiece::Wmid(self.parse_wmid()?));
+            } else if self.starts_between_call() {
+                pieces.push(SelectPiece::Between(self.parse_between()?));
             } else if self.starts_spread_bps_call() {
                 pieces.push(SelectPiece::SpreadBps(self.parse_spread_bps()?));
             } else if self.starts_spread_call() {
@@ -1561,6 +1574,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Spread(_)
                     | SelectPiece::SpreadBps(_)
                     | SelectPiece::Wmid(_)
+                    | SelectPiece::Between(_)
                     | SelectPiece::Ln(_)
                     | SelectPiece::Log(_)
                     | SelectPiece::Exp(_)
@@ -1660,6 +1674,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Spread(expr) => items.push(Proj::Spread(expr)),
                     SelectPiece::SpreadBps(expr) => items.push(Proj::SpreadBps(expr)),
                     SelectPiece::Wmid(expr) => items.push(Proj::Wmid(expr)),
+                    SelectPiece::Between(expr) => items.push(Proj::Between(expr)),
                     SelectPiece::Ln(expr) => items.push(Proj::Ln(expr)),
                     SelectPiece::Log(expr) => items.push(Proj::Log(expr)),
                     SelectPiece::Exp(expr) => items.push(Proj::Exp(expr)),
@@ -1779,6 +1794,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Spread(_)
                 | SelectPiece::SpreadBps(_)
                 | SelectPiece::Wmid(_)
+                | SelectPiece::Between(_)
                 | SelectPiece::Ln(_)
                 | SelectPiece::Log(_)
                 | SelectPiece::Exp(_)
@@ -1946,6 +1962,19 @@ impl<'a> Parser<'a> {
 
     fn starts_wmid_call(&self) -> bool {
         self.starts_named_call("wmid")
+    }
+
+    fn starts_between_call(&self) -> bool {
+        self.starts_named_call("between")
+    }
+
+    fn parse_between(&mut self) -> Result<BetweenExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        Ok(BetweenExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn starts_spread_bps_call(&self) -> bool {
