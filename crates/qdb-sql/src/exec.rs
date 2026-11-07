@@ -1,12 +1,12 @@
 use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AggFunc, AggregateExpr,
     CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg, DateAddExpr, DateDiffExpr, DayExpr,
-    ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr, LeastExpr, LengthExpr,
-    LnExpr, LogExpr, LowerExpr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr, NullIfExpr, PadExpr,
-    PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
-    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr, SignExpr, SizePrettyExpr,
-    SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, TrimEnd, TrimExpr, UpperExpr,
-    YearExpr,
+    DayOfWeekExpr, ExpExpr, Filter, FloorExpr, GreatestExpr, GroupedSelect, HourExpr, LeastExpr,
+    LengthExpr, LnExpr, LogExpr, LowerExpr, MicrosExpr, MillisExpr, MinuteExpr, MonthExpr,
+    NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, ReplaceExpr,
+    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SideExpr,
+    SignExpr, SizePrettyExpr, SplitPartExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr,
+    TrimEnd, TrimExpr, UpperExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -215,6 +215,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Second { label, .. }
             | ResolvedProj::Millis { label, .. }
             | ResolvedProj::Micros { label, .. }
+            | ResolvedProj::DayOfWeek { label, .. }
             | ResolvedProj::Floor { label, .. }
             | ResolvedProj::Ceil { label, .. }
             | ResolvedProj::Sign { label, .. }
@@ -409,6 +410,10 @@ enum ResolvedProj {
         label: String,
         value: DateDiffSide,
     },
+    DayOfWeek {
+        label: String,
+        value: DateDiffSide,
+    },
     Floor {
         label: String,
         input: FloorInput,
@@ -559,6 +564,7 @@ impl ResolvedProj {
             | Self::Second { label, .. }
             | Self::Millis { label, .. }
             | Self::Micros { label, .. }
+            | Self::DayOfWeek { label, .. }
             | Self::Floor { label, .. }
             | Self::Ceil { label, .. }
             | Self::Sign { label, .. }
@@ -593,7 +599,8 @@ impl ResolvedProj {
             | Self::Minute { .. }
             | Self::Second { .. }
             | Self::Millis { .. }
-            | Self::Micros { .. } => qdb_types::TAG_INT,
+            | Self::Micros { .. }
+            | Self::DayOfWeek { .. } => qdb_types::TAG_INT,
             Self::Sign { result_tag, .. } => *result_tag,
             Self::Sqrt { .. }
             | Self::Power { .. }
@@ -675,6 +682,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Second(expr) => resolve_second(table, expr),
         Proj::Millis(expr) => resolve_millis(table, expr),
         Proj::Micros(expr) => resolve_micros(table, expr),
+        Proj::DayOfWeek(expr) => resolve_day_of_week(table, expr),
         Proj::Floor(expr) => resolve_floor(table, expr),
         Proj::Ceil(expr) => resolve_ceil(table, expr),
         Proj::Sign(expr) => resolve_sign(table, expr),
@@ -1329,6 +1337,29 @@ enum DateDiffSide {
     Micros(i64),
     Column { index: usize },
     Null,
+}
+
+fn resolve_day_of_week(table: &Table, expr: &DayOfWeekExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `day_of_week`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::DayOfWeek {
+        label: expr.label.clone(),
+        value: datediff_side(table, &expr.args[0], "day_of_week", 1)?,
+    })
+}
+
+fn weekday_monday(micros: i64) -> i32 {
+    let days = micros.div_euclid(DATEADD_DAY);
+    let index = (days + 4).rem_euclid(7);
+    if index == 0 {
+        7
+    } else {
+        index as i32
+    }
 }
 
 fn resolve_micros(table: &Table, expr: &MicrosExpr) -> Result<ResolvedProj, Error> {
@@ -3478,6 +3509,10 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::Micros { value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Int((dateadd_parts(micros).3 % 1_000) as i32),
+            None => Scalar::Null,
+        },
+        ResolvedProj::DayOfWeek { value, .. } => match datediff_micros(table, row, value) {
+            Some(micros) => Scalar::Int(weekday_monday(micros)),
             None => Scalar::Null,
         },
         ResolvedProj::Abs { input, .. } => abs_value(table, row, input),
@@ -12342,6 +12377,96 @@ mod tests {
             err.message
         );
         let err = execute(&sensors, "SELECT year('nope') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn day_of_week_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                sensors.clone(),
+                "SELECT day_of_week(ts) FROM sensors",
+                "expected/dw_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT day_of_week(id) FROM sensors",
+                "expected/dw_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT day_of_week('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1",
+                "expected/dw_lit.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT day_of_week('2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/dw_sun.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT day_of_week('2020-01-06T00:00:00.000000Z') FROM sensors LIMIT 1",
+                "expected/dw_mon.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT DAY_OF_WEEK(TS) FROM sensors",
+                "expected/dw_case.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT day_of_week(id) FROM sensors ORDER BY day_of_week(id)",
+                "expected/dw_order.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT day_of_week(ts) FROM sensors WHERE id = 1",
+                "expected/dw_where.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT day_of_week(ts) FROM sensors LIMIT 0",
+                "expected/dw_limit_zero.tsv",
+            ),
+            (
+                days.clone(),
+                "SELECT day_of_week(ts) FROM days ORDER BY ts",
+                "expected/dw_ts.tsv",
+            ),
+        ];
+        for (root, sql, file) in cases {
+            let result = execute(&root, sql).unwrap();
+            let expected = std::fs::read_to_string(root.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT day_of_week() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `day_of_week` requires arguments: day_of_week(TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT day_of_week(ts, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `day_of_week`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT day_of_week(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT day_of_week('nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
             "{}",

@@ -1000,7 +1000,16 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   mc_case "SELECT MICROS(TS) FROM sensors" \
   mc_order "SELECT micros(id) FROM sensors ORDER BY micros(id)" \
   mc_where "SELECT micros(ts) FROM sensors WHERE id = 1" \
-  mc_limit_zero "SELECT micros(ts) FROM sensors LIMIT 0"
+  mc_limit_zero "SELECT micros(ts) FROM sensors LIMIT 0" \
+  dw_ts "SELECT day_of_week(ts) FROM sensors" \
+  dw_id "SELECT day_of_week(id) FROM sensors" \
+  dw_lit "SELECT day_of_week('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
+  dw_sun "SELECT day_of_week('2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  dw_mon "SELECT day_of_week('2020-01-06T00:00:00.000000Z') FROM sensors LIMIT 1" \
+  dw_case "SELECT DAY_OF_WEEK(TS) FROM sensors" \
+  dw_order "SELECT day_of_week(id) FROM sensors ORDER BY day_of_week(id)" \
+  dw_where "SELECT day_of_week(ts) FROM sensors WHERE id = 1" \
+  dw_limit_zero "SELECT day_of_week(ts) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -1126,7 +1135,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   mi_ts "SELECT minute(ts) FROM days ORDER BY ts" \
   se_ts "SELECT second(ts) FROM days ORDER BY ts" \
   ms_ts "SELECT millis(ts) FROM days ORDER BY ts" \
-  mc_ts "SELECT micros(ts) FROM days ORDER BY ts"
+  mc_ts "SELECT micros(ts) FROM days ORDER BY ts" \
+  dw_ts "SELECT day_of_week(ts) FROM days ORDER BY ts"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -2074,6 +2084,15 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT micros(id) FROM sensors ORDER BY micros(id)"),
     (os.environ["DIFF_H1"], "SELECT micros(ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT micros(ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week('2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week('2020-01-06T00:00:00.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT DAY_OF_WEEK(TS) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week(id) FROM sensors ORDER BY day_of_week(id)"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week(ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT day_of_week(ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -2198,6 +2217,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT second(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT millis(ts) FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT micros(ts) FROM days ORDER BY ts"),
+    (os.environ["DIFF_H2"], "SELECT day_of_week(ts) FROM days ORDER BY ts"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
