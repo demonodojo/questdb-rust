@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `::char`
+
+`column::char` convierte una columna a `CHAR` y el encabezado conserva la grafía. Un nulo es una cadena vacía y el cero también. `-1` es U+FFFF. Un entero positivo es ese punto de código y un texto aporta su primer carácter. `id::char` es U+0001, U+0002, vacío y U+FFFF. En `days` es U+0001, U+0002, U+0003 y vacío. `ch::char` es `A`, vacío, `β` y `東`. `note::char` es `a`, vacío, vacío y `β`. `flags::char` es un salto de línea, vacío, vacío y `*`; esa consulta queda en el test y fuera del diferencial en vivo porque el salto de línea parte la fila TSV. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `::short`
 
 `column::short` convierte una columna a `SHORT` y el encabezado conserva la grafía. Un nulo es `0` y un texto es `0`. `id::short` es `1`, `2`, `0` y `-1`. En `days` es `1`, `2`, `3` y `0`. `flags::short` es `10`, `0`, `0` y `42`. `note::short` es `0`, `0`, `0` y `0`. `code::short` es `7`, `0`, `-32768` y `1`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.

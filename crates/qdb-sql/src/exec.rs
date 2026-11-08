@@ -5131,7 +5131,12 @@ fn cast_scalar(value: &Scalar, tag: i32) -> Scalar {
         }
         qdb_types::TAG_BYTE => Scalar::Byte(cast_i64(value).unwrap_or(0) as i8),
         qdb_types::TAG_SHORT => Scalar::Short(cast_i64(value).unwrap_or(0) as i16),
-        qdb_types::TAG_CHAR => Scalar::Char(cast_i64(value).unwrap_or(0) as u16),
+        qdb_types::TAG_CHAR => match value {
+            Scalar::Text(text) => {
+                Scalar::Char(text.chars().next().map(|unit| unit as u16).unwrap_or(0))
+            }
+            _ => Scalar::Char(cast_i64(value).unwrap_or(0) as u16),
+        },
         qdb_types::TAG_INT => match cast_i64(value).map(|number| number as i32) {
             Some(number) if number != i32::MIN => Scalar::Int(number),
             _ => Scalar::Null,
@@ -17827,6 +17832,61 @@ mod tests {
                 "expected/zh_code.tsv",
             ),
             (&days, "SELECT id::short FROM days", "expected/zh_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id::missing FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid constant: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn zc_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id::char FROM sensors",
+                "expected/zc_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::CHAR FROM sensors",
+                "expected/zc_upper.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::char FROM sensors WHERE id = 1",
+                "expected/zc_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::char FROM sensors WHERE id > 100",
+                "expected/zc_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT ch::char FROM sensors",
+                "expected/zc_ch.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note::char FROM sensors",
+                "expected/zc_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags::char FROM sensors",
+                "expected/zc_flags.tsv",
+            ),
+            (&days, "SELECT id::char FROM days", "expected/zc_days.tsv"),
         ];
         for (dir, sql, file) in cases {
             let result = execute(dir, sql).unwrap();
