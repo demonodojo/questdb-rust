@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `pg_is_in_recovery()`
+
+`pg_is_in_recovery` devuelve el booleano `false` en cada fila y el tipo es `BOOLEAN`. En `sensors` y en `days` son cuatro `false`. Con `id = 1` queda una fila. `PG_IS_IN_RECOVERY` conserva las mayúsculas del encabezado. Un argumento se rechaza con `wrong number of arguments for function `pg_is_in_recovery`; expected: 0, provided: 1`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `version()`
 
 `version` devuelve el texto `PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit, QuestDB` en cada fila y el tipo es `STRING`. En `sensors` y en `days` son cuatro copias de ese texto. Con `id = 1` queda una fila. `VERSION` conserva las mayúsculas del encabezado. Un argumento se rechaza con `wrong number of arguments for function `version`; expected: 0, provided: 1`. Se contrastó con `/exec` en `sensors` y `days`.

@@ -7,14 +7,14 @@ use crate::parse::{
     DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr,
     GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr,
     LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr,
-    MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PiExpr,
-    PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
-    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr,
-    SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr,
-    SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
-    TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr,
-    ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr,
-    UpperExpr, VersionExpr, WeekOfYearExpr, WmidExpr, YearExpr,
+    MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr,
+    PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr,
+    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
+    SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
+    SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
+    SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr,
+    ToDateExpr, ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd,
+    TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -309,6 +309,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::SessionUser { label, .. }
             | ResolvedProj::CurrentCatalog { label, .. }
             | ResolvedProj::Version { label, .. }
+            | ResolvedProj::PgIsInRecovery { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -807,6 +808,9 @@ enum ResolvedProj {
     Version {
         label: String,
     },
+    PgIsInRecovery {
+        label: String,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -988,6 +992,7 @@ impl ResolvedProj {
             | Self::SessionUser { label, .. }
             | Self::CurrentCatalog { label, .. }
             | Self::Version { label, .. }
+            | Self::PgIsInRecovery { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1022,7 +1027,7 @@ impl ResolvedProj {
             Self::DateTrunc { .. } | Self::TimestampFloor { .. } | Self::TimestampCeil { .. } => {
                 qdb_types::TAG_TIMESTAMP
             }
-            Self::IsLeapYear { .. } => qdb_types::TAG_BOOLEAN,
+            Self::IsLeapYear { .. } | Self::PgIsInRecovery { .. } => qdb_types::TAG_BOOLEAN,
             Self::DaysInMonth { .. } => qdb_types::TAG_INT,
             Self::ToStr { .. } => qdb_types::TAG_STRING,
             Self::IsEndOfMonth { .. }
@@ -1214,6 +1219,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::SessionUser(expr) => resolve_session_user(expr),
         Proj::CurrentCatalog(expr) => resolve_current_catalog(expr),
         Proj::Version(expr) => resolve_version(expr),
+        Proj::PgIsInRecovery(expr) => resolve_pg_is_in_recovery(expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1530,6 +1536,18 @@ fn least_i64(table: &Table, row: usize, arg: &GreatestArg) -> Option<i64> {
             _ => None,
         },
     }
+}
+
+fn resolve_pg_is_in_recovery(expr: &PgIsInRecoveryExpr) -> Result<ResolvedProj, Error> {
+    if !expr.args.is_empty() {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `pg_is_in_recovery`; expected: 0, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::PgIsInRecovery {
+        label: expr.label.clone(),
+    })
 }
 
 fn resolve_version(expr: &VersionExpr) -> Result<ResolvedProj, Error> {
@@ -8199,6 +8217,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Version { .. } => Scalar::Text(
             "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit, QuestDB".to_string(),
         ),
+        ResolvedProj::PgIsInRecovery { .. } => Scalar::Boolean(false),
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39420,6 +39439,65 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn pr_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT pg_is_in_recovery() FROM sensors",
+                "expected/pr_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT PG_IS_IN_RECOVERY() FROM sensors",
+                "expected/pr_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_is_in_recovery() FROM sensors WHERE id = 1",
+                "expected/pr_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_is_in_recovery() FROM sensors WHERE id > 100",
+                "expected/pr_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_is_in_recovery() FROM sensors LIMIT 0",
+                "expected/pr_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT pg_is_in_recovery() FROM days",
+                "expected/pr_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT pg_is_in_recovery(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `pg_is_in_recovery`; expected: 0, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT pg_is_in_recovery(1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `pg_is_in_recovery`; expected: 0, provided: 1"
+            ),
             "{}",
             err.message
         );
