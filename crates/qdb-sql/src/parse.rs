@@ -1357,6 +1357,13 @@ fn strip_alias_refs(
                         }
                     }
                 }
+                if let Proj::Lower(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
             }
         }
         SelectList::Columns(names) => {
