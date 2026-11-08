@@ -43,6 +43,8 @@ pub struct EquiJoin {
     pub right_alias: String,
     pub left_column: String,
     pub right_column: String,
+    /// `LEFT JOIN` keeps a left row when the right side has no match.
+    pub left_outer: bool,
 }
 
 /// Inclusive numeric series produced by `generate_series`.
@@ -2128,8 +2130,13 @@ impl<'a> Parser<'a> {
             Some(self.ident()?)
         };
         self.skip();
-        let inner = self.eat_keyword("inner");
-        let joined = if inner {
+        let left_outer = self.eat_keyword("left");
+        let inner = if left_outer {
+            false
+        } else {
+            self.eat_keyword("inner")
+        };
+        let joined = if left_outer || inner {
             self.expect_keyword("join")?;
             true
         } else {
@@ -2163,11 +2170,12 @@ impl<'a> Parser<'a> {
                 .next()
                 .unwrap_or(&right_name)
                 .to_string(),
+            left_outer,
         }))
     }
 
     fn clause_keyword_ahead(&mut self) -> bool {
-        ["where", "group", "order", "limit", "join", "inner"]
+        ["where", "group", "order", "limit", "join", "inner", "left"]
             .into_iter()
             .any(|word| {
                 let pos = self.pos;

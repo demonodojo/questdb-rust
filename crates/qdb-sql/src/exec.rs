@@ -106,6 +106,14 @@ fn equi_join_table(left: &Table, data_dir: &Path, join: &EquiJoin) -> Result<Tab
             }
         }
         let Some(index) = matched else {
+            if join.left_outer {
+                for (column_index, column) in left.columns.iter().enumerate() {
+                    columns[column_index].push(column[left_row].clone());
+                }
+                for column_index in 0..right.columns.len() {
+                    columns[left.columns.len() + column_index].push(Scalar::Null);
+                }
+            }
             continue;
         };
         for right_row in &chains[index].1 {
@@ -41754,6 +41762,30 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn lf_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT a.id, b.id FROM sensors a LEFT JOIN days b ON a.id = b.id",
+                "expected/lf_id.tsv",
+            ),
+            (
+                "SELECT a.id, b.note FROM sensors a LEFT JOIN days b ON a.id = b.id",
+                "expected/lf_note.tsv",
+            ),
+            (
+                "SELECT a.id, b.id FROM sensors a LEFT JOIN sensors b ON a.id = b.id",
+                "expected/lf_self.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
     }
 
     #[test]
