@@ -325,6 +325,7 @@ pub enum Proj {
     MakeGeohash(MakeGeohashExpr),
     ToUuid(ToUuidExpr),
     JsonExtract(JsonExtractExpr),
+    ToChar(ToCharExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -870,6 +871,21 @@ pub struct JsonExtractExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `from_base64(text)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FromBase64Expr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `to_char(bin)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToCharExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+    pub base64: Option<FromBase64Expr>,
+}
+
 /// `typeof(value)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeofExpr {
@@ -878,6 +894,7 @@ pub struct TypeofExpr {
     pub geohash: Option<MakeGeohashExpr>,
     pub uuid: Option<ToUuidExpr>,
     pub json: Option<JsonExtractExpr>,
+    pub to_char: Option<ToCharExpr>,
 }
 
 /// `not(value)`. Extra arguments are ignored; the last one is negated.
@@ -1473,6 +1490,10 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_to_uuid()?.label
             } else if parser.starts_json_extract_call() {
                 parser.parse_json_extract()?.label
+            } else if parser.starts_to_char_call() {
+                parser.parse_to_char()?.label
+            } else if parser.starts_from_base64_call() {
+                parser.parse_from_base64()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
             } else if parser.starts_least_call() {
@@ -1645,6 +1666,7 @@ enum SelectPiece {
     MakeGeohash(MakeGeohashExpr),
     ToUuid(ToUuidExpr),
     JsonExtract(JsonExtractExpr),
+    ToChar(ToCharExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1955,6 +1977,11 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::ToUuid(self.parse_to_uuid()?));
             } else if self.starts_json_extract_call() {
                 pieces.push(SelectPiece::JsonExtract(self.parse_json_extract()?));
+            } else if self.starts_to_char_call() {
+                pieces.push(SelectPiece::ToChar(self.parse_to_char()?));
+            } else if self.starts_from_base64_call() {
+                self.parse_from_base64()?;
+                return Err(Error::new("unsupported: binary value".to_string()));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else if self.starts_least_call() {
@@ -2146,6 +2173,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::MakeGeohash(_)
                     | SelectPiece::ToUuid(_)
                     | SelectPiece::JsonExtract(_)
+                    | SelectPiece::ToChar(_)
                     | SelectPiece::Greatest(_)
                     | SelectPiece::Least(_)
             )
@@ -2276,6 +2304,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::MakeGeohash(expr) => items.push(Proj::MakeGeohash(expr)),
                     SelectPiece::ToUuid(expr) => items.push(Proj::ToUuid(expr)),
                     SelectPiece::JsonExtract(expr) => items.push(Proj::JsonExtract(expr)),
+                    SelectPiece::ToChar(expr) => items.push(Proj::ToChar(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
@@ -2426,6 +2455,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::MakeGeohash(_)
                 | SelectPiece::ToUuid(_)
                 | SelectPiece::JsonExtract(_)
+                | SelectPiece::ToChar(_)
                 | SelectPiece::Greatest(_)
                 | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
@@ -2801,6 +2831,70 @@ impl<'a> Parser<'a> {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
+    }
+
+    fn starts_to_char_call(&self) -> bool {
+        self.starts_named_call("to_char")
+    }
+
+    fn parse_to_char(&mut self) -> Result<ToCharExpr, Error> {
+        let name = self.ident_spelling()?;
+        if self.argument_is_from_base64() {
+            self.skip();
+            self.eat(b'(');
+            self.skip();
+            let inner = self.parse_from_base64()?;
+            self.skip();
+            if !self.eat(b')') {
+                return Err(Error::new(
+                    "unsupported: expected ')' after to_char".to_string(),
+                ));
+            }
+            return Ok(ToCharExpr {
+                label: format!("{name}({})", inner.label),
+                args: Vec::new(),
+                base64: Some(inner),
+            });
+        }
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `to_char` requires arguments: to_char(BINARY)".to_string(),
+            ));
+        }
+        Ok(ToCharExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+            base64: None,
+        })
+    }
+
+    fn starts_from_base64_call(&self) -> bool {
+        self.starts_named_call("from_base64")
+    }
+
+    fn parse_from_base64(&mut self) -> Result<FromBase64Expr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `from_base64` requires arguments: from_base64(STRING)".to_string(),
+            ));
+        }
+        Ok(FromBase64Expr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn argument_is_from_base64(&mut self) -> bool {
+        let saved = self.pos;
+        self.skip();
+        let open = self.eat(b'(');
+        self.skip();
+        let nested = open && self.starts_from_base64_call();
+        self.pos = saved;
+        nested
     }
 
     fn starts_format_type_call(&self) -> bool {
@@ -3960,6 +4054,7 @@ impl<'a> Parser<'a> {
                 geohash: Some(inner),
                 uuid: None,
                 json: None,
+                to_char: None,
             });
         }
         if self.argument_is_to_uuid() {
@@ -3979,6 +4074,7 @@ impl<'a> Parser<'a> {
                 geohash: None,
                 uuid: Some(inner),
                 json: None,
+                to_char: None,
             });
         }
         if self.argument_is_json_extract() {
@@ -3998,6 +4094,27 @@ impl<'a> Parser<'a> {
                 geohash: None,
                 uuid: None,
                 json: Some(inner),
+                to_char: None,
+            });
+        }
+        if self.argument_is_to_char() {
+            self.skip();
+            self.eat(b'(');
+            self.skip();
+            let inner = self.parse_to_char()?;
+            self.skip();
+            if !self.eat(b')') {
+                return Err(Error::new(
+                    "unsupported: expected ')' after typeof".to_string(),
+                ));
+            }
+            return Ok(TypeofExpr {
+                label: format!("{name}({})", inner.label),
+                args: Vec::new(),
+                geohash: None,
+                uuid: None,
+                json: None,
+                to_char: Some(inner),
             });
         }
         let (labels, args) = self.parse_call_args(&name, true)?;
@@ -4010,7 +4127,18 @@ impl<'a> Parser<'a> {
             geohash: None,
             uuid: None,
             json: None,
+            to_char: None,
         })
+    }
+
+    fn argument_is_to_char(&mut self) -> bool {
+        let saved = self.pos;
+        self.skip();
+        let open = self.eat(b'(');
+        self.skip();
+        let nested = open && self.starts_to_char_call();
+        self.pos = saved;
+        nested
     }
 
     fn argument_is_json_extract(&mut self) -> bool {

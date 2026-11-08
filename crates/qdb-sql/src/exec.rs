@@ -5,17 +5,17 @@ use crate::parse::{
     CosExpr, CotExpr, CurrentCatalogExpr, CurrentDatabaseExpr, CurrentSchemaExpr,
     CurrentSettingExpr, CurrentUserExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
     DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr,
-    ExtractExpr, Filter, FloorExpr, FormatTypeExpr, GeoDistanceExpr, GeoWithinExpr, GlobExpr,
-    GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr,
-    JsonExtractExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, MakeGeohashExpr,
-    Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr,
-    NetmaskExpr, NotExpr, NullIfExpr, PadExpr, PgGetExprExpr, PgGetPartKeyDefExpr,
+    ExtractExpr, Filter, FloorExpr, FormatTypeExpr, FromBase64Expr, GeoDistanceExpr, GeoWithinExpr,
+    GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr,
+    IsLeapYearExpr, JsonExtractExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
+    MakeGeohashExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr,
+    NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr, PgGetExprExpr, PgGetPartKeyDefExpr,
     PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
     RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
     SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
     SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
     StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
-    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
+    TimestampFloorExpr, TimestampSequenceExpr, ToCharExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
     ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr, TrimEnd, TrimExpr, TypeofExpr,
     UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr, WmidExpr, YearExpr,
 };
@@ -326,6 +326,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::MakeGeohash { label, .. }
             | ResolvedProj::ToUuid { label, .. }
             | ResolvedProj::JsonExtract { label, .. }
+            | ResolvedProj::ToChar { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -881,6 +882,10 @@ enum ResolvedProj {
         path: Option<String>,
         boolean: bool,
     },
+    ToChar {
+        label: String,
+        source: ToCharSource,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -1076,6 +1081,7 @@ impl ResolvedProj {
             | Self::MakeGeohash { label, .. }
             | Self::ToUuid { label, .. }
             | Self::JsonExtract { label, .. }
+            | Self::ToChar { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1191,6 +1197,7 @@ impl ResolvedProj {
                     qdb_types::TAG_VARCHAR
                 }
             }
+            Self::ToChar { .. } => qdb_types::TAG_STRING,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -1345,6 +1352,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::MakeGeohash(expr) => resolve_make_geohash(table, expr),
         Proj::ToUuid(expr) => resolve_to_uuid(table, expr),
         Proj::JsonExtract(expr) => resolve_json_extract(table, expr),
+        Proj::ToChar(expr) => resolve_to_char(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -2484,6 +2492,161 @@ fn json_extract_scalar(
             None => Scalar::Null,
         }
     }
+}
+
+enum ToCharSource {
+    Null,
+    Literal(String),
+    Column { index: usize },
+}
+
+fn resolve_to_char(table: &Table, expr: &ToCharExpr) -> Result<ResolvedProj, Error> {
+    if let Some(inner) = &expr.base64 {
+        return Ok(ResolvedProj::ToChar {
+            label: expr.label.clone(),
+            source: resolve_from_base64(table, inner)?,
+        });
+    }
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `to_char`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let actual = timestamp_floor_arg_type(table, &expr.args[0])?;
+    if actual != "NULL" {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `to_char` at #1 expected: BINARY, actual: {actual}"
+        )));
+    }
+    Ok(ResolvedProj::ToChar {
+        label: expr.label.clone(),
+        source: ToCharSource::Null,
+    })
+}
+
+fn resolve_from_base64(table: &Table, expr: &FromBase64Expr) -> Result<ToCharSource, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `from_base64`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let actual = timestamp_floor_arg_type(table, &expr.args[0])?;
+    if !json_text_type(actual) {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `from_base64` at #1 expected: STRING, actual: {actual}"
+        )));
+    }
+    match &expr.args[0] {
+        ConcatArg::Literal(Scalar::Null) => Ok(ToCharSource::Null),
+        ConcatArg::Literal(Scalar::Text(text)) => Ok(ToCharSource::Literal(text.clone())),
+        ConcatArg::Literal(Scalar::Char(unit)) => Ok(ToCharSource::Literal(json_char(*unit))),
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            Ok(ToCharSource::Column { index })
+        }
+        _ => Err(Error::new(format!(
+            "argument type mismatch for function `from_base64` at #1 expected: STRING, actual: {actual}"
+        ))),
+    }
+}
+
+fn to_char_scalar(table: &Table, row: usize, source: &ToCharSource) -> Result<Scalar, Error> {
+    let text = match source {
+        ToCharSource::Null => return Ok(Scalar::Null),
+        ToCharSource::Literal(text) => text.clone(),
+        ToCharSource::Column { index } => match &table.columns[*index][row] {
+            Scalar::Null => return Ok(Scalar::Null),
+            Scalar::Text(text) => text.clone(),
+            Scalar::Char(0) => return Ok(Scalar::Null),
+            Scalar::Char(unit) => json_char(*unit),
+            _ => return Ok(Scalar::Null),
+        },
+    };
+    let bytes = decode_base64(&text)?;
+    Ok(Scalar::Text(format_binary(&bytes)))
+}
+
+fn decode_base64(encoded: &str) -> Result<Vec<u8>, Error> {
+    let mut length = encoded.chars().count();
+    let chars: Vec<char> = encoded.chars().collect();
+    while length > 0 && chars[length - 1] == '=' {
+        length -= 1;
+    }
+    let remainder = length % 4;
+    let mut out = Vec::new();
+    let mut pos = 0;
+    let end = length - remainder;
+    while pos < end {
+        let wrk = (base64_value(chars[pos])? << 18)
+            | (base64_value(chars[pos + 1])? << 12)
+            | (base64_value(chars[pos + 2])? << 6)
+            | base64_value(chars[pos + 3])?;
+        out.push((wrk >> 16) as u8);
+        out.push((wrk >> 8) as u8);
+        out.push(wrk as u8);
+        pos += 4;
+    }
+    match remainder {
+        0 => {}
+        1 => {
+            return Err(Error::new(format!(
+                "invalid base64 encoding [string={encoded}]"
+            )));
+        }
+        2 => {
+            let wrk = (base64_value(chars[pos])? << 18) | (base64_value(chars[pos + 1])? << 12);
+            out.push((wrk >> 16) as u8);
+        }
+        _ => {
+            let wrk = (base64_value(chars[pos])? << 18)
+                | (base64_value(chars[pos + 1])? << 12)
+                | (base64_value(chars[pos + 2])? << 6);
+            out.push((wrk >> 16) as u8);
+            out.push((wrk >> 8) as u8);
+        }
+    }
+    Ok(out)
+}
+
+fn base64_value(ch: char) -> Result<i32, Error> {
+    if !ch.is_ascii() {
+        return Err(Error::new(format!(
+            "non-ascii character while decoding base64 [ch={}]",
+            u32::from(ch)
+        )));
+    }
+    let value = match ch as u8 {
+        b'A'..=b'Z' => ch as u8 - b'A',
+        b'a'..=b'z' => ch as u8 - b'a' + 26,
+        b'0'..=b'9' => ch as u8 - b'0' + 52,
+        b'+' => 62,
+        b'/' => 63,
+        _ => {
+            return Err(Error::new(format!("invalid base64 character [ch={ch}]")));
+        }
+    };
+    Ok(i32::from(value))
+}
+
+fn format_binary(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::new();
+    for (index, byte) in bytes.iter().enumerate() {
+        if index % 16 == 0 {
+            if index > 0 {
+                out.push('\n');
+            }
+            out.push_str(&format!("{index:08x}"));
+        }
+        out.push(' ');
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn extract_json_varchar(doc: &str, path: &str) -> Option<String> {
@@ -4107,6 +4270,14 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
         return Ok(ResolvedProj::Typeof {
             label: expr.label.clone(),
             name: name.to_string(),
+            result_tag: qdb_types::TAG_STRING,
+        });
+    }
+    if let Some(inner) = &expr.to_char {
+        resolve_to_char(table, inner)?;
+        return Ok(ResolvedProj::Typeof {
+            label: expr.label.clone(),
+            name: "STRING".to_string(),
             result_tag: qdb_types::TAG_STRING,
         });
     }
@@ -9611,6 +9782,7 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
             make_geohash_scalar(table, row, lon, lat, *bits)
         }
         ResolvedProj::ToUuid { lo, hi, .. } => to_uuid_scalar(table, row, lo, hi),
+        ResolvedProj::ToChar { source, .. } => to_char_scalar(table, row, source),
         _ => Ok(eval_resolved(table, row, item)),
     }
 }
@@ -9750,6 +9922,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::JsonExtract {
             doc, path, boolean, ..
         } => json_extract_scalar(table, row, doc, path.as_deref(), *boolean),
+        ResolvedProj::ToChar { .. } => Scalar::Null,
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -40975,6 +41148,100 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn th_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                "SELECT to_char(null) FROM sensors LIMIT 1",
+                "expected/th_null.tsv",
+            ),
+            (
+                "SELECT to_char(from_base64('YWI=')) FROM sensors LIMIT 1",
+                "expected/th_ab.tsv",
+            ),
+            (
+                "SELECT TO_CHAR(from_base64('YQ==')) FROM sensors LIMIT 1",
+                "expected/th_case.tsv",
+            ),
+            (
+                "SELECT to_char(from_base64('')) FROM sensors LIMIT 1",
+                "expected/th_empty.tsv",
+            ),
+            (
+                "SELECT to_char(from_base64(null)) FROM sensors LIMIT 1",
+                "expected/th_bnull.tsv",
+            ),
+            (
+                "SELECT to_char(from_base64('YWI')) FROM sensors LIMIT 1",
+                "expected/th_nopad.tsv",
+            ),
+            (
+                "SELECT to_char(from_base64('YWI=')) FROM sensors WHERE id = 1",
+                "expected/th_one.tsv",
+            ),
+            (
+                "SELECT to_char(from_base64('YWI=')) FROM sensors WHERE id > 100",
+                "expected/th_none.tsv",
+            ),
+            (
+                "SELECT to_char(from_base64('YWI=')) FROM sensors LIMIT 0",
+                "expected/th_lim0.tsv",
+            ),
+            (
+                "SELECT to_char(from_base64('MDEyMzQ1Njc4OWFiY2RlZg==')) FROM sensors LIMIT 1",
+                "expected/th_16.tsv",
+            ),
+            (
+                "SELECT to_char(from_base64('MDEyMzQ1Njc4OWFiY2RlZmc=')) FROM sensors LIMIT 1",
+                "expected/th_17.tsv",
+            ),
+            (
+                "SELECT typeof(to_char(from_base64('YWI='))) FROM sensors LIMIT 1",
+                "expected/th_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let result = execute(&days, "SELECT to_char(from_base64('YWI=')) FROM days").unwrap();
+        let expected = std::fs::read_to_string(days.join("expected/th_days.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let mismatches = [
+            (
+                "SELECT to_char() FROM sensors",
+                "function `to_char` requires arguments: to_char(BINARY)",
+            ),
+            (
+                "SELECT to_char(1, 2) FROM sensors",
+                "wrong number of arguments for function `to_char`; expected: 1, provided: 2",
+            ),
+            (
+                "SELECT to_char(note) FROM sensors",
+                "argument type mismatch for function `to_char` at #1 expected: BINARY, actual: STRING",
+            ),
+            (
+                "SELECT to_char(missing) FROM sensors",
+                "Invalid column: missing",
+            ),
+            (
+                "SELECT to_char(from_base64('***')) FROM sensors",
+                "invalid base64 character [ch=*]",
+            ),
+            (
+                "SELECT from_base64() FROM sensors",
+                "function `from_base64` requires arguments: from_base64(STRING)",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

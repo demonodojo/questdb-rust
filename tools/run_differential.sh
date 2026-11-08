@@ -3094,7 +3094,18 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   je_bad "SELECT json_extract('not json', '$.a') FROM sensors LIMIT 1" \
   je_tag "SELECT json_extract(tag, '$') FROM sensors LIMIT 1" \
   je_type "SELECT typeof(json_extract('{\"a\":1}', '$.a')) FROM sensors LIMIT 1" \
-  je_bool "SELECT json_extract('{\"a\":1}', '$.a', 1) FROM sensors"
+  je_bool "SELECT json_extract('{\"a\":1}', '$.a', 1) FROM sensors" \
+  th_null "SELECT to_char(null) FROM sensors LIMIT 1" \
+  th_ab "SELECT to_char(from_base64('YWI=')) FROM sensors LIMIT 1" \
+  th_case "SELECT TO_CHAR(from_base64('YQ==')) FROM sensors LIMIT 1" \
+  th_empty "SELECT to_char(from_base64('')) FROM sensors LIMIT 1" \
+  th_bnull "SELECT to_char(from_base64(null)) FROM sensors LIMIT 1" \
+  th_nopad "SELECT to_char(from_base64('YWI')) FROM sensors LIMIT 1" \
+  th_one "SELECT to_char(from_base64('YWI=')) FROM sensors WHERE id = 1" \
+  th_none "SELECT to_char(from_base64('YWI=')) FROM sensors WHERE id > 100" \
+  th_lim0 "SELECT to_char(from_base64('YWI=')) FROM sensors LIMIT 0" \
+  th_16 "SELECT to_char(from_base64('MDEyMzQ1Njc4OWFiY2RlZg==')) FROM sensors LIMIT 1" \
+  th_type "SELECT typeof(to_char(from_base64('YWI='))) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3462,7 +3473,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   wb_days "SELECT within_box(0, 0, -1, -1, 1, 1) FROM days" \
   mg_days "SELECT make_geohash(2.0, 41.0, 20) FROM days" \
   uu_days "SELECT to_uuid(1, 2) FROM days" \
-  je_days "SELECT json_extract('{\"a\":1}', '$.a') FROM days"
+  je_days "SELECT json_extract('{\"a\":1}', '$.a') FROM days" \
+  th_days "SELECT to_char(from_base64('YWI=')) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6504,6 +6516,17 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT json_extract(tag, '$') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT typeof(json_extract('{\"a\":1}', '$.a')) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":1}', '$.a', 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_char(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_char(from_base64('YWI=')) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT TO_CHAR(from_base64('YQ==')) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_char(from_base64('')) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_char(from_base64(null)) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_char(from_base64('YWI')) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_char(from_base64('YWI=')) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT to_char(from_base64('YWI=')) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT to_char(from_base64('YWI=')) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT to_char(from_base64('MDEyMzQ1Njc4OWFiY2RlZg==')) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(to_char(from_base64('YWI='))) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6870,6 +6893,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT make_geohash(2.0, 41.0, 20) FROM days"),
     (os.environ["DIFF_H2"], "SELECT to_uuid(1, 2) FROM days"),
     (os.environ["DIFF_H2"], "SELECT json_extract('{\"a\":1}', '$.a') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT to_char(from_base64('YWI=')) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

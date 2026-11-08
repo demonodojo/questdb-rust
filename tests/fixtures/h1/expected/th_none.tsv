@@ -1,0 +1,1 @@
+to_char(from_base64('YWI='))
