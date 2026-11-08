@@ -3236,7 +3236,10 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   jn_id "SELECT a.id, b.id FROM sensors a JOIN sensors b ON a.id = b.id" \
   jn_inner "SELECT a.id, b.id FROM sensors a INNER JOIN sensors b ON a.id = b.id" \
   jn_where "SELECT a.id, b.note FROM sensors a JOIN sensors b ON a.id = b.id WHERE a.id = 1" \
-  jl_loc "SELECT a.location, b.id FROM sensors a JOIN sensors b ON a.location = b.location"
+  jl_loc "SELECT a.location, b.id FROM sensors a JOIN sensors b ON a.location = b.location" \
+  jd_loc "SELECT a.id, b.id FROM sensors a JOIN days b ON a.location = b.location" \
+  jd_id "SELECT a.id, b.id FROM sensors a JOIN days b ON a.id = b.id" \
+  jd_note "SELECT a.id, b.note FROM sensors a JOIN days b ON a.id = b.id"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -6798,6 +6801,9 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT a.id, b.id FROM sensors a INNER JOIN sensors b ON a.id = b.id"),
     (os.environ["DIFF_H1"], "SELECT a.id, b.note FROM sensors a JOIN sensors b ON a.id = b.id WHERE a.id = 1"),
     (os.environ["DIFF_H1"], "SELECT a.location, b.id FROM sensors a JOIN sensors b ON a.location = b.location"),
+    (os.environ["DIFF_H1"], "SELECT a.id, b.id FROM sensors a JOIN days b ON a.location = b.location"),
+    (os.environ["DIFF_H1"], "SELECT a.id, b.id FROM sensors a JOIN days b ON a.id = b.id"),
+    (os.environ["DIFF_H1"], "SELECT a.id, b.note FROM sensors a JOIN days b ON a.id = b.id"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),

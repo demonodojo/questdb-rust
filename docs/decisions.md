@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `JOIN` entre `sensors` y `days`
+
+El lado derecho puede ser otra tabla. Por `location`, `sensors` contra `days` devuelve `1`/`3`, `1`/`1`, `2`/`2`, `NULL`/`3`, `NULL`/`1` y `-1`/`NULL`. Por `id` quedan tres filas, y la nota del `id` nulo es `東京`. Se contrastó con `/exec`.
+
 ## 2026-11-08 — `JOIN` por `location`
 
 Cuando la clave se repite, las filas del lado derecho salen de la más reciente a la más antigua. `a.location = b.location` devuelve seis filas: `madrid` con el `id` nulo y después con `1`, el `NULL` con `2`, otra vez `madrid`, y `東京` con `-1`. Se contrastó con `/exec`.
