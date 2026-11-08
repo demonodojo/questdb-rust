@@ -14,7 +14,7 @@ use crate::parse::{
     SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
     TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr,
     ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr,
-    UpperExpr, WeekOfYearExpr, WmidExpr, YearExpr,
+    UpperExpr, VersionExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -308,6 +308,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::CurrentUser { label, .. }
             | ResolvedProj::SessionUser { label, .. }
             | ResolvedProj::CurrentCatalog { label, .. }
+            | ResolvedProj::Version { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -803,6 +804,9 @@ enum ResolvedProj {
     CurrentCatalog {
         label: String,
     },
+    Version {
+        label: String,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -983,6 +987,7 @@ impl ResolvedProj {
             | Self::CurrentUser { label, .. }
             | Self::SessionUser { label, .. }
             | Self::CurrentCatalog { label, .. }
+            | Self::Version { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1059,7 +1064,8 @@ impl ResolvedProj {
             | Self::CurrentDatabase { .. }
             | Self::CurrentUser { .. }
             | Self::SessionUser { .. }
-            | Self::CurrentCatalog { .. } => qdb_types::TAG_STRING,
+            | Self::CurrentCatalog { .. }
+            | Self::Version { .. } => qdb_types::TAG_STRING,
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
             | Self::Add { result_tag, .. }
@@ -1207,6 +1213,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::CurrentUser(expr) => resolve_current_user(expr),
         Proj::SessionUser(expr) => resolve_session_user(expr),
         Proj::CurrentCatalog(expr) => resolve_current_catalog(expr),
+        Proj::Version(expr) => resolve_version(expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1523,6 +1530,18 @@ fn least_i64(table: &Table, row: usize, arg: &GreatestArg) -> Option<i64> {
             _ => None,
         },
     }
+}
+
+fn resolve_version(expr: &VersionExpr) -> Result<ResolvedProj, Error> {
+    if !expr.args.is_empty() {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `version`; expected: 0, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::Version {
+        label: expr.label.clone(),
+    })
 }
 
 fn resolve_current_catalog(expr: &CurrentCatalogExpr) -> Result<ResolvedProj, Error> {
@@ -8177,6 +8196,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::CurrentUser { .. } => Scalar::Text("admin".to_string()),
         ResolvedProj::SessionUser { .. } => Scalar::Text("admin".to_string()),
         ResolvedProj::CurrentCatalog { .. } => Scalar::Text("qdb".to_string()),
+        ResolvedProj::Version { .. } => Scalar::Text(
+            "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit, QuestDB".to_string(),
+        ),
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39398,6 +39420,61 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn vn_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT version() FROM sensors",
+                "expected/vn_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT VERSION() FROM sensors",
+                "expected/vn_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT version() FROM sensors WHERE id = 1",
+                "expected/vn_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT version() FROM sensors WHERE id > 100",
+                "expected/vn_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT version() FROM sensors LIMIT 0",
+                "expected/vn_lim0.tsv",
+            ),
+            (&days, "SELECT version() FROM days", "expected/vn_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT version(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `version`; expected: 0, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT version(1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `version`; expected: 0, provided: 1"
+            ),
             "{}",
             err.message
         );
