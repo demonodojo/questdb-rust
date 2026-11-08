@@ -47,6 +47,8 @@ pub struct EquiJoin {
     pub left_outer: bool,
     /// `RIGHT JOIN` keeps a right row when the left side has no match.
     pub right_outer: bool,
+    /// `CROSS JOIN` pairs every left row with every right row and has no `ON`.
+    pub cross: bool,
 }
 
 /// Inclusive numeric series produced by `generate_series`.
@@ -2148,7 +2150,12 @@ impl<'a> Parser<'a> {
         } else {
             self.eat_keyword("inner")
         };
-        let joined = if left_outer || right_outer || full || inner {
+        let cross = if left_outer || right_outer || full || inner {
+            false
+        } else {
+            self.eat_keyword("cross")
+        };
+        let joined = if left_outer || right_outer || full || inner || cross {
             self.expect_keyword("join")?;
             true
         } else {
@@ -2159,6 +2166,21 @@ impl<'a> Parser<'a> {
         }
         let right_table = self.ident()?;
         let right_alias = self.ident()?;
+        if cross {
+            if self.eat_keyword("on") {
+                return Err(Error::new("Cross joins cannot have join clauses"));
+            }
+            return Ok(Some(EquiJoin {
+                left_alias: left_alias.unwrap_or_default(),
+                right_table,
+                right_alias,
+                left_column: String::new(),
+                right_column: String::new(),
+                left_outer: false,
+                right_outer: false,
+                cross: true,
+            }));
+        }
         if !self.eat_keyword("on") {
             return Err(Error::new("'on' expected"));
         }
@@ -2184,12 +2206,13 @@ impl<'a> Parser<'a> {
                 .to_string(),
             left_outer: left_outer || full,
             right_outer: right_outer || full,
+            cross: false,
         }))
     }
 
     fn clause_keyword_ahead(&mut self) -> bool {
         [
-            "where", "group", "order", "limit", "join", "inner", "left", "right", "full",
+            "where", "group", "order", "limit", "join", "inner", "left", "right", "full", "cross",
         ]
         .into_iter()
         .any(|word| {

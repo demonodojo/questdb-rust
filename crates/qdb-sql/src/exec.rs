@@ -55,6 +55,65 @@ pub fn execute(data_dir: &Path, sql: &str) -> Result<QueryResult, Error> {
     execute_on(&table, &query)
 }
 
+fn cross_join_table(left: &Table, right: &Table, join: &EquiJoin) -> Result<Table, Error> {
+    let width = left.columns.len() + right.columns.len();
+    let mut columns = Vec::with_capacity(width);
+    for _ in 0..width {
+        columns.push(Vec::new());
+    }
+    for left_row in 0..left.row_count() {
+        for right_row in 0..right.row_count() {
+            for (column_index, column) in left.columns.iter().enumerate() {
+                columns[column_index].push(column[left_row].clone());
+            }
+            for (column_index, column) in right.columns.iter().enumerate() {
+                columns[left.columns.len() + column_index].push(column[right_row].clone());
+            }
+        }
+    }
+    let mut meta_columns = Vec::with_capacity(columns.len());
+    for column in &left.meta.columns {
+        meta_columns.push(ColumnMeta {
+            name: format!("{}.{}", join.left_alias, column.name.to_ascii_lowercase()),
+            raw_type: column.raw_type,
+            tag: column.tag,
+            symbol_index: column.symbol_index,
+        });
+    }
+    for column in &right.meta.columns {
+        meta_columns.push(ColumnMeta {
+            name: format!("{}.{}", join.right_alias, column.name.to_ascii_lowercase()),
+            raw_type: column.raw_type,
+            tag: column.tag,
+            symbol_index: None,
+        });
+    }
+    let rows = columns.first().map(Vec::len).unwrap_or(0);
+    Ok(Table {
+        name: left.name.clone(),
+        meta: TableMeta {
+            column_count: meta_columns.len(),
+            partition_by: PARTITION_BY_NONE,
+            timestamp_index: -1,
+            version: qdb_types::METADATA_VERSION_10_1_0,
+            table_id: left.meta.table_id,
+            wal_enabled: false,
+            columns: meta_columns,
+        },
+        txn: TxnHeader {
+            txn: 0,
+            transient_row_count: i64::try_from(rows).unwrap_or(i64::MAX),
+            fixed_row_count: 0,
+            min_timestamp: i64::MIN,
+            max_timestamp: i64::MIN,
+            symbol_counts: Vec::new(),
+            partitions: Vec::new(),
+        },
+        columns,
+        symbol_maps: left.symbol_maps.clone(),
+    })
+}
+
 fn equi_join_table(left: &Table, data_dir: &Path, join: &EquiJoin) -> Result<Table, Error> {
     let owned;
     let right = if join.right_table.eq_ignore_ascii_case(&left.name) {
@@ -63,6 +122,9 @@ fn equi_join_table(left: &Table, data_dir: &Path, join: &EquiJoin) -> Result<Tab
         owned = open_table(data_dir, &join.right_table)?;
         &owned
     };
+    if join.cross {
+        return cross_join_table(left, right, join);
+    }
     let left_index = left
         .column_index(&join.left_column)
         .ok_or_else(|| Error::new(format!("Invalid column: {}", join.left_column)))?;
@@ -41774,6 +41836,28 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn cj_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let result = execute(
+            &sensors,
+            "SELECT a.id, b.id FROM sensors a CROSS JOIN days b",
+        )
+        .unwrap();
+        let expected = std::fs::read_to_string(sensors.join("expected/cj_id.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let err = execute(
+            &sensors,
+            "SELECT a.id FROM sensors a CROSS JOIN days b ON a.id = b.id",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains("Cross joins cannot have join clauses"),
             "{}",
             err.message
         );
