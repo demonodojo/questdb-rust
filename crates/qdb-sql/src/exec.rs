@@ -2,20 +2,20 @@ use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AddExpr, AggFunc,
     AggregateExpr, AggregateExtra, AndExpr, AndRight, ArithOp, AsinExpr, Atan2Expr, AtanExpr,
     BarExpr, BetweenExpr, BitNotExpr, BoolOp, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg,
-    CosExpr, CotExpr, CurrentCatalogExpr, CurrentDatabaseExpr, CurrentSchemaExpr, CurrentUserExpr,
-    DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr,
-    DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, FormatTypeExpr,
-    GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr,
-    IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr,
-    MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NotExpr,
-    NullIfExpr, PadExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
-    RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
-    RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr,
-    SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
-    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
-    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
-    VersionExpr, WeekOfYearExpr, WmidExpr, YearExpr,
+    CosExpr, CotExpr, CurrentCatalogExpr, CurrentDatabaseExpr, CurrentSchemaExpr,
+    CurrentSettingExpr, CurrentUserExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
+    DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr,
+    ExtractExpr, Filter, FloorExpr, FormatTypeExpr, GlobExpr, GreatestExpr, GroupedSelect,
+    HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr,
+    LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr,
+    MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PgIsInRecoveryExpr, PiExpr,
+    PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr,
+    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
+    SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
+    SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
+    SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr,
+    ToDateExpr, ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd,
+    TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -313,6 +313,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Version { label, .. }
             | ResolvedProj::PgIsInRecovery { label, .. }
             | ResolvedProj::FormatType { label, .. }
+            | ResolvedProj::CurrentSetting { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -821,6 +822,10 @@ enum ResolvedProj {
     FormatType {
         label: String,
     },
+    CurrentSetting {
+        label: String,
+        value: String,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -1005,6 +1010,7 @@ impl ResolvedProj {
             | Self::Version { label, .. }
             | Self::PgIsInRecovery { label, .. }
             | Self::FormatType { label, .. }
+            | Self::CurrentSetting { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1083,7 +1089,8 @@ impl ResolvedProj {
             | Self::SessionUser { .. }
             | Self::CurrentCatalog { .. }
             | Self::Version { .. }
-            | Self::FormatType { .. } => qdb_types::TAG_STRING,
+            | Self::FormatType { .. }
+            | Self::CurrentSetting { .. } => qdb_types::TAG_STRING,
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
             | Self::Add { result_tag, .. }
@@ -1235,6 +1242,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Version(expr) => resolve_version(expr),
         Proj::PgIsInRecovery(expr) => resolve_pg_is_in_recovery(expr),
         Proj::FormatType(expr) => resolve_format_type(table, expr),
+        Proj::CurrentSetting(expr) => resolve_current_setting(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1573,6 +1581,52 @@ fn resolve_format_type(table: &Table, expr: &FormatTypeExpr) -> Result<ResolvedP
     }
     Ok(ResolvedProj::FormatType {
         label: expr.label.clone(),
+    })
+}
+
+fn resolve_current_setting(
+    table: &Table,
+    expr: &CurrentSettingExpr,
+) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `current_setting`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let value = match &expr.args[0] {
+        ConcatArg::Literal(Scalar::Null) => String::new(),
+        ConcatArg::Literal(Scalar::Text(text)) => {
+            if text.eq_ignore_ascii_case("server_version_num") {
+                "123000".to_string()
+            } else {
+                String::new()
+            }
+        }
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            let actual = qdb_types::type_name(table.meta.columns[index].tag);
+            let expected = if actual == "STRING" {
+                "STRING constant"
+            } else {
+                "STRING"
+            };
+            return Err(Error::new(format!(
+                "argument type mismatch for function `current_setting` at #1 expected: {expected}, actual: {actual}"
+            )));
+        }
+        ConcatArg::Literal(other) => {
+            return Err(Error::new(format!(
+                "argument type mismatch for function `current_setting` at #1 expected: STRING, actual: {}",
+                literal_sql_type(other)
+            )));
+        }
+    };
+    Ok(ResolvedProj::CurrentSetting {
+        label: expr.label.clone(),
+        value,
     })
 }
 
@@ -8284,6 +8338,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ),
         ResolvedProj::PgIsInRecovery { .. } => Scalar::Boolean(false),
         ResolvedProj::FormatType { .. } => Scalar::Null,
+        ResolvedProj::CurrentSetting { value, .. } => Scalar::Text(value.clone()),
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39509,6 +39564,100 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn cw_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT current_setting('server_version') FROM sensors",
+                "expected/cw_ver.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT CURRENT_SETTING('server_version') FROM sensors LIMIT 1",
+                "expected/cw_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_setting('server_version') FROM sensors WHERE id = 1",
+                "expected/cw_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_setting('server_version') FROM sensors WHERE id > 100",
+                "expected/cw_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_setting('server_version') FROM sensors LIMIT 0",
+                "expected/cw_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_setting(null) FROM sensors LIMIT 1",
+                "expected/cw_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_setting('') FROM sensors LIMIT 1",
+                "expected/cw_empty.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_setting('cairo.wal.enabled.default') FROM sensors LIMIT 1",
+                "expected/cw_wal.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_setting('http.bind.to') FROM sensors LIMIT 1",
+                "expected/cw_bind.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_setting('server_version_num') FROM sensors LIMIT 1",
+                "expected/cw_num.tsv",
+            ),
+            (
+                &days,
+                "SELECT current_setting('server_version') FROM days",
+                "expected/cw_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let mismatches = [
+            (
+                "SELECT current_setting(note) FROM sensors",
+                "argument type mismatch for function `current_setting` at #1 expected: STRING constant, actual: STRING",
+            ),
+            (
+                "SELECT current_setting(1) FROM sensors",
+                "argument type mismatch for function `current_setting` at #1 expected: STRING, actual: INT",
+            ),
+            (
+                "SELECT current_setting() FROM sensors",
+                "function `current_setting` requires arguments: current_setting(STRING constant)",
+            ),
+            (
+                "SELECT current_setting('server_version', true) FROM sensors",
+                "wrong number of arguments for function `current_setting`; expected: 1, provided: 2",
+            ),
+            (
+                "SELECT current_setting(missing) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

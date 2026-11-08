@@ -314,6 +314,7 @@ pub enum Proj {
     Version(VersionExpr),
     PgIsInRecovery(PgIsInRecoveryExpr),
     FormatType(FormatTypeExpr),
+    CurrentSetting(CurrentSettingExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1109,6 +1110,13 @@ pub struct FormatTypeExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `current_setting(name)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CurrentSettingExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `greatest(number, ...)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreatestExpr {
@@ -1360,6 +1368,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_pg_is_in_recovery()?.label
             } else if parser.starts_format_type_call() {
                 parser.parse_format_type()?.label
+            } else if parser.starts_current_setting_call() {
+                parser.parse_current_setting()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
             } else if parser.starts_least_call() {
@@ -1521,6 +1531,7 @@ enum SelectPiece {
     Version(VersionExpr),
     PgIsInRecovery(PgIsInRecoveryExpr),
     FormatType(FormatTypeExpr),
+    CurrentSetting(CurrentSettingExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1807,6 +1818,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::PgIsInRecovery(self.parse_pg_is_in_recovery()?));
             } else if self.starts_format_type_call() {
                 pieces.push(SelectPiece::FormatType(self.parse_format_type()?));
+            } else if self.starts_current_setting_call() {
+                pieces.push(SelectPiece::CurrentSetting(self.parse_current_setting()?));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else if self.starts_least_call() {
@@ -1987,6 +2000,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Version(_)
                     | SelectPiece::PgIsInRecovery(_)
                     | SelectPiece::FormatType(_)
+                    | SelectPiece::CurrentSetting(_)
                     | SelectPiece::Greatest(_)
                     | SelectPiece::Least(_)
             )
@@ -2106,6 +2120,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Version(expr) => items.push(Proj::Version(expr)),
                     SelectPiece::PgIsInRecovery(expr) => items.push(Proj::PgIsInRecovery(expr)),
                     SelectPiece::FormatType(expr) => items.push(Proj::FormatType(expr)),
+                    SelectPiece::CurrentSetting(expr) => items.push(Proj::CurrentSetting(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
@@ -2245,6 +2260,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Version(_)
                 | SelectPiece::PgIsInRecovery(_)
                 | SelectPiece::FormatType(_)
+                | SelectPiece::CurrentSetting(_)
                 | SelectPiece::Greatest(_)
                 | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
@@ -2417,6 +2433,25 @@ impl<'a> Parser<'a> {
         let name = self.ident_spelling()?;
         let (labels, args) = self.parse_call_args(&name, true)?;
         Ok(PgIsInRecoveryExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_current_setting_call(&self) -> bool {
+        self.starts_named_call("current_setting")
+    }
+
+    fn parse_current_setting(&mut self) -> Result<CurrentSettingExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `current_setting` requires arguments: current_setting(STRING constant)"
+                    .to_string(),
+            ));
+        }
+        Ok(CurrentSettingExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

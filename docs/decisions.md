@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `current_setting()`
+
+`current_setting` devuelve una cadena vacía de tipo `STRING` para una constante de texto o un nulo. `server_version_num`, sin distinguir mayúsculas, devuelve `123000`. Una columna de texto se rechaza porque el argumento tiene que ser una constante: `expected: STRING constant, actual: STRING`. Un entero se rechaza con `expected: STRING, actual: INT`. Sin argumentos exige `current_setting(STRING constant)`. Dos argumentos dicen `expected: 1, provided: 2`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `regexp_replace()`
 
 `regexp_replace` sustituye cada aparición literal del patrón. El tipo es `STRING`. `regexp_replace(note, 'a', 'b')` devuelve `blphb`, `NULL`, una cadena vacía y `βetb`. `REGEXP_REPLACE` conserva las mayúsculas. En `days` devuelve `blphb`, `NULL`, `betb` y `東京`. Un valor, un patrón o un reemplazo nulos dejan `NULL`. `regexp_replace('alpha', 'a', 'b')` devuelve `blphb`. Sin argumentos exige argumentos y no publica firma. Dos argumentos, un `LONG` o un patrón entero se rechazan con `there is no matching function `regexp_replace``. Una columna ausente es `Invalid column: missing`. Se contrastó con `/exec` en `sensors` y `days`.

@@ -2896,7 +2896,17 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rr_null "SELECT regexp_replace(null, 'a', 'b') FROM sensors LIMIT 1" \
   rr_pat "SELECT regexp_replace(note, null, 'b') FROM sensors" \
   rr_rep "SELECT regexp_replace(note, 'a', null) FROM sensors" \
-  rr_lit "SELECT regexp_replace('alpha', 'a', 'b') FROM sensors LIMIT 1"
+  rr_lit "SELECT regexp_replace('alpha', 'a', 'b') FROM sensors LIMIT 1" \
+  cw_ver "SELECT current_setting('server_version') FROM sensors" \
+  cw_case "SELECT CURRENT_SETTING('server_version') FROM sensors LIMIT 1" \
+  cw_one "SELECT current_setting('server_version') FROM sensors WHERE id = 1" \
+  cw_none "SELECT current_setting('server_version') FROM sensors WHERE id > 100" \
+  cw_lim0 "SELECT current_setting('server_version') FROM sensors LIMIT 0" \
+  cw_null "SELECT current_setting(null) FROM sensors LIMIT 1" \
+  cw_empty "SELECT current_setting('') FROM sensors LIMIT 1" \
+  cw_wal "SELECT current_setting('cairo.wal.enabled.default') FROM sensors LIMIT 1" \
+  cw_bind "SELECT current_setting('http.bind.to') FROM sensors LIMIT 1" \
+  cw_num "SELECT current_setting('server_version_num') FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3252,7 +3262,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   vn_days "SELECT version() FROM days" \
   pr_days "SELECT pg_is_in_recovery() FROM days" \
   ft_days "SELECT format_type(1, 1) FROM days" \
-  rr_days "SELECT regexp_replace(note, 'a', 'b') FROM days"
+  rr_days "SELECT regexp_replace(note, 'a', 'b') FROM days" \
+  cw_days "SELECT current_setting('server_version') FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6096,6 +6107,16 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT regexp_replace(note, null, 'b') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT regexp_replace(note, 'a', null) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT regexp_replace('alpha', 'a', 'b') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT current_setting('server_version') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT CURRENT_SETTING('server_version') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT current_setting('server_version') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT current_setting('server_version') FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT current_setting('server_version') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT current_setting(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT current_setting('') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT current_setting('cairo.wal.enabled.default') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT current_setting('http.bind.to') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT current_setting('server_version_num') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6450,6 +6471,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT pg_is_in_recovery() FROM days"),
     (os.environ["DIFF_H2"], "SELECT format_type(1, 1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT regexp_replace(note, 'a', 'b') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT current_setting('server_version') FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
