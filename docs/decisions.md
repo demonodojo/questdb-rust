@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `::date`
+
+`column::date` convierte una columna a `DATE` y el encabezado conserva la grafía. Un nulo sigue siendo `NULL` y un texto es `NULL`. Un entero es milisegundos desde la época y un timestamp conserva el instante hasta el milisegundo. `id::date` es `1970-01-01T00:00:00.001Z`, `1970-01-01T00:00:00.002Z`, `NULL` y `1969-12-31T23:59:59.999Z`. En `days` es `1970-01-01T00:00:00.001Z`, `1970-01-01T00:00:00.002Z`, `1970-01-01T00:00:00.003Z` y `NULL`. `day::date` es `2020-01-02T00:00:00.000Z`, `NULL`, `1970-01-01T00:00:00.000Z` y `2020-06-15T12:30:00.000Z`. `ts::date` es `2020-01-02T03:04:05.000Z`, `2020-01-02T03:04:06.000Z`, `2020-01-02T03:04:07.000Z` y `2020-01-02T03:04:08.000Z`. `note::date` es `NULL` en las cuatro filas. `flags::date` es `1970-01-01T00:00:00.010Z`, `NULL`, `1970-01-01T00:00:00.000Z` y `1970-01-01T00:00:00.042Z`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `::varchar`
 
 `column::varchar` convierte una columna a `VARCHAR` y el encabezado conserva la grafía. Un nulo sigue siendo `NULL`, el carácter cero es `NULL` y una cadena vacía sigue vacía. Un número se escribe en decimal. `note::varchar` es `alpha`, `NULL`, vacío y `βeta`. En `days` es `alpha`, `NULL`, `beta` y `東京`. `location::varchar` es `madrid`, `NULL`, `madrid` y `東京`. `id::varchar` es `1`, `2`, `NULL` y `-1`. `ch::varchar` es `A`, `NULL`, `β` y `東`. `tag::varchar` es `v1`, `NULL`, `héllo` y `0123456789ABCDEF`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.
