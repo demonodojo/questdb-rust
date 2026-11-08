@@ -96,6 +96,7 @@ fn equi_join_table(left: &Table, data_dir: &Path, join: &EquiJoin) -> Result<Tab
     for _ in 0..left.columns.len() + right.columns.len() {
         columns.push(Vec::new());
     }
+    let mut emitted = vec![false; right.row_count()];
     for left_row in 0..left.row_count() {
         let key = &left.columns[left_index][left_row];
         let mut matched = None;
@@ -117,11 +118,25 @@ fn equi_join_table(left: &Table, data_dir: &Path, join: &EquiJoin) -> Result<Tab
             continue;
         };
         for right_row in &chains[index].1 {
+            emitted[*right_row] = true;
             for (column_index, column) in left.columns.iter().enumerate() {
                 columns[column_index].push(column[left_row].clone());
             }
             for (column_index, column) in right.columns.iter().enumerate() {
                 columns[left.columns.len() + column_index].push(column[*right_row].clone());
+            }
+        }
+    }
+    if join.right_outer {
+        for right_row in 0..right.row_count() {
+            if emitted[right_row] {
+                continue;
+            }
+            for column_index in 0..left.columns.len() {
+                columns[column_index].push(Scalar::Null);
+            }
+            for (column_index, column) in right.columns.iter().enumerate() {
+                columns[left.columns.len() + column_index].push(column[right_row].clone());
             }
         }
     }
@@ -41762,6 +41777,26 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn rj_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT a.id, b.id FROM sensors a RIGHT JOIN days b ON a.id = b.id",
+                "expected/rj_id.tsv",
+            ),
+            (
+                "SELECT a.id, b.note FROM sensors a RIGHT JOIN days b ON a.id = b.id",
+                "expected/rj_note.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
     }
 
     #[test]
