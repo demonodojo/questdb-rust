@@ -2612,10 +2612,19 @@ impl<'a> Parser<'a> {
 
     fn starts_current_schema_call(&self) -> bool {
         self.starts_named_call("current_schema")
+            || self.starts_qualified_call("pg_catalog", "current_schema")
     }
 
     fn parse_current_schema(&mut self) -> Result<CurrentSchemaExpr, Error> {
-        let name = self.ident_spelling()?;
+        let first = self.ident_spelling()?;
+        self.skip();
+        let name = if self.eat(b'.') {
+            self.skip();
+            let second = self.ident_spelling()?;
+            format!("{first}.{second}")
+        } else {
+            first
+        };
         let (labels, args) = self.parse_call_args(&name, true)?;
         Ok(CurrentSchemaExpr {
             label: format!("{name}({})", labels.join(", ")),
@@ -4301,6 +4310,37 @@ impl<'a> Parser<'a> {
                 to_char: None,
             });
         }
+        if self.argument_is_current_schema() {
+            self.skip();
+            self.eat(b'(');
+            self.skip();
+            let inner = self.parse_current_schema()?;
+            self.skip();
+            if !self.eat(b')') {
+                return Err(Error::new(
+                    "unsupported: expected ')' after typeof".to_string(),
+                ));
+            }
+            if !inner.args.is_empty() {
+                let reported = if inner.label.to_ascii_lowercase().contains("pg_catalog.") {
+                    "pg_catalog.current_schema"
+                } else {
+                    "current_schema"
+                };
+                return Err(Error::new(format!(
+                    "wrong number of arguments for function `{reported}`; expected: 0, provided: {}",
+                    inner.args.len()
+                )));
+            }
+            return Ok(TypeofExpr {
+                label: format!("{name}({})", inner.label),
+                args: vec![ConcatArg::Literal(Scalar::Text("schema".to_string()))],
+                geohash: None,
+                uuid: None,
+                json: None,
+                to_char: None,
+            });
+        }
         if self.argument_is_version() {
             self.skip();
             self.eat(b'(');
@@ -4452,6 +4492,16 @@ impl<'a> Parser<'a> {
         let open = self.eat(b'(');
         self.skip();
         let nested = open && self.starts_pg_get_userbyid_call();
+        self.pos = saved;
+        nested
+    }
+
+    fn argument_is_current_schema(&mut self) -> bool {
+        let saved = self.pos;
+        self.skip();
+        let open = self.eat(b'(');
+        self.skip();
+        let nested = open && self.starts_current_schema_call();
         self.pos = saved;
         nested
     }

@@ -3147,7 +3147,13 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ag_one "SELECT pg_catalog.age(1) FROM sensors WHERE id = 1" \
   ag_none "SELECT pg_catalog.age(1) FROM sensors WHERE id > 100" \
   ag_lim0 "SELECT pg_catalog.age(1) FROM sensors LIMIT 0" \
-  ag_type "SELECT typeof(pg_catalog.age(1)) FROM sensors LIMIT 1"
+  ag_type "SELECT typeof(pg_catalog.age(1)) FROM sensors LIMIT 1" \
+  qs_all "SELECT pg_catalog.current_schema() FROM sensors" \
+  qs_case "SELECT pg_catalog.CURRENT_SCHEMA() FROM sensors LIMIT 1" \
+  qs_one "SELECT pg_catalog.current_schema() FROM sensors WHERE id = 1" \
+  qs_none "SELECT pg_catalog.current_schema() FROM sensors WHERE id > 100" \
+  qs_lim0 "SELECT pg_catalog.current_schema() FROM sensors LIMIT 0" \
+  qs_type "SELECT typeof(pg_catalog.current_schema()) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3520,7 +3526,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   pv_days "SELECT pg_catalog.version() FROM days" \
   ub_days "SELECT pg_catalog.pg_get_userbyid(1) FROM days" \
   tv_days "SELECT pg_catalog.pg_table_is_visible(1) FROM days" \
-  ag_days "SELECT pg_catalog.age(1) FROM days"
+  ag_days "SELECT pg_catalog.age(1) FROM days" \
+  qs_days "SELECT pg_catalog.current_schema() FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6615,6 +6622,12 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_catalog.age(1) FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.age(1) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.age(1)) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.current_schema() FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.CURRENT_SCHEMA() FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.current_schema() FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.current_schema() FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.current_schema() FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.current_schema()) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6986,6 +6999,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT pg_catalog.pg_get_userbyid(1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_catalog.pg_table_is_visible(1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_catalog.age(1) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT pg_catalog.current_schema() FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
