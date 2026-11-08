@@ -255,6 +255,7 @@ pub enum Proj {
     Micros(MicrosExpr),
     Nanos(NanosExpr),
     ToUtc(ToUtcExpr),
+    ToTimezone(ToTimezoneExpr),
     DayOfWeek(DayOfWeekExpr),
     WeekOfYear(WeekOfYearExpr),
     DateTrunc(DateTruncExpr),
@@ -591,6 +592,13 @@ pub struct NanosExpr {
 /// `to_utc(timestamp, timezone)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToUtcExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `to_timezone(timestamp, timezone)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToTimezoneExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -1164,6 +1172,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_nanos()?.label
             } else if parser.starts_to_utc_call() {
                 parser.parse_to_utc()?.label
+            } else if parser.starts_to_timezone_call() {
+                parser.parse_to_timezone()?.label
             } else if parser.starts_day_of_week_call() {
                 parser.parse_day_of_week()?.label
             } else if parser.starts_week_of_year_call() {
@@ -1352,6 +1362,7 @@ enum SelectPiece {
     Micros(MicrosExpr),
     Nanos(NanosExpr),
     ToUtc(ToUtcExpr),
+    ToTimezone(ToTimezoneExpr),
     DayOfWeek(DayOfWeekExpr),
     WeekOfYear(WeekOfYearExpr),
     DateTrunc(DateTruncExpr),
@@ -1574,6 +1585,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Nanos(self.parse_nanos()?));
             } else if self.starts_to_utc_call() {
                 pieces.push(SelectPiece::ToUtc(self.parse_to_utc()?));
+            } else if self.starts_to_timezone_call() {
+                pieces.push(SelectPiece::ToTimezone(self.parse_to_timezone()?));
             } else if self.starts_day_of_week_call() {
                 pieces.push(SelectPiece::DayOfWeek(self.parse_day_of_week()?));
             } else if self.starts_week_of_year_call() {
@@ -1785,6 +1798,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Micros(_)
                     | SelectPiece::Nanos(_)
                     | SelectPiece::ToUtc(_)
+                    | SelectPiece::ToTimezone(_)
                     | SelectPiece::DayOfWeek(_)
                     | SelectPiece::WeekOfYear(_)
                     | SelectPiece::DateTrunc(_)
@@ -1891,6 +1905,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Micros(expr) => items.push(Proj::Micros(expr)),
                     SelectPiece::Nanos(expr) => items.push(Proj::Nanos(expr)),
                     SelectPiece::ToUtc(expr) => items.push(Proj::ToUtc(expr)),
+                    SelectPiece::ToTimezone(expr) => items.push(Proj::ToTimezone(expr)),
                     SelectPiece::DayOfWeek(expr) => items.push(Proj::DayOfWeek(expr)),
                     SelectPiece::WeekOfYear(expr) => items.push(Proj::WeekOfYear(expr)),
                     SelectPiece::DateTrunc(expr) => items.push(Proj::DateTrunc(expr)),
@@ -2021,6 +2036,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Micros(_)
                 | SelectPiece::Nanos(_)
                 | SelectPiece::ToUtc(_)
+                | SelectPiece::ToTimezone(_)
                 | SelectPiece::DayOfWeek(_)
                 | SelectPiece::WeekOfYear(_)
                 | SelectPiece::DateTrunc(_)
@@ -3875,6 +3891,25 @@ impl<'a> Parser<'a> {
 
     fn starts_to_utc_call(&self) -> bool {
         self.starts_named_call("to_utc")
+    }
+
+    fn starts_to_timezone_call(&self) -> bool {
+        self.starts_named_call("to_timezone")
+    }
+
+    fn parse_to_timezone(&mut self) -> Result<ToTimezoneExpr, Error> {
+        let name = self.ident_spelling()?;
+        let fname = name.to_ascii_lowercase();
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{fname}` requires arguments: {fname}(TIMESTAMP, STRING)"
+            )));
+        }
+        Ok(ToTimezoneExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn parse_to_utc(&mut self) -> Result<ToUtcExpr, Error> {

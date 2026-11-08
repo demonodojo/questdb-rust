@@ -12,8 +12,8 @@ use crate::parse::{
     Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr,
     SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr,
     TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr,
-    ToTimestampExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr,
-    YearExpr,
+    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
+    WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -252,6 +252,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Micros { label, .. }
             | ResolvedProj::Nanos { label, .. }
             | ResolvedProj::ToUtc { label, .. }
+            | ResolvedProj::ToTimezone { label, .. }
             | ResolvedProj::DayOfWeek { label, .. }
             | ResolvedProj::WeekOfYear { label, .. }
             | ResolvedProj::DateTrunc { label, .. }
@@ -534,6 +535,11 @@ enum ResolvedProj {
         value: DateDiffSide,
     },
     ToUtc {
+        label: String,
+        index: usize,
+        zone: UtcZone,
+    },
+    ToTimezone {
         label: String,
         index: usize,
         zone: UtcZone,
@@ -889,6 +895,7 @@ impl ResolvedProj {
             | Self::Micros { label, .. }
             | Self::Nanos { label, .. }
             | Self::ToUtc { label, .. }
+            | Self::ToTimezone { label, .. }
             | Self::DayOfWeek { label, .. }
             | Self::WeekOfYear { label, .. }
             | Self::DateTrunc { label, .. }
@@ -953,7 +960,9 @@ impl ResolvedProj {
             | Self::RoundHalfEven { .. } => qdb_types::TAG_DOUBLE,
             Self::Coalesce { result_tag, .. } | Self::NullIf { result_tag, .. } => *result_tag,
             Self::Cast { type_tag, .. } => *type_tag,
-            Self::DateAdd { .. } | Self::ToUtc { .. } => qdb_types::TAG_TIMESTAMP,
+            Self::DateAdd { .. } | Self::ToUtc { .. } | Self::ToTimezone { .. } => {
+                qdb_types::TAG_TIMESTAMP
+            }
             Self::DateDiff { .. } => qdb_types::TAG_LONG,
             Self::Year { .. }
             | Self::Month { .. }
@@ -1099,6 +1108,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Micros(expr) => resolve_micros(table, expr),
         Proj::Nanos(expr) => resolve_nanos(table, expr),
         Proj::ToUtc(expr) => resolve_to_utc(table, expr),
+        Proj::ToTimezone(expr) => resolve_to_timezone(table, expr),
         Proj::DayOfWeek(expr) => resolve_day_of_week(table, expr),
         Proj::WeekOfYear(expr) => resolve_week_of_year(table, expr),
         Proj::DateTrunc(expr) => resolve_date_trunc(table, expr),
@@ -4689,14 +4699,42 @@ fn to_utc_zone(arg: &ConcatArg) -> Result<UtcZone, Error> {
     }
 }
 
-fn to_utc_scalar(table: &Table, row: usize, index: usize, zone: UtcZone) -> Scalar {
-    let local = match table.columns[index][row] {
+fn resolve_to_timezone(table: &Table, expr: &ToTimezoneExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `to_timezone`; expected: 2, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::ToTimezone {
+        label: expr.label.clone(),
+        index: to_utc_column(table, &expr.args[0])?,
+        zone: to_utc_zone(&expr.args[1])?,
+    })
+}
+
+fn to_timezone_scalar(table: &Table, row: usize, index: usize, zone: UtcZone) -> Scalar {
+    let local = to_zone_local(table, row, index);
+    let shifted = local.wrapping_add(utc_offset(zone, local));
+    if shifted == i64::MIN {
+        Scalar::Null
+    } else {
+        Scalar::Timestamp(shifted)
+    }
+}
+
+fn to_zone_local(table: &Table, row: usize, index: usize) -> i64 {
+    match table.columns[index][row] {
         Scalar::Null => i64::MIN,
         Scalar::Timestamp(number) | Scalar::Long(number) => number,
         Scalar::Int(number) => i64::from(number),
         Scalar::Date(millis) => millis.wrapping_mul(1_000),
         _ => i64::MIN,
-    };
+    }
+}
+
+fn to_utc_scalar(table: &Table, row: usize, index: usize, zone: UtcZone) -> Scalar {
+    let local = to_zone_local(table, row, index);
     let shifted = local.wrapping_sub(utc_offset(zone, local));
     if shifted == i64::MIN {
         Scalar::Null
@@ -4718,6 +4756,7 @@ fn utc_offset(zone: UtcZone, local: i64) -> i64 {
                 hour
             }
         }
+        UtcZone::NewYork if local == i64::MIN => -17_762_000_000,
         UtcZone::NewYork => {
             let (year, month, day, time) = dateadd_parts(local);
             if us_eastern_dst(year, month, day, time) {
@@ -8065,6 +8104,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         },
         ResolvedProj::Nanos { value, .. } => nanos_scalar(table, row, value),
         ResolvedProj::ToUtc { index, zone, .. } => to_utc_scalar(table, row, *index, *zone),
+        ResolvedProj::ToTimezone { index, zone, .. } => {
+            to_timezone_scalar(table, row, *index, *zone)
+        }
         ResolvedProj::Micros { value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Int((dateadd_parts(micros).3 % 1_000) as i32),
             None => Scalar::Null,
@@ -39146,6 +39188,155 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn tz_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT to_timezone(ts, 'UTC') FROM sensors",
+                "expected/tz_utc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT TO_TIMEZONE(ts, 'UTC') FROM sensors",
+                "expected/tz_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_timezone(ts, 'Europe/Madrid') FROM sensors",
+                "expected/tz_mad.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_timezone(ts, 'Europe/Madrid') FROM sensors WHERE id = 1",
+                "expected/tz_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_timezone(ts, 'America/New_York') FROM sensors",
+                "expected/tz_ny.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_timezone(day, 'UTC') FROM sensors",
+                "expected/tz_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_timezone(day, 'Europe/Madrid') FROM sensors",
+                "expected/tz_dmad.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_timezone(day, 'America/New_York') FROM sensors",
+                "expected/tz_dny.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_timezone(id, 'UTC') FROM sensors",
+                "expected/tz_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_timezone(flags, 'UTC') FROM sensors",
+                "expected/tz_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_timezone(ts, 'UTC') FROM sensors WHERE id > 100",
+                "expected/tz_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_timezone(ts, 'UTC') FROM sensors LIMIT 0",
+                "expected/tz_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT to_timezone(ts, 'UTC') FROM days",
+                "expected/tz_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT to_timezone() FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "function `to_timezone` requires arguments: to_timezone(TIMESTAMP, STRING)"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timezone(ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `to_timezone`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timezone(ts, 'UTC', 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `to_timezone`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timezone(ts, 'Mars') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid timezone: Mars"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timezone(ts, null) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("timezone must not be null"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timezone(ok, 'UTC') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: TIMESTAMP, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timezone(ch, 'UTC') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: TIMESTAMP, actual: CHAR"),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT to_timezone(location, 'UTC') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `madrid` [SYMBOL -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timezone(note, 'UTC') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_timezone(missing, 'UTC') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );

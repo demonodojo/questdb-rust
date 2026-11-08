@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `to_timezone()`
+
+`to_timezone` suma el desplazamiento local de la zona y devuelve `TIMESTAMP`. `UTC` deja el valor igual. En enero, `Europe/Madrid` suma una hora y `America/New_York` resta cinco. El 15 de junio Madrid suma dos horas y Nueva York resta cuatro. Un `DATE` nulo no es NULL: Madrid imprime `294247-01-10T03:46:10.775808Z` y Nueva York `294247-01-09T23:04:52.775808Z`. `to_timezone(ts, 'Europe/Madrid')` es `2020-01-02T04:04:05.000000Z` en la primera fila. `TO_TIMEZONE` conserva las mayúsculas del encabezado. Una zona desconocida se rechaza con `invalid timezone`. Un booleano o un `CHAR` no encajan. Un símbolo o un texto se rechaza como inconvertible a `TIMESTAMP_NS`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `to_utc()`
 
 `to_utc` resta el desplazamiento local de la zona y devuelve `TIMESTAMP`. `UTC` deja el valor igual. En enero, `Europe/Madrid` resta una hora y `America/New_York` suma cinco. El 15 de junio Madrid resta dos horas. Un `DATE` nulo con Madrid no es NULL: el centinela menos el huso histórico `-00:14:44` se imprime `-290308-01-01T20:13:49.224192Z`. `to_utc(ts, 'Europe/Madrid')` es `2020-01-02T02:04:05.000000Z` en la primera fila. `TO_UTC` conserva las mayúsculas del encabezado. Una zona desconocida se rechaza con `invalid timezone`. Un booleano o un `CHAR` no encajan. Un símbolo o un texto se rechaza como inconvertible a `TIMESTAMP_NS`. Se contrastó con `/exec` en `sensors` y `days`.

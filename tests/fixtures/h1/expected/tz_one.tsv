@@ -1,0 +1,2 @@
+to_timezone(ts, 'Europe/Madrid')
+2020-01-02T04:04:05.000000Z
