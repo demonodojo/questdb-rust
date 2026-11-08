@@ -2835,7 +2835,12 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   pg_tag "SELECT to_pg_date(tag) FROM sensors" \
   pg_one "SELECT to_pg_date(note) FROM sensors WHERE id = 1" \
   pg_none "SELECT to_pg_date(note) FROM sensors WHERE id > 100" \
-  pg_lim0 "SELECT to_pg_date(note) FROM sensors LIMIT 0"
+  pg_lim0 "SELECT to_pg_date(note) FROM sensors LIMIT 0" \
+  sm_all "SELECT current_schema() FROM sensors" \
+  sm_case "SELECT CURRENT_SCHEMA() FROM sensors" \
+  sm_one "SELECT current_schema() FROM sensors WHERE id = 1" \
+  sm_none "SELECT current_schema() FROM sensors WHERE id > 100" \
+  sm_lim0 "SELECT current_schema() FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3182,7 +3187,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   na_days_id "SELECT nanos(id) FROM days" \
   uc_days "SELECT to_utc(ts, 'UTC') FROM days" \
   tz_days "SELECT to_timezone(ts, 'UTC') FROM days" \
-  pg_days "SELECT to_pg_date(note) FROM days"
+  pg_days "SELECT to_pg_date(note) FROM days" \
+  sm_days "SELECT current_schema() FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5965,6 +5971,11 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_pg_date(note) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT to_pg_date(note) FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT to_pg_date(note) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT current_schema() FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT CURRENT_SCHEMA() FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT current_schema() FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT current_schema() FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT current_schema() FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6310,6 +6321,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT to_utc(ts, 'UTC') FROM days"),
     (os.environ["DIFF_H2"], "SELECT to_timezone(ts, 'UTC') FROM days"),
     (os.environ["DIFF_H2"], "SELECT to_pg_date(note) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT current_schema() FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
