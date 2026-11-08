@@ -4,8 +4,8 @@ use crate::parse::{
     BarExpr, BetweenExpr, BitNotExpr, BoolOp, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg,
     CosExpr, CotExpr, CurrentCatalogExpr, CurrentDatabaseExpr, CurrentSchemaExpr,
     CurrentSettingExpr, CurrentUserExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
-    DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr,
-    ExtractExpr, Filter, FloorExpr, FormatTypeExpr, FromBase64Expr, GenerateSeries,
+    DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, EquiJoin,
+    ExpExpr, ExtractExpr, Filter, FloorExpr, FormatTypeExpr, FromBase64Expr, GenerateSeries,
     GeoDistanceExpr, GeoWithinExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr,
     InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, JsonExtractExpr, LeastExpr, LengthExpr, LikeExpr,
     LnExpr, LogExpr, LowerExpr, MakeGeohashExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr,
@@ -46,7 +46,110 @@ pub fn execute(data_dir: &Path, sql: &str) -> Result<QueryResult, Error> {
         return execute_on(&table, &query);
     }
     let table = open_table(data_dir, &query.table)?;
+    if let Some(join) = &query.join {
+        let joined = equi_join_table(&table, data_dir, join)?;
+        let mut result = execute_on(&joined, &query)?;
+        result.columns = disambiguate_join_names(result.columns);
+        return Ok(result);
+    }
     execute_on(&table, &query)
+}
+
+fn equi_join_table(left: &Table, data_dir: &Path, join: &EquiJoin) -> Result<Table, Error> {
+    let owned;
+    let right = if join.right_table.eq_ignore_ascii_case(&left.name) {
+        left
+    } else {
+        owned = open_table(data_dir, &join.right_table)?;
+        &owned
+    };
+    let left_index = left
+        .column_index(&join.left_column)
+        .ok_or_else(|| Error::new(format!("Invalid column: {}", join.left_column)))?;
+    let right_index = right
+        .column_index(&join.right_column)
+        .ok_or_else(|| Error::new(format!("Invalid column: {}", join.right_column)))?;
+    let left_tag = left.meta.columns[left_index].tag;
+    let mut columns = Vec::with_capacity(left.columns.len() + right.columns.len());
+    for _ in 0..left.columns.len() + right.columns.len() {
+        columns.push(Vec::new());
+    }
+    for left_row in 0..left.row_count() {
+        for right_row in 0..right.row_count() {
+            if !sql_cmp(
+                &left.columns[left_index][left_row],
+                left_tag,
+                CmpOp::Eq,
+                &right.columns[right_index][right_row],
+            )? {
+                continue;
+            }
+            for (index, column) in left.columns.iter().enumerate() {
+                columns[index].push(column[left_row].clone());
+            }
+            for (index, column) in right.columns.iter().enumerate() {
+                columns[left.columns.len() + index].push(column[right_row].clone());
+            }
+        }
+    }
+    let mut meta_columns = Vec::with_capacity(columns.len());
+    for column in &left.meta.columns {
+        meta_columns.push(ColumnMeta {
+            name: format!("{}.{}", join.left_alias, column.name.to_ascii_lowercase()),
+            raw_type: column.raw_type,
+            tag: column.tag,
+            symbol_index: column.symbol_index,
+        });
+    }
+    for column in &right.meta.columns {
+        meta_columns.push(ColumnMeta {
+            name: format!("{}.{}", join.right_alias, column.name.to_ascii_lowercase()),
+            raw_type: column.raw_type,
+            tag: column.tag,
+            symbol_index: None,
+        });
+    }
+    let rows = columns.first().map(Vec::len).unwrap_or(0);
+    Ok(Table {
+        name: left.name.clone(),
+        meta: TableMeta {
+            column_count: meta_columns.len(),
+            partition_by: PARTITION_BY_NONE,
+            timestamp_index: -1,
+            version: qdb_types::METADATA_VERSION_10_1_0,
+            table_id: left.meta.table_id,
+            wal_enabled: false,
+            columns: meta_columns,
+        },
+        txn: TxnHeader {
+            txn: 0,
+            transient_row_count: i64::try_from(rows).unwrap_or(i64::MAX),
+            fixed_row_count: 0,
+            min_timestamp: i64::MIN,
+            max_timestamp: i64::MIN,
+            symbol_counts: Vec::new(),
+            partitions: Vec::new(),
+        },
+        columns,
+        symbol_maps: left.symbol_maps.clone(),
+    })
+}
+
+fn disambiguate_join_names(columns: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::BTreeMap::<String, usize>::new();
+    columns
+        .into_iter()
+        .map(|name| {
+            let bare = name.rsplit('.').next().unwrap_or(&name).to_string();
+            let count = seen.entry(bare.clone()).or_insert(0);
+            *count += 1;
+            if *count == 1 {
+                bare
+            } else {
+                format!("{bare}_{count}")
+            }
+        })
+        .collect()
 }
 
 fn generate_series_table(series: &GenerateSeries) -> Result<Table, Error> {
@@ -41626,6 +41729,32 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn jn_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT a.id, b.id FROM sensors a JOIN sensors b ON a.id = b.id",
+                "expected/jn_id.tsv",
+            ),
+            (
+                "SELECT a.id, b.id FROM sensors a INNER JOIN sensors b ON a.id = b.id",
+                "expected/jn_inner.tsv",
+            ),
+            (
+                "SELECT a.id, b.note FROM sensors a JOIN sensors b ON a.id = b.id WHERE a.id = 1",
+                "expected/jn_where.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT a.id FROM sensors a JOIN sensors b").unwrap_err();
+        assert!(err.message.contains("'on' expected"), "{}", err.message);
     }
 
     #[test]

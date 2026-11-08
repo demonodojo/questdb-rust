@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `JOIN` por igualdad
+
+`sensors a JOIN sensors b ON a.id = b.id` devuelve una fila por cada pareja, y `NULL` casa con `NULL`. La columna repetida pasa a llamarse `id_2`. `INNER JOIN` hace lo mismo. `WHERE a.id = 1` deja la fila `1`, `alpha`. Sin `ON` se rechaza con `'on' expected`. Se contrastó con `/exec`.
+
 ## 2026-11-08 — pasos `1H`, `1000n` y el paso vacío
 
 `'1H'` es una hora, igual que `'1h'`. `'1000n'` son mil nanosegundos, un microsegundo, y la columna sigue siendo `TIMESTAMP`. Un paso vacío se rechaza con `empty step`. Se contrastó con `/exec`.

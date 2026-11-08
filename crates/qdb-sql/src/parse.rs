@@ -31,6 +31,18 @@ pub struct Query {
     pub long_sequence: Option<i64>,
     /// `FROM generate_series(start, end[, step])`.
     pub generate_series: Option<GenerateSeries>,
+    /// One `JOIN` of the same shape as `a JOIN b ON a.col = b.col`.
+    pub join: Option<EquiJoin>,
+}
+
+/// Equijoin parsed from `alias JOIN table alias ON left = right`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EquiJoin {
+    pub left_alias: String,
+    pub right_table: String,
+    pub right_alias: String,
+    pub left_column: String,
+    pub right_column: String,
 }
 
 /// Inclusive numeric series produced by `generate_series`.
@@ -1338,6 +1350,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         (parser.ident()?, None, None)
     };
     parser.skip();
+    let join = parser.parse_equi_join()?;
+    parser.skip();
     let mut filter = None;
     let mut order_by = Vec::new();
     if parser.eat_keyword("where") {
@@ -1634,6 +1648,7 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         limit,
         long_sequence,
         generate_series,
+        join,
     })
 }
 
@@ -2105,6 +2120,84 @@ impl<'a> Parser<'a> {
         )
     }
 
+    fn parse_equi_join(&mut self) -> Result<Option<EquiJoin>, Error> {
+        self.skip();
+        let left_alias = if self.clause_keyword_ahead() || !self.ident_ahead() {
+            None
+        } else {
+            Some(self.ident()?)
+        };
+        self.skip();
+        let inner = self.eat_keyword("inner");
+        let joined = if inner {
+            self.expect_keyword("join")?;
+            true
+        } else {
+            self.eat_keyword("join")
+        };
+        if !joined {
+            return Ok(None);
+        }
+        let right_table = self.ident()?;
+        let right_alias = self.ident()?;
+        if !self.eat_keyword("on") {
+            return Err(Error::new("'on' expected"));
+        }
+        let left_name = self.qualified_ident()?;
+        self.skip();
+        if !self.eat(b'=') {
+            return Err(Error::new("unsupported: expected ="));
+        }
+        let right_name = self.qualified_ident()?;
+        Ok(Some(EquiJoin {
+            left_alias: left_alias.unwrap_or_default(),
+            right_table,
+            right_alias,
+            left_column: left_name
+                .rsplit('.')
+                .next()
+                .unwrap_or(&left_name)
+                .to_string(),
+            right_column: right_name
+                .rsplit('.')
+                .next()
+                .unwrap_or(&right_name)
+                .to_string(),
+        }))
+    }
+
+    fn clause_keyword_ahead(&mut self) -> bool {
+        ["where", "group", "order", "limit", "join", "inner"]
+            .into_iter()
+            .any(|word| {
+                let pos = self.pos;
+                let found = self.eat_keyword(word);
+                self.pos = pos;
+                found
+            })
+    }
+
+    fn ident_ahead(&self) -> bool {
+        let mut pos = self.pos;
+        while matches!(self.src.get(pos), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+            pos += 1;
+        }
+        matches!(
+            self.src.get(pos),
+            Some(byte) if byte.is_ascii_alphabetic() || *byte == b'_'
+        )
+    }
+
+    fn qualified_ident(&mut self) -> Result<String, Error> {
+        let mut name = self.ident()?;
+        self.skip();
+        if self.eat(b'.') {
+            name.push('.');
+            name.push_str(&self.ident()?);
+        }
+        Ok(name)
+    }
+
     fn ident(&mut self) -> Result<String, Error> {
         self.ident_raw()
             .ok_or_else(|| Error::new(format!("expected identifier near `{}`", self.rest())))
@@ -2373,8 +2466,13 @@ impl<'a> Parser<'a> {
             } else if self.starts_tilde() {
                 pieces.push(SelectPiece::BitNot(self.parse_tilde()?));
             } else {
-                let name = self.ident_spelling()?;
+                let mut name = self.ident_spelling()?;
                 self.skip();
+                if self.eat(b'.') {
+                    name.push('.');
+                    name.push_str(&self.ident_spelling()?);
+                    self.skip();
+                }
                 if self.starts_colon_cast() {
                     pieces.push(SelectPiece::Cast(self.parse_colon_cast(name)?));
                 } else if self.starts_pipes() {
@@ -7832,7 +7930,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_filter(&mut self) -> Result<Filter, Error> {
-        let column = self.ident()?;
+        let column = self.qualified_ident()?;
         let op = self.parse_op()?;
         let literal = self.parse_literal()?;
         Ok(Filter {

@@ -3232,7 +3232,10 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   yu_micro "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000002Z', '1U')" \
   yv_hour "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T02:00:00.000000Z', '1H')" \
   yv_nano "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000003Z', '1000n')" \
-  yv_type "SELECT typeof(generate_series) FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000003Z', '1000n')"
+  yv_type "SELECT typeof(generate_series) FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000003Z', '1000n')" \
+  jn_id "SELECT a.id, b.id FROM sensors a JOIN sensors b ON a.id = b.id" \
+  jn_inner "SELECT a.id, b.id FROM sensors a INNER JOIN sensors b ON a.id = b.id" \
+  jn_where "SELECT a.id, b.note FROM sensors a JOIN sensors b ON a.id = b.id WHERE a.id = 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -6790,6 +6793,9 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T02:00:00.000000Z', '1H')"),
     (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000003Z', '1000n')"),
     (os.environ["DIFF_H1"], "SELECT typeof(generate_series) FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000003Z', '1000n')"),
+    (os.environ["DIFF_H1"], "SELECT a.id, b.id FROM sensors a JOIN sensors b ON a.id = b.id"),
+    (os.environ["DIFF_H1"], "SELECT a.id, b.id FROM sensors a INNER JOIN sensors b ON a.id = b.id"),
+    (os.environ["DIFF_H1"], "SELECT a.id, b.note FROM sensors a JOIN sensors b ON a.id = b.id WHERE a.id = 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
