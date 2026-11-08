@@ -13,8 +13,8 @@ use crate::parse::{
     PgAgeExpr, PgGetExprExpr, PgGetPartKeyDefExpr, PgGetUserByIdExpr, PgIsInRecoveryExpr,
     PgTableIsVisibleExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
     RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
-    SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
-    SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
+    SecondExpr, SelectList, SeriesStep, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr,
+    SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
     StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
     TimestampFloorExpr, TimestampSequenceExpr, ToCharExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
     ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr, TrimEnd, TrimExpr, TypeofExpr,
@@ -58,13 +58,17 @@ fn generate_series_table(series: &GenerateSeries) -> Result<Table, Error> {
             (TAG_DOUBLE, double_series_values(*start, *end, *step)?)
         }
         GenerateSeries::Timestamp { start, end, step } => {
-            let values = long_series_values(*start, *end, *step)?
-                .into_iter()
-                .map(|value| match value {
-                    Scalar::Long(micros) => Scalar::Timestamp(micros),
-                    other => other,
-                })
-                .collect();
+            let values = match step {
+                SeriesStep::Fixed(step) => long_series_values(*start, *end, *step)?
+                    .into_iter()
+                    .map(|value| match value {
+                        Scalar::Long(micros) => Scalar::Timestamp(micros),
+                        other => other,
+                    })
+                    .collect(),
+                SeriesStep::Months(stride) => calendar_series_values(*start, *end, *stride, true)?,
+                SeriesStep::Years(stride) => calendar_series_values(*start, *end, *stride, false)?,
+            };
             (TAG_TIMESTAMP, values)
         }
     };
@@ -93,6 +97,87 @@ fn long_series_values(mut start: i64, mut end: i64, step: i64) -> Result<Vec<Sca
             Scalar::Long(start.wrapping_add(step.wrapping_mul(offset)))
         })
         .collect())
+}
+
+fn calendar_series_values(
+    mut start: i64,
+    mut end: i64,
+    stride: i32,
+    months: bool,
+) -> Result<Vec<Scalar>, Error> {
+    if (start <= end && stride < 0) || (start >= end && stride > 0) {
+        std::mem::swap(&mut start, &mut end);
+    }
+    let add = |value: i64, stride: i32| {
+        if months {
+            add_months(value, stride)
+        } else {
+            add_years(value, stride)
+        }
+    };
+    let mut curr = add(start, -stride);
+    let mut values = Vec::new();
+    loop {
+        let next = add(curr, stride);
+        if !values.is_empty() && ((stride >= 0 && next <= curr) || (stride < 0 && next >= curr)) {
+            break;
+        }
+        if (stride >= 0 && next > end) || (stride < 0 && next < end) {
+            break;
+        }
+        if values.len() == 1_000_000 {
+            return Err(Error::new("unsupported: generate_series count"));
+        }
+        values.push(Scalar::Timestamp(next));
+        curr = next;
+    }
+    Ok(values)
+}
+
+fn add_months(micros: i64, months: i32) -> i64 {
+    if months == 0 {
+        return micros;
+    }
+    let day_micros = 86_400_000_000;
+    let days = micros.div_euclid(day_micros);
+    let time = micros.rem_euclid(day_micros);
+    let (year, month, day) = qdb_types::civil_from_unix_days(days);
+    let month = i32::try_from(month).unwrap_or(1);
+    let day = i32::try_from(day).unwrap_or(1);
+    let mut shifted = month - 1 + months;
+    let (year, month) = if shifted >= 0 {
+        (year + shifted / 12, shifted % 12 + 1)
+    } else {
+        let mut year = year + shifted / 12 - 1;
+        shifted = -shifted % 12;
+        if shifted == 0 {
+            shifted = 12;
+        }
+        shifted = 12 - shifted + 1;
+        if shifted == 1 {
+            year += 1;
+        }
+        (year, shifted)
+    };
+    let max_day = days_in_month(year, u32::try_from(month).unwrap_or(1));
+    let day = u32::try_from(day.min(max_day)).unwrap_or(1);
+    let days = qdb_types::unix_days_from_civil(year, month as u32, day).unwrap_or(0);
+    days * day_micros + time
+}
+
+fn add_years(micros: i64, years: i32) -> i64 {
+    if years == 0 {
+        return micros;
+    }
+    let day_micros = 86_400_000_000;
+    let days = micros.div_euclid(day_micros);
+    let time = micros.rem_euclid(day_micros);
+    let (year, month, day) = qdb_types::civil_from_unix_days(days);
+    let year = year + years;
+    let max_day = days_in_month(year, month);
+    let day = u32::try_from(i32::try_from(day).unwrap_or(1).min(max_day)).unwrap_or(1);
+    let days = qdb_types::unix_days_from_civil(year, month, day).unwrap_or(0);
+    days * day_micros + time
 }
 
 fn double_series_values(mut start: f64, mut end: f64, step: f64) -> Result<Vec<Scalar>, Error> {
@@ -41541,6 +41626,38 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn yu_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT * FROM generate_series('2020-01-31', '2020-04-30', '1M')",
+                "expected/yu_mon.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('2020-01-31', '2020-03-31', '1M')",
+                "expected/yu_short.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('2020-01-01', '2022-01-01', '1y')",
+                "expected/yu_year.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.002000Z', '1T')",
+                "expected/yu_milli.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000002Z', '1U')",
+                "expected/yu_micro.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
     }
 
     #[test]

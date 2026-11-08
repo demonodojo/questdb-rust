@@ -3224,7 +3224,12 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   yt_type "SELECT typeof(generate_series) FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000Z', '1s')" \
   yk_hour "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T02:00:00.000000Z', '1h')" \
   yk_min "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:02:00.000000Z', '1m')" \
-  yk_week "SELECT * FROM generate_series('2020-01-01', '2020-01-15', '1w')"
+  yk_week "SELECT * FROM generate_series('2020-01-01', '2020-01-15', '1w')" \
+  yu_mon "SELECT * FROM generate_series('2020-01-31', '2020-04-30', '1M')" \
+  yu_short "SELECT * FROM generate_series('2020-01-31', '2020-03-31', '1M')" \
+  yu_year "SELECT * FROM generate_series('2020-01-01', '2022-01-01', '1y')" \
+  yu_milli "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.002000Z', '1T')" \
+  yu_micro "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000002Z', '1U')"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -6774,6 +6779,11 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T02:00:00.000000Z', '1h')"),
     (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:02:00.000000Z', '1m')"),
     (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01', '2020-01-15', '1w')"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-31', '2020-04-30', '1M')"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-31', '2020-03-31', '1M')"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01', '2022-01-01', '1y')"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.002000Z', '1T')"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000002Z', '1U')"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),

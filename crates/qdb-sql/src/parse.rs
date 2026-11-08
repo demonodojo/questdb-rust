@@ -36,9 +36,29 @@ pub struct Query {
 /// Inclusive numeric series produced by `generate_series`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenerateSeries {
-    Long { start: i64, end: i64, step: i64 },
-    Double { start: f64, end: f64, step: f64 },
-    Timestamp { start: i64, end: i64, step: i64 },
+    Long {
+        start: i64,
+        end: i64,
+        step: i64,
+    },
+    Double {
+        start: f64,
+        end: f64,
+        step: f64,
+    },
+    Timestamp {
+        start: i64,
+        end: i64,
+        step: SeriesStep,
+    },
+}
+
+/// Step of a timestamp `generate_series`. Months and years keep a calendar day.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeriesStep {
+    Fixed(i64),
+    Months(i32),
+    Years(i32),
 }
 
 /// Inclusive lower bound and exclusive upper bound, as QuestDB stores them
@@ -1671,7 +1691,11 @@ fn generate_series_spec(args: &[ConcatArg]) -> Result<GenerateSeries, Error> {
                 let Some(step) = series_period(text) else {
                     return Err(Error::new(format!("invalid period [period={text}]")));
                 };
-                if step == 0 {
+                let zero = match step {
+                    SeriesStep::Fixed(width) => width == 0,
+                    SeriesStep::Months(count) | SeriesStep::Years(count) => count == 0,
+                };
+                if zero {
                     return Err(Error::new("step cannot be zero"));
                 }
                 return Ok(GenerateSeries::Timestamp { start, end, step });
@@ -1743,7 +1767,7 @@ fn series_clock(text: &str) -> Option<i64> {
     unix_days_from_civil(year, month, day)?.checked_mul(86_400_000_000)
 }
 
-fn series_period(text: &str) -> Option<i64> {
+fn series_period(text: &str) -> Option<SeriesStep> {
     let (sign, rest) = if let Some(rest) = text.strip_prefix('-') {
         (-1, rest)
     } else {
@@ -1755,15 +1779,19 @@ fn series_period(text: &str) -> Option<i64> {
         return None;
     }
     let count: i64 = digits.parse().ok()?;
-    let width = match unit {
-        's' => 1_000_000,
-        'm' => 60_000_000,
-        'h' => 3_600_000_000,
-        'd' => 86_400_000_000,
-        'w' => 604_800_000_000,
-        _ => return None,
-    };
-    count.checked_mul(width)?.checked_mul(sign)
+    let signed = count.checked_mul(sign)?;
+    match unit {
+        's' => Some(SeriesStep::Fixed(signed.checked_mul(1_000_000)?)),
+        'm' => Some(SeriesStep::Fixed(signed.checked_mul(60_000_000)?)),
+        'h' => Some(SeriesStep::Fixed(signed.checked_mul(3_600_000_000)?)),
+        'd' => Some(SeriesStep::Fixed(signed.checked_mul(86_400_000_000)?)),
+        'w' => Some(SeriesStep::Fixed(signed.checked_mul(604_800_000_000)?)),
+        'T' => Some(SeriesStep::Fixed(signed.checked_mul(1_000)?)),
+        'U' | 'u' => Some(SeriesStep::Fixed(signed)),
+        'M' => Some(SeriesStep::Months(i32::try_from(signed).ok()?)),
+        'y' => Some(SeriesStep::Years(i32::try_from(signed).ok()?)),
+        _ => None,
+    }
 }
 
 fn series_type_list(args: &[ConcatArg]) -> String {
