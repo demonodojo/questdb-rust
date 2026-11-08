@@ -8,7 +8,7 @@ use crate::parse::{
     ExtractExpr, Filter, FloorExpr, FormatTypeExpr, GlobExpr, GreatestExpr, GroupedSelect,
     HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr,
     LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr,
-    MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PgGetExprExpr,
+    MonthExpr, NanosExpr, NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr, PgGetExprExpr,
     PgGetPartKeyDefExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
     RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
     RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr,
@@ -317,6 +317,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::CurrentSetting { label, .. }
             | ResolvedProj::PgGetPartKeyDef { label, .. }
             | ResolvedProj::PgGetExpr { label, .. }
+            | ResolvedProj::Netmask { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -835,6 +836,10 @@ enum ResolvedProj {
     PgGetExpr {
         label: String,
     },
+    Netmask {
+        label: String,
+        arg: ResolvedArg,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -1022,6 +1027,7 @@ impl ResolvedProj {
             | Self::CurrentSetting { label, .. }
             | Self::PgGetPartKeyDef { label, .. }
             | Self::PgGetExpr { label, .. }
+            | Self::Netmask { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1123,6 +1129,7 @@ impl ResolvedProj {
             Self::Switch { result_tag, .. } => *result_tag,
             Self::Bar { .. } => qdb_types::TAG_VARCHAR,
             Self::TimestampSequence { .. } => qdb_types::TAG_TIMESTAMP,
+            Self::Netmask { .. } => qdb_types::TAG_IPV4,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -1258,6 +1265,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::CurrentSetting(expr) => resolve_current_setting(table, expr),
         Proj::PgGetPartKeyDef(expr) => resolve_pg_get_partkeydef(table, expr),
         Proj::PgGetExpr(expr) => resolve_pg_get_expr(table, expr),
+        Proj::Netmask(expr) => resolve_netmask(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1693,6 +1701,87 @@ fn resolve_pg_get_expr(table: &Table, expr: &PgGetExprExpr) -> Result<ResolvedPr
     Ok(ResolvedProj::PgGetExpr {
         label: expr.label.clone(),
     })
+}
+
+fn resolve_netmask(table: &Table, expr: &NetmaskExpr) -> Result<ResolvedProj, Error> {
+    let types = timestamp_floor_types(table, &expr.args)?;
+    let names: Vec<&str> = if types.is_empty() {
+        Vec::new()
+    } else {
+        types.split(", ").collect()
+    };
+    let text = matches!(
+        names.first().copied(),
+        Some("STRING" | "SYMBOL" | "VARCHAR" | "CHAR" | "NULL")
+    );
+    if !(names.len() == 1 && text) {
+        return Err(Error::new(format!(
+            "there is no matching function `netmask` with the argument types: ({types})"
+        )));
+    }
+    Ok(ResolvedProj::Netmask {
+        label: expr.label.clone(),
+        arg: resolve_concat_arg(table, &expr.args[0])?,
+    })
+}
+
+fn ipv4_netmask(text: &str) -> Option<String> {
+    let Some(slash) = text.find('/') else {
+        return Some("255.255.255.255".to_string());
+    };
+    let bits = parse_java_int(&text[slash + 1..])?;
+    if !(1..=32).contains(&bits) {
+        return None;
+    }
+    let shift = u32::try_from(32 - bits).ok()?;
+    let mask = 0xffff_ffffu32.wrapping_shl(shift);
+    Some(format!(
+        "{}.{}.{}.{}",
+        mask >> 24,
+        (mask >> 16) & 255,
+        (mask >> 8) & 255,
+        mask & 255
+    ))
+}
+
+fn parse_java_int(text: &str) -> Option<i32> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut index = 0;
+    let negative = bytes[0] == b'-';
+    if bytes[0] == b'-' || bytes[0] == b'+' {
+        index += 1;
+    }
+    if index >= bytes.len() {
+        return None;
+    }
+    let mut value: i32 = 0;
+    let mut digits = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'_' {
+            if digits == 0 {
+                return None;
+            }
+            digits = 0;
+        } else if !byte.is_ascii_digit() {
+            return None;
+        } else {
+            value = value.checked_mul(10)?.checked_sub(i32::from(byte - b'0'))?;
+            digits += 1;
+        }
+        index += 1;
+    }
+    if digits == 0 {
+        return None;
+    }
+    if negative {
+        Some(value)
+    } else {
+        value.checked_neg()
+    }
 }
 
 fn resolve_pg_is_in_recovery(expr: &PgIsInRecoveryExpr) -> Result<ResolvedProj, Error> {
@@ -8405,6 +8494,13 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::FormatType { .. } => Scalar::Null,
         ResolvedProj::CurrentSetting { value, .. } => Scalar::Text(value.clone()),
         ResolvedProj::PgGetPartKeyDef { .. } | ResolvedProj::PgGetExpr { .. } => Scalar::Null,
+        ResolvedProj::Netmask { arg, .. } => match text_of(table, row, arg) {
+            Some(text) => match ipv4_netmask(&text) {
+                Some(mask) => Scalar::Text(mask),
+                None => Scalar::Null,
+            },
+            None => Scalar::Null,
+        },
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39630,6 +39726,174 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn nm_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT netmask('192.168.1.1/24') FROM sensors LIMIT 1",
+                "expected/nm_24.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('10.0.0.1/8') FROM sensors LIMIT 1",
+                "expected/nm_8.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('1.2.3.4/16') FROM sensors LIMIT 1",
+                "expected/nm_16.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('1.2.3.4/1') FROM sensors LIMIT 1",
+                "expected/nm_1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('1.2.3.4/7') FROM sensors LIMIT 1",
+                "expected/nm_7.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('1.2.3.4/31') FROM sensors LIMIT 1",
+                "expected/nm_31.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('192.168.1.1/32') FROM sensors LIMIT 1",
+                "expected/nm_32.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('192.168.1.1') FROM sensors LIMIT 1",
+                "expected/nm_host.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('255.255.255.0') FROM sensors LIMIT 1",
+                "expected/nm_dotted.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('') FROM sensors LIMIT 1",
+                "expected/nm_empty.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('nope') FROM sensors LIMIT 1",
+                "expected/nm_nope.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('192.168.1.1/0') FROM sensors LIMIT 1",
+                "expected/nm_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('192.168.1.1/33') FROM sensors LIMIT 1",
+                "expected/nm_33.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('192.168.1.1/-1') FROM sensors LIMIT 1",
+                "expected/nm_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('192.168.1.1/24 ') FROM sensors LIMIT 1",
+                "expected/nm_trail.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask(null) FROM sensors LIMIT 1",
+                "expected/nm_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask(' 192.168.1.1/24') FROM sensors LIMIT 1",
+                "expected/nm_lead.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT NETMASK('192.168.1.1/24') FROM sensors LIMIT 1",
+                "expected/nm_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('192.168.1.1/24') FROM sensors WHERE id = 1",
+                "expected/nm_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('192.168.1.1/24') FROM sensors WHERE id > 100",
+                "expected/nm_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask('192.168.1.1/24') FROM sensors LIMIT 0",
+                "expected/nm_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask(note) FROM sensors",
+                "expected/nm_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT netmask(location) FROM sensors",
+                "expected/nm_loc.tsv",
+            ),
+            (
+                &days,
+                "SELECT netmask('192.168.1.1/24') FROM days",
+                "expected/nm_days.tsv",
+            ),
+            (
+                &days,
+                "SELECT netmask(note) FROM days",
+                "expected/nm_dnote.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let mismatches = [
+            (
+                "SELECT netmask(id) FROM sensors",
+                "there is no matching function `netmask` with the argument types: (LONG)",
+            ),
+            (
+                "SELECT netmask(score) FROM sensors",
+                "there is no matching function `netmask` with the argument types: (FLOAT)",
+            ),
+            (
+                "SELECT netmask(ok) FROM sensors",
+                "there is no matching function `netmask` with the argument types: (BOOLEAN)",
+            ),
+            (
+                "SELECT netmask('a', 'b') FROM sensors",
+                "there is no matching function `netmask` with the argument types: (CHAR, CHAR)",
+            ),
+            (
+                "SELECT netmask() FROM sensors",
+                "function `netmask` requires arguments",
+            ),
+            (
+                "SELECT netmask(missing) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

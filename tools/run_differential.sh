@@ -2942,7 +2942,30 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   gx_true "SELECT pg_get_expr(note, 1, true) FROM sensors LIMIT 1" \
   gx_false "SELECT pg_get_expr(note, 1, false) FROM sensors LIMIT 1" \
   gx_tn "SELECT pg_get_expr(note, 1, null) FROM sensors LIMIT 1" \
-  gx_ok "SELECT pg_get_expr(note, 1, ok) FROM sensors"
+  gx_ok "SELECT pg_get_expr(note, 1, ok) FROM sensors" \
+  nm_24 "SELECT netmask('192.168.1.1/24') FROM sensors LIMIT 1" \
+  nm_8 "SELECT netmask('10.0.0.1/8') FROM sensors LIMIT 1" \
+  nm_16 "SELECT netmask('1.2.3.4/16') FROM sensors LIMIT 1" \
+  nm_1 "SELECT netmask('1.2.3.4/1') FROM sensors LIMIT 1" \
+  nm_7 "SELECT netmask('1.2.3.4/7') FROM sensors LIMIT 1" \
+  nm_31 "SELECT netmask('1.2.3.4/31') FROM sensors LIMIT 1" \
+  nm_32 "SELECT netmask('192.168.1.1/32') FROM sensors LIMIT 1" \
+  nm_host "SELECT netmask('192.168.1.1') FROM sensors LIMIT 1" \
+  nm_dotted "SELECT netmask('255.255.255.0') FROM sensors LIMIT 1" \
+  nm_empty "SELECT netmask('') FROM sensors LIMIT 1" \
+  nm_nope "SELECT netmask('nope') FROM sensors LIMIT 1" \
+  nm_zero "SELECT netmask('192.168.1.1/0') FROM sensors LIMIT 1" \
+  nm_33 "SELECT netmask('192.168.1.1/33') FROM sensors LIMIT 1" \
+  nm_neg "SELECT netmask('192.168.1.1/-1') FROM sensors LIMIT 1" \
+  nm_trail "SELECT netmask('192.168.1.1/24 ') FROM sensors LIMIT 1" \
+  nm_null "SELECT netmask(null) FROM sensors LIMIT 1" \
+  nm_lead "SELECT netmask(' 192.168.1.1/24') FROM sensors LIMIT 1" \
+  nm_case "SELECT NETMASK('192.168.1.1/24') FROM sensors LIMIT 1" \
+  nm_one "SELECT netmask('192.168.1.1/24') FROM sensors WHERE id = 1" \
+  nm_none "SELECT netmask('192.168.1.1/24') FROM sensors WHERE id > 100" \
+  nm_lim0 "SELECT netmask('192.168.1.1/24') FROM sensors LIMIT 0" \
+  nm_note "SELECT netmask(note) FROM sensors" \
+  nm_loc "SELECT netmask(location) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3301,7 +3324,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   rr_days "SELECT regexp_replace(note, 'a', 'b') FROM days" \
   cw_days "SELECT current_setting('server_version') FROM days" \
   pk_days "SELECT pg_get_partkeydef(1) FROM days" \
-  gx_days "SELECT pg_get_expr(note, 1) FROM days"
+  gx_days "SELECT pg_get_expr(note, 1) FROM days" \
+  nm_days "SELECT netmask('192.168.1.1/24') FROM days" \
+  nm_dnote "SELECT netmask(note) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6191,6 +6216,29 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1, false) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1, null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1, ok) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1/24') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('10.0.0.1/8') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('1.2.3.4/16') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('1.2.3.4/1') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('1.2.3.4/7') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('1.2.3.4/31') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1/32') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('255.255.255.0') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('nope') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1/0') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1/33') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1/-1') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1/24 ') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask(' 192.168.1.1/24') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT NETMASK('192.168.1.1/24') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1/24') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1/24') FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1/24') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT netmask(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT netmask(location) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6548,6 +6596,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT current_setting('server_version') FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_get_partkeydef(1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_get_expr(note, 1) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT netmask('192.168.1.1/24') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT netmask(note) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -34,6 +34,7 @@ pub const TAG_FLOAT: i32 = 9;
 pub const TAG_DOUBLE: i32 = 10;
 pub const TAG_STRING: i32 = 11;
 pub const TAG_SYMBOL: i32 = 12;
+pub const TAG_IPV4: i32 = 25;
 pub const TAG_VARCHAR: i32 = 26;
 
 /// Nanosecond timestamp flag (`ColumnType.TIMESTAMP_NANO` uses bit 18).
@@ -62,6 +63,7 @@ pub fn type_name(tag: i32) -> &'static str {
         TAG_DOUBLE => "DOUBLE",
         TAG_STRING => "STRING",
         TAG_SYMBOL => "SYMBOL",
+        TAG_IPV4 => "IPv4",
         TAG_VARCHAR => "VARCHAR",
         _ => "UNSUPPORTED",
     }
