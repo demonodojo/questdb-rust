@@ -5,23 +5,25 @@ use crate::parse::{
     CosExpr, CotExpr, CurrentCatalogExpr, CurrentDatabaseExpr, CurrentSchemaExpr,
     CurrentSettingExpr, CurrentUserExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
     DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr,
-    ExtractExpr, Filter, FloorExpr, FormatTypeExpr, FromBase64Expr, GeoDistanceExpr, GeoWithinExpr,
-    GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr,
-    IsLeapYearExpr, JsonExtractExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
-    MakeGeohashExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr,
-    NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr, PgAgeExpr, PgGetExprExpr,
-    PgGetPartKeyDefExpr, PgGetUserByIdExpr, PgIsInRecoveryExpr, PgTableIsVisibleExpr, PiExpr,
-    PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr,
-    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
-    SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
-    SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
-    SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr,
-    ToCharExpr, ToDateExpr, ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr,
-    ToUuidExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr,
-    WithinBoxExpr, WithinRadiusExpr, WmidExpr, YearExpr,
+    ExtractExpr, Filter, FloorExpr, FormatTypeExpr, FromBase64Expr, GenerateSeries,
+    GeoDistanceExpr, GeoWithinExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr,
+    InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, JsonExtractExpr, LeastExpr, LengthExpr, LikeExpr,
+    LnExpr, LogExpr, LowerExpr, MakeGeohashExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr,
+    MinuteExpr, MonthExpr, NanosExpr, NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr,
+    PgAgeExpr, PgGetExprExpr, PgGetPartKeyDefExpr, PgGetUserByIdExpr, PgIsInRecoveryExpr,
+    PgTableIsVisibleExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
+    RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
+    SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
+    SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
+    TimestampFloorExpr, TimestampSequenceExpr, ToCharExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
+    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr, TrimEnd, TrimExpr, TypeofExpr,
+    UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, ColumnMeta, Table, TableMeta, TxnHeader};
-use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar, PARTITION_BY_NONE, TAG_LONG};
+use qdb_types::{
+    format_f64, format_timestamp_micros, Error, Scalar, PARTITION_BY_NONE, TAG_DOUBLE, TAG_LONG,
+};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::path::Path;
@@ -38,8 +40,106 @@ pub fn execute(data_dir: &Path, sql: &str) -> Result<QueryResult, Error> {
         let table = long_sequence_table(count)?;
         return execute_on(&table, &query);
     }
+    if let Some(series) = &query.generate_series {
+        let table = generate_series_table(series)?;
+        return execute_on(&table, &query);
+    }
     let table = open_table(data_dir, &query.table)?;
     execute_on(&table, &query)
+}
+
+fn generate_series_table(series: &GenerateSeries) -> Result<Table, Error> {
+    let (tag, values) = match series {
+        GenerateSeries::Long { start, end, step } => {
+            (TAG_LONG, long_series_values(*start, *end, *step)?)
+        }
+        GenerateSeries::Double { start, end, step } => {
+            (TAG_DOUBLE, double_series_values(*start, *end, *step)?)
+        }
+    };
+    cursor_table("generate_series", "generate_series", tag, values)
+}
+
+fn long_series_values(mut start: i64, mut end: i64, step: i64) -> Result<Vec<Scalar>, Error> {
+    if (start <= end && step < 0) || (start >= end && step > 0) {
+        std::mem::swap(&mut start, &mut end);
+    }
+    let span = if end >= start {
+        end.wrapping_sub(start)
+    } else {
+        start.wrapping_sub(end)
+    };
+    let steps = (span as u64) / step.unsigned_abs();
+    let size = steps.saturating_add(1);
+    let rows =
+        usize::try_from(size).map_err(|_| Error::new("unsupported: generate_series count"))?;
+    if rows > 1_000_000 {
+        return Err(Error::new("unsupported: generate_series count"));
+    }
+    Ok((0..rows)
+        .map(|index| {
+            let offset = i64::try_from(index).unwrap_or(0);
+            Scalar::Long(start.wrapping_add(step.wrapping_mul(offset)))
+        })
+        .collect())
+}
+
+fn double_series_values(mut start: f64, mut end: f64, step: f64) -> Result<Vec<Scalar>, Error> {
+    if (start <= end && step < 0.0) || (start >= end && step > 0.0) {
+        std::mem::swap(&mut start, &mut end);
+    }
+    let mut values = Vec::new();
+    let mut value = start;
+    while values.len() <= 1_000_000 {
+        if step >= 0.0 {
+            if value > end {
+                break;
+            }
+        } else if value < end {
+            break;
+        }
+        if value.is_nan() {
+            break;
+        }
+        values.push(Scalar::Double(value));
+        value += step;
+    }
+    if values.len() > 1_000_000 {
+        return Err(Error::new("unsupported: generate_series count"));
+    }
+    Ok(values)
+}
+
+fn cursor_table(name: &str, column: &str, tag: i32, values: Vec<Scalar>) -> Result<Table, Error> {
+    let rows = values.len();
+    Ok(Table {
+        name: name.to_string(),
+        meta: TableMeta {
+            column_count: 1,
+            partition_by: PARTITION_BY_NONE,
+            timestamp_index: -1,
+            version: qdb_types::METADATA_VERSION_10_1_0,
+            table_id: 0,
+            wal_enabled: false,
+            columns: vec![ColumnMeta {
+                name: column.to_string(),
+                raw_type: tag,
+                tag,
+                symbol_index: None,
+            }],
+        },
+        txn: TxnHeader {
+            txn: 0,
+            transient_row_count: i64::try_from(rows).unwrap_or(i64::MAX),
+            fixed_row_count: 0,
+            min_timestamp: i64::MIN,
+            max_timestamp: i64::MIN,
+            symbol_counts: Vec::new(),
+            partitions: Vec::new(),
+        },
+        columns: vec![values],
+        symbol_maps: Vec::new(),
+    })
 }
 
 fn long_sequence_table(count: i64) -> Result<Table, Error> {
@@ -41430,6 +41530,101 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn gs_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT * FROM generate_series(1, 4)",
+                "expected/gs_four.tsv",
+            ),
+            ("SELECT * FROM generate_series(1, 1)", "expected/gs_one.tsv"),
+            (
+                "SELECT * FROM generate_series(4, 1)",
+                "expected/gs_swap.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series(1, 4, 2)",
+                "expected/gs_step.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series(1, 3, -1)",
+                "expected/gs_down.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series(0, 2)",
+                "expected/gs_zero.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series(-2, 1)",
+                "expected/gs_neg.tsv",
+            ),
+            (
+                "SELECT * FROM GENERATE_SERIES(1, 2)",
+                "expected/gs_case.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('1', '3')",
+                "expected/gs_str.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series(1.5, 3)",
+                "expected/gs_dbl.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series(1, 4) WHERE generate_series > 2",
+                "expected/gs_where.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series(1, 4) LIMIT 1",
+                "expected/gs_lim1.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series(1, 4) LIMIT 0",
+                "expected/gs_lim0.tsv",
+            ),
+            (
+                "SELECT typeof(generate_series) FROM generate_series(1, 1)",
+                "expected/gs_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let errors = [
+            (
+                "SELECT * FROM generate_series()",
+                "function `generate_series` requires arguments",
+            ),
+            (
+                "SELECT * FROM generate_series(1)",
+                "there is no matching function `generate_series` with the argument types: (INT)",
+            ),
+            (
+                "SELECT * FROM generate_series(1, 2, 3, 4)",
+                "there is no matching function `generate_series` with the argument types: (INT, INT, INT, INT)",
+            ),
+            (
+                "SELECT * FROM generate_series(null, 2)",
+                "start argument must be a non-null constant or bind variable constant",
+            ),
+            (
+                "SELECT * FROM generate_series(missing, 2)",
+                "start argument must be a non-null constant or bind variable constant",
+            ),
+            (
+                "SELECT GENERATE_SERIES(1, 2)",
+                "cursor function cannot be used as a column [column=GENERATE_SERIES(1, 2)]",
+            ),
+        ];
+        for (sql, expected) in errors {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

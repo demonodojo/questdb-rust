@@ -3201,7 +3201,21 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   xq_lim1 "SELECT x FROM long_sequence(4) LIMIT 1" \
   xq_lim2 "SELECT x FROM long_sequence(4) LIMIT 2" \
   xq_lim0 "SELECT x FROM long_sequence(4) LIMIT 0" \
-  xq_type "SELECT typeof(x) FROM long_sequence(1)"
+  xq_type "SELECT typeof(x) FROM long_sequence(1)" \
+  gs_four "SELECT * FROM generate_series(1, 4)" \
+  gs_one "SELECT * FROM generate_series(1, 1)" \
+  gs_swap "SELECT * FROM generate_series(4, 1)" \
+  gs_step "SELECT * FROM generate_series(1, 4, 2)" \
+  gs_down "SELECT * FROM generate_series(1, 3, -1)" \
+  gs_zero "SELECT * FROM generate_series(0, 2)" \
+  gs_neg "SELECT * FROM generate_series(-2, 1)" \
+  gs_case "SELECT * FROM GENERATE_SERIES(1, 2)" \
+  gs_str "SELECT * FROM generate_series('1', '3')" \
+  gs_dbl "SELECT * FROM generate_series(1.5, 3)" \
+  gs_where "SELECT * FROM generate_series(1, 4) WHERE generate_series > 2" \
+  gs_lim1 "SELECT * FROM generate_series(1, 4) LIMIT 1" \
+  gs_lim0 "SELECT * FROM generate_series(1, 4) LIMIT 0" \
+  gs_type "SELECT typeof(generate_series) FROM generate_series(1, 1)"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -6728,6 +6742,20 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(4) LIMIT 2"),
     (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(4) LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(x) FROM long_sequence(1)"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series(1, 4)"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series(1, 1)"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series(4, 1)"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series(1, 4, 2)"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series(1, 3, -1)"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series(0, 2)"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series(-2, 1)"),
+    (os.environ["DIFF_H1"], "SELECT * FROM GENERATE_SERIES(1, 2)"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series('1', '3')"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series(1.5, 3)"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series(1, 4) WHERE generate_series > 2"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series(1, 4) LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series(1, 4) LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT typeof(generate_series) FROM generate_series(1, 1)"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),

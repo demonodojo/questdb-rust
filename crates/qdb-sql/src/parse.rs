@@ -29,6 +29,15 @@ pub struct Query {
     pub limit: Option<Limit>,
     /// Row count of `FROM long_sequence(n)`. `None` reads `table` from disk.
     pub long_sequence: Option<i64>,
+    /// `FROM generate_series(start, end[, step])`.
+    pub generate_series: Option<GenerateSeries>,
+}
+
+/// Inclusive numeric series produced by `generate_series`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenerateSeries {
+    Long { start: i64, end: i64, step: i64 },
+    Double { start: f64, end: f64, step: f64 },
 }
 
 /// Inclusive lower bound and exclusive upper bound, as QuestDB stores them
@@ -1290,14 +1299,22 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
     let columns = parser.parse_select_list()?;
     parser.expect_keyword("from")?;
     parser.skip();
-    let (table, long_sequence) = if parser.starts_named_call("long_sequence") {
+    let (table, long_sequence, generate_series) = if parser.starts_named_call("long_sequence") {
         let (_, args) = parser.parse_long_sequence_call()?;
         (
             String::from("long_sequence"),
             Some(long_sequence_count(&args)?),
+            None,
+        )
+    } else if parser.starts_named_call("generate_series") {
+        let (_, args) = parser.parse_generate_series_call()?;
+        (
+            String::from("generate_series"),
+            None,
+            Some(generate_series_spec(&args)?),
         )
     } else {
-        (parser.ident()?, None)
+        (parser.ident()?, None, None)
     };
     parser.skip();
     let mut filter = None;
@@ -1595,6 +1612,7 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         order_by,
         limit,
         long_sequence,
+        generate_series,
     })
 }
 
@@ -1623,6 +1641,151 @@ fn long_sequence_count(args: &[ConcatArg]) -> Result<i64, Error> {
         ConcatArg::Literal(Scalar::Char(_) | Scalar::Date(_) | Scalar::Timestamp(_)) => {
             Err(Error::new("invalid arguments"))
         }
+    }
+}
+
+fn generate_series_spec(args: &[ConcatArg]) -> Result<GenerateSeries, Error> {
+    if args.is_empty() {
+        return Err(Error::new(
+            "function `generate_series` requires arguments".to_string(),
+        ));
+    }
+    if args.len() != 2 && args.len() != 3 {
+        return Err(Error::new(format!(
+            "there is no matching function `generate_series` with the argument types: ({})",
+            series_type_list(args)
+        )));
+    }
+    if args.iter().all(series_long_ok) {
+        let start = series_i64(&args[0], "start")?;
+        let end = series_i64(&args[1], "end")?;
+        let step = if args.len() == 3 {
+            series_i64(&args[2], "step")?
+        } else {
+            1
+        };
+        if step == 0 {
+            return Err(Error::new("step cannot be zero"));
+        }
+        return Ok(GenerateSeries::Long { start, end, step });
+    }
+    if args.iter().all(series_double_ok) {
+        let start = series_f64(&args[0], "start")?;
+        let end = series_f64(&args[1], "end")?;
+        let step = if args.len() == 3 {
+            series_f64(&args[2], "step")?
+        } else {
+            1.0
+        };
+        if step == 0.0 {
+            return Err(Error::new("step cannot be zero"));
+        }
+        return Ok(GenerateSeries::Double { start, end, step });
+    }
+    Err(Error::new(format!(
+        "there is no matching function `generate_series` with the argument types: ({})",
+        series_type_list(args)
+    )))
+}
+
+fn series_type_list(args: &[ConcatArg]) -> String {
+    args.iter()
+        .map(series_type_name)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn series_type_name(arg: &ConcatArg) -> &'static str {
+    match arg {
+        ConcatArg::Column(_) => "STRING",
+        ConcatArg::Literal(Scalar::Null) => "NULL",
+        ConcatArg::Literal(Scalar::Boolean(_)) => "BOOLEAN",
+        ConcatArg::Literal(Scalar::Byte(_)) => "BYTE",
+        ConcatArg::Literal(Scalar::Short(_)) => "SHORT",
+        ConcatArg::Literal(Scalar::Char(_)) => "CHAR",
+        ConcatArg::Literal(Scalar::Int(_)) => "INT",
+        ConcatArg::Literal(Scalar::Long(number)) => {
+            if *number >= i64::from(i32::MIN) && *number <= i64::from(i32::MAX) {
+                "INT"
+            } else {
+                "LONG"
+            }
+        }
+        ConcatArg::Literal(Scalar::Float(_)) => "FLOAT",
+        ConcatArg::Literal(Scalar::Double(_)) => "DOUBLE",
+        ConcatArg::Literal(Scalar::Date(_)) => "DATE",
+        ConcatArg::Literal(Scalar::Timestamp(_)) => "TIMESTAMP",
+        ConcatArg::Literal(Scalar::Text(text)) => {
+            if text.chars().count() == 1 {
+                "CHAR"
+            } else {
+                "STRING"
+            }
+        }
+    }
+}
+
+fn series_long_ok(arg: &ConcatArg) -> bool {
+    matches!(
+        series_type_name(arg),
+        "LONG" | "INT" | "BYTE" | "SHORT" | "CHAR" | "STRING" | "DATE" | "TIMESTAMP" | "NULL"
+    ) || matches!(arg, ConcatArg::Column(_))
+}
+
+fn series_double_ok(arg: &ConcatArg) -> bool {
+    matches!(
+        series_type_name(arg),
+        "DOUBLE"
+            | "FLOAT"
+            | "LONG"
+            | "INT"
+            | "BYTE"
+            | "SHORT"
+            | "CHAR"
+            | "STRING"
+            | "DATE"
+            | "TIMESTAMP"
+            | "NULL"
+    )
+}
+
+fn series_constant(arg: &ConcatArg, place: &str) -> Result<(), Error> {
+    if matches!(arg, ConcatArg::Column(_) | ConcatArg::Literal(Scalar::Null)) {
+        Err(Error::new(format!(
+            "{place} argument must be a non-null constant or bind variable constant"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+fn series_i64(arg: &ConcatArg, place: &str) -> Result<i64, Error> {
+    series_constant(arg, place)?;
+    match arg {
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(*number),
+        ConcatArg::Literal(Scalar::Int(number)) => Ok(i64::from(*number)),
+        ConcatArg::Literal(Scalar::Byte(number)) => Ok(i64::from(*number)),
+        ConcatArg::Literal(Scalar::Short(number)) => Ok(i64::from(*number)),
+        ConcatArg::Literal(Scalar::Text(text)) => text
+            .parse::<i64>()
+            .map_err(|_| Error::new("invalid arguments".to_string())),
+        _ => Err(Error::new("invalid arguments")),
+    }
+}
+
+fn series_f64(arg: &ConcatArg, place: &str) -> Result<f64, Error> {
+    series_constant(arg, place)?;
+    match arg {
+        ConcatArg::Literal(Scalar::Double(number)) => Ok(*number),
+        ConcatArg::Literal(Scalar::Float(number)) => Ok(f64::from(*number)),
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(*number as f64),
+        ConcatArg::Literal(Scalar::Int(number)) => Ok(f64::from(*number)),
+        ConcatArg::Literal(Scalar::Byte(number)) => Ok(f64::from(*number)),
+        ConcatArg::Literal(Scalar::Short(number)) => Ok(f64::from(*number)),
+        ConcatArg::Literal(Scalar::Text(text)) => text
+            .parse::<f64>()
+            .map_err(|_| Error::new("invalid arguments".to_string())),
+        _ => Err(Error::new("invalid arguments")),
     }
 }
 
@@ -1850,7 +2013,12 @@ impl<'a> Parser<'a> {
         let mut pieces = Vec::new();
         loop {
             self.skip();
-            if self.starts_named_call("long_sequence") {
+            if self.starts_named_call("generate_series") {
+                let (label, _) = self.parse_generate_series_call()?;
+                return Err(Error::new(format!(
+                    "cursor function cannot be used as a column [column={label}]"
+                )));
+            } else if self.starts_named_call("long_sequence") {
                 let (label, _) = self.parse_long_sequence_call()?;
                 return Err(Error::new(format!(
                     "cursor function cannot be used as a column [column={label}]"
@@ -2958,6 +3126,41 @@ impl<'a> Parser<'a> {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
+    }
+
+    fn parse_generate_series_call(&mut self) -> Result<(String, Vec<ConcatArg>), Error> {
+        let name = self.ident_spelling()?;
+        self.skip();
+        if !self.eat(b'(') {
+            return Err(Error::new(
+                "function `generate_series` requires arguments".to_string(),
+            ));
+        }
+        self.skip();
+        if self.eat(b')') {
+            return Err(Error::new(
+                "function `generate_series` requires arguments".to_string(),
+            ));
+        }
+        let mut labels = Vec::new();
+        let mut args = Vec::new();
+        loop {
+            let (label, arg) = self.parse_call_arg(true)?;
+            labels.push(label);
+            args.push(arg);
+            self.skip();
+            if !self.eat(b',') {
+                break;
+            }
+        }
+        self.skip();
+        if !self.eat(b')') {
+            return Err(Error::new(format!(
+                "unsupported: expected ')' after generate_series near `{}`",
+                self.rest()
+            )));
+        }
+        Ok((format!("{name}({})", labels.join(", ")), args))
     }
 
     fn parse_long_sequence_call(&mut self) -> Result<(String, Vec<ConcatArg>), Error> {
