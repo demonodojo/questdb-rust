@@ -2850,7 +2850,12 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   cu_case "SELECT CURRENT_USER() FROM sensors" \
   cu_one "SELECT current_user() FROM sensors WHERE id = 1" \
   cu_none "SELECT current_user() FROM sensors WHERE id > 100" \
-  cu_lim0 "SELECT current_user() FROM sensors LIMIT 0"
+  cu_lim0 "SELECT current_user() FROM sensors LIMIT 0" \
+  su_all "SELECT session_user() FROM sensors" \
+  su_case "SELECT SESSION_USER() FROM sensors" \
+  su_one "SELECT session_user() FROM sensors WHERE id = 1" \
+  su_none "SELECT session_user() FROM sensors WHERE id > 100" \
+  su_lim0 "SELECT session_user() FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3200,7 +3205,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   pg_days "SELECT to_pg_date(note) FROM days" \
   sm_days "SELECT current_schema() FROM days" \
   db_days "SELECT current_database() FROM days" \
-  cu_days "SELECT current_user() FROM days"
+  cu_days "SELECT current_user() FROM days" \
+  su_days "SELECT session_user() FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5998,6 +6004,11 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT current_user() FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT current_user() FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT current_user() FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT session_user() FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT SESSION_USER() FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT session_user() FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT session_user() FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT session_user() FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6346,6 +6357,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT current_schema() FROM days"),
     (os.environ["DIFF_H2"], "SELECT current_database() FROM days"),
     (os.environ["DIFF_H2"], "SELECT current_user() FROM days"),
+    (os.environ["DIFF_H2"], "SELECT session_user() FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

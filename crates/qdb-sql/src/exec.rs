@@ -9,12 +9,12 @@ use crate::parse::{
     LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr,
     MinuteExpr, MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr,
     Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
-    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr,
-    SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr,
-    SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
-    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
-    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
-    WeekOfYearExpr, WmidExpr, YearExpr,
+    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr,
+    SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr,
+    SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
+    TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr,
+    ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr,
+    UpperExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -306,6 +306,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::CurrentSchema { label, .. }
             | ResolvedProj::CurrentDatabase { label, .. }
             | ResolvedProj::CurrentUser { label, .. }
+            | ResolvedProj::SessionUser { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -795,6 +796,9 @@ enum ResolvedProj {
     CurrentUser {
         label: String,
     },
+    SessionUser {
+        label: String,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -973,6 +977,7 @@ impl ResolvedProj {
             | Self::CurrentSchema { label, .. }
             | Self::CurrentDatabase { label, .. }
             | Self::CurrentUser { label, .. }
+            | Self::SessionUser { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1047,7 +1052,8 @@ impl ResolvedProj {
             | Self::Pi { .. } => qdb_types::TAG_DOUBLE,
             Self::CurrentSchema { .. }
             | Self::CurrentDatabase { .. }
-            | Self::CurrentUser { .. } => qdb_types::TAG_STRING,
+            | Self::CurrentUser { .. }
+            | Self::SessionUser { .. } => qdb_types::TAG_STRING,
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
             | Self::Add { result_tag, .. }
@@ -1193,6 +1199,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::CurrentSchema(expr) => resolve_current_schema(expr),
         Proj::CurrentDatabase(expr) => resolve_current_database(expr),
         Proj::CurrentUser(expr) => resolve_current_user(expr),
+        Proj::SessionUser(expr) => resolve_session_user(expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1509,6 +1516,18 @@ fn least_i64(table: &Table, row: usize, arg: &GreatestArg) -> Option<i64> {
             _ => None,
         },
     }
+}
+
+fn resolve_session_user(expr: &SessionUserExpr) -> Result<ResolvedProj, Error> {
+    if !expr.args.is_empty() {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `session_user`; expected: 0, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::SessionUser {
+        label: expr.label.clone(),
+    })
 }
 
 fn resolve_current_user(expr: &CurrentUserExpr) -> Result<ResolvedProj, Error> {
@@ -8137,6 +8156,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::CurrentSchema { .. } => Scalar::Text("public".to_string()),
         ResolvedProj::CurrentDatabase { .. } => Scalar::Text("qdb".to_string()),
         ResolvedProj::CurrentUser { .. } => Scalar::Text("admin".to_string()),
+        ResolvedProj::SessionUser { .. } => Scalar::Text("admin".to_string()),
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39358,6 +39378,65 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn su_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT session_user() FROM sensors",
+                "expected/su_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT SESSION_USER() FROM sensors",
+                "expected/su_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT session_user() FROM sensors WHERE id = 1",
+                "expected/su_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT session_user() FROM sensors WHERE id > 100",
+                "expected/su_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT session_user() FROM sensors LIMIT 0",
+                "expected/su_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT session_user() FROM days",
+                "expected/su_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT session_user(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `session_user`; expected: 0, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT session_user(1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `session_user`; expected: 0, provided: 1"
+            ),
             "{}",
             err.message
         );
