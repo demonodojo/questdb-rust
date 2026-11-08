@@ -3133,7 +3133,21 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tv_one "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors WHERE id = 1" \
   tv_none "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors WHERE id > 100" \
   tv_lim0 "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors LIMIT 0" \
-  tv_type "SELECT typeof(pg_catalog.pg_table_is_visible(1)) FROM sensors LIMIT 1"
+  tv_type "SELECT typeof(pg_catalog.pg_table_is_visible(1)) FROM sensors LIMIT 1" \
+  ag_all "SELECT pg_catalog.age(1) FROM sensors" \
+  ag_null "SELECT pg_catalog.age(null) FROM sensors LIMIT 1" \
+  ag_neg "SELECT pg_catalog.age(-1) FROM sensors LIMIT 1" \
+  ag_str "SELECT pg_catalog.age('2') FROM sensors LIMIT 1" \
+  ag_note "SELECT pg_catalog.age(note) FROM sensors LIMIT 1" \
+  ag_id "SELECT pg_catalog.age(id) FROM sensors" \
+  ag_flags "SELECT pg_catalog.age(flags) FROM sensors LIMIT 1" \
+  ag_ts "SELECT pg_catalog.age(ts) FROM sensors LIMIT 1" \
+  ag_day "SELECT pg_catalog.age(day) FROM sensors LIMIT 1" \
+  ag_case "SELECT pg_catalog.AGE(1) FROM sensors LIMIT 1" \
+  ag_one "SELECT pg_catalog.age(1) FROM sensors WHERE id = 1" \
+  ag_none "SELECT pg_catalog.age(1) FROM sensors WHERE id > 100" \
+  ag_lim0 "SELECT pg_catalog.age(1) FROM sensors LIMIT 0" \
+  ag_type "SELECT typeof(pg_catalog.age(1)) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3505,7 +3519,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   th_days "SELECT to_char(from_base64('YWI=')) FROM days" \
   pv_days "SELECT pg_catalog.version() FROM days" \
   ub_days "SELECT pg_catalog.pg_get_userbyid(1) FROM days" \
-  tv_days "SELECT pg_catalog.pg_table_is_visible(1) FROM days"
+  tv_days "SELECT pg_catalog.pg_table_is_visible(1) FROM days" \
+  ag_days "SELECT pg_catalog.age(1) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6586,6 +6601,20 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.pg_table_is_visible(1)) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age('2') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(note) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(flags) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(ts) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(day) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.AGE(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(1) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(1) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(1) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.age(1)) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6956,6 +6985,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT pg_catalog.version() FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_catalog.pg_get_userbyid(1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_catalog.pg_table_is_visible(1) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT pg_catalog.age(1) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

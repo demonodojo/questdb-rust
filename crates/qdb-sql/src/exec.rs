@@ -9,16 +9,16 @@ use crate::parse::{
     GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr,
     IsLeapYearExpr, JsonExtractExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
     MakeGeohashExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr,
-    NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr, PgGetExprExpr, PgGetPartKeyDefExpr,
-    PgGetUserByIdExpr, PgIsInRecoveryExpr, PgTableIsVisibleExpr, PiExpr, PowerExpr, Proj, Query,
-    QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
-    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr,
-    SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr,
-    SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
-    TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToCharExpr, ToDateExpr,
-    ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr, TrimEnd,
-    TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr,
-    WmidExpr, YearExpr,
+    NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr, PgAgeExpr, PgGetExprExpr,
+    PgGetPartKeyDefExpr, PgGetUserByIdExpr, PgIsInRecoveryExpr, PgTableIsVisibleExpr, PiExpr,
+    PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr,
+    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
+    SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
+    SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
+    SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr,
+    ToCharExpr, ToDateExpr, ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr,
+    ToUuidExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr,
+    WithinBoxExpr, WithinRadiusExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -320,6 +320,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::PgGetPartKeyDef { label, .. }
             | ResolvedProj::PgGetUserById { label, .. }
             | ResolvedProj::PgTableIsVisible { label, .. }
+            | ResolvedProj::PgAge { label, .. }
             | ResolvedProj::PgGetExpr { label, .. }
             | ResolvedProj::Netmask { label, .. }
             | ResolvedProj::GeoDistance { label, .. }
@@ -851,6 +852,9 @@ enum ResolvedProj {
     PgTableIsVisible {
         label: String,
     },
+    PgAge {
+        label: String,
+    },
     PgGetExpr {
         label: String,
     },
@@ -1083,6 +1087,7 @@ impl ResolvedProj {
             | Self::PgGetPartKeyDef { label, .. }
             | Self::PgGetUserById { label, .. }
             | Self::PgTableIsVisible { label, .. }
+            | Self::PgAge { label, .. }
             | Self::PgGetExpr { label, .. }
             | Self::Netmask { label, .. }
             | Self::GeoDistance { label, .. }
@@ -1112,7 +1117,7 @@ impl ResolvedProj {
             Self::DateAdd { .. } | Self::ToUtc { .. } | Self::ToTimezone { .. } => {
                 qdb_types::TAG_TIMESTAMP
             }
-            Self::DateDiff { .. } => qdb_types::TAG_LONG,
+            Self::DateDiff { .. } | Self::PgAge { .. } => qdb_types::TAG_LONG,
             Self::Year { .. }
             | Self::Month { .. }
             | Self::Day { .. }
@@ -1359,6 +1364,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::PgGetPartKeyDef(expr) => resolve_pg_get_partkeydef(table, expr),
         Proj::PgGetUserById(expr) => resolve_pg_get_userbyid(table, expr),
         Proj::PgTableIsVisible(expr) => resolve_pg_table_is_visible(table, expr),
+        Proj::PgAge(expr) => resolve_pg_age(table, expr),
         Proj::PgGetExpr(expr) => resolve_pg_get_expr(table, expr),
         Proj::Netmask(expr) => resolve_netmask(table, expr),
         Proj::GeoDistance(expr) => resolve_geo_distance(table, expr),
@@ -1753,6 +1759,52 @@ fn resolve_current_setting(
     Ok(ResolvedProj::CurrentSetting {
         label: expr.label.clone(),
         value,
+    })
+}
+
+fn resolve_pg_age(table: &Table, expr: &PgAgeExpr) -> Result<ResolvedProj, Error> {
+    let reported = if expr.qualified {
+        "pg_catalog.age"
+    } else {
+        "age"
+    };
+    if !expr.qualified {
+        let types = if expr.args.is_empty() {
+            String::new()
+        } else {
+            timestamp_floor_types(table, &expr.args)?
+        };
+        let listed = types.replace(", ", ",");
+        return Err(Error::new(format!(
+            "unknown function name: {reported}({listed})"
+        )));
+    }
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `{reported}`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let actual = timestamp_floor_arg_type(table, &expr.args[0])?;
+    if !matches!(
+        actual,
+        "LONG"
+            | "INT"
+            | "BYTE"
+            | "SHORT"
+            | "CHAR"
+            | "STRING"
+            | "VARCHAR"
+            | "DATE"
+            | "TIMESTAMP"
+            | "NULL"
+    ) {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `{reported}` at #1 expected: LONG, actual: {actual}"
+        )));
+    }
+    Ok(ResolvedProj::PgAge {
+        label: expr.label.clone(),
     })
 }
 
@@ -4371,11 +4423,21 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
             result_tag: qdb_types::TAG_STRING,
         });
     }
-    if expr
-        .label
-        .to_ascii_lowercase()
-        .contains("pg_table_is_visible(")
-    {
+    let lowered = expr.label.to_ascii_lowercase();
+    if lowered.contains("pg_catalog.age(") || lowered.contains("(age(") {
+        let inner = PgAgeExpr {
+            label: String::new(),
+            args: expr.args.clone(),
+            qualified: lowered.contains("pg_catalog."),
+        };
+        resolve_pg_age(table, &inner)?;
+        return Ok(ResolvedProj::Typeof {
+            label: expr.label.clone(),
+            name: "LONG".to_string(),
+            result_tag: qdb_types::TAG_STRING,
+        });
+    }
+    if lowered.contains("pg_table_is_visible(") {
         let inner = PgTableIsVisibleExpr {
             label: String::new(),
             args: expr.args.clone(),
@@ -10036,6 +10098,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::PgGetPartKeyDef { .. } | ResolvedProj::PgGetExpr { .. } => Scalar::Null,
         ResolvedProj::PgGetUserById { .. } => Scalar::Text("public".to_string()),
         ResolvedProj::PgTableIsVisible { .. } => Scalar::Boolean(true),
+        ResolvedProj::PgAge { .. } => Scalar::Long(0),
         ResolvedProj::Netmask { arg, .. } => match text_of(table, row, arg) {
             Some(text) => match ipv4_netmask(&text) {
                 Some(mask) => Scalar::Text(mask),
@@ -41278,6 +41341,112 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn ag_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                "SELECT pg_catalog.age(1) FROM sensors",
+                "expected/ag_all.tsv",
+            ),
+            (
+                "SELECT pg_catalog.age(null) FROM sensors LIMIT 1",
+                "expected/ag_null.tsv",
+            ),
+            (
+                "SELECT pg_catalog.age(-1) FROM sensors LIMIT 1",
+                "expected/ag_neg.tsv",
+            ),
+            (
+                "SELECT pg_catalog.age('2') FROM sensors LIMIT 1",
+                "expected/ag_str.tsv",
+            ),
+            (
+                "SELECT pg_catalog.age(note) FROM sensors LIMIT 1",
+                "expected/ag_note.tsv",
+            ),
+            (
+                "SELECT pg_catalog.age(id) FROM sensors",
+                "expected/ag_id.tsv",
+            ),
+            (
+                "SELECT pg_catalog.age(flags) FROM sensors LIMIT 1",
+                "expected/ag_flags.tsv",
+            ),
+            (
+                "SELECT pg_catalog.age(ts) FROM sensors LIMIT 1",
+                "expected/ag_ts.tsv",
+            ),
+            (
+                "SELECT pg_catalog.age(day) FROM sensors LIMIT 1",
+                "expected/ag_day.tsv",
+            ),
+            (
+                "SELECT pg_catalog.AGE(1) FROM sensors LIMIT 1",
+                "expected/ag_case.tsv",
+            ),
+            (
+                "SELECT pg_catalog.age(1) FROM sensors WHERE id = 1",
+                "expected/ag_one.tsv",
+            ),
+            (
+                "SELECT pg_catalog.age(1) FROM sensors WHERE id > 100",
+                "expected/ag_none.tsv",
+            ),
+            (
+                "SELECT pg_catalog.age(1) FROM sensors LIMIT 0",
+                "expected/ag_lim0.tsv",
+            ),
+            (
+                "SELECT typeof(pg_catalog.age(1)) FROM sensors LIMIT 1",
+                "expected/ag_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let result = execute(&days, "SELECT pg_catalog.age(1) FROM days").unwrap();
+        let expected = std::fs::read_to_string(days.join("expected/ag_days.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let messages = [
+            (
+                "SELECT age(1) FROM sensors",
+                "unknown function name: age(INT)",
+            ),
+            (
+                "SELECT pg_catalog.age() FROM sensors",
+                "function `pg_catalog.age` requires arguments: pg_catalog.age(LONG)",
+            ),
+            (
+                "SELECT pg_catalog.age(1, 2) FROM sensors",
+                "wrong number of arguments for function `pg_catalog.age`; expected: 1, provided: 2",
+            ),
+            (
+                "SELECT pg_catalog.age(ok) FROM sensors",
+                "argument type mismatch for function `pg_catalog.age` at #1 expected: LONG, actual: BOOLEAN",
+            ),
+            (
+                "SELECT pg_catalog.age(1.5) FROM sensors",
+                "argument type mismatch for function `pg_catalog.age` at #1 expected: LONG, actual: DOUBLE",
+            ),
+            (
+                "SELECT pg_catalog.age(location) FROM sensors",
+                "argument type mismatch for function `pg_catalog.age` at #1 expected: LONG, actual: SYMBOL",
+            ),
+            (
+                "SELECT pg_catalog.age(missing) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, message) in messages {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(message), "{}: {}", sql, err.message);
+        }
     }
 
     #[test]

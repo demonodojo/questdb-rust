@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `pg_catalog.age()`
+
+`pg_catalog.age` devuelve el `LONG` fijo `0` cuando el argumento puede convertirse a `LONG`. Acepta enteros, texto, fechas y timestamps. Un `BOOLEAN`, un `DOUBLE` o un `SYMBOL` se rechazan. Sin el esquema `pg_catalog`, el nombre es una función desconocida. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `pg_catalog.pg_table_is_visible()`
 
 `pg_catalog.pg_table_is_visible` devuelve el booleano fijo `true` cuando el argumento puede convertirse a `INT`. Un `LONG`, un `BOOLEAN` o un `DOUBLE` se rechazan. Sin el esquema `pg_catalog`, el nombre es una función desconocida. Se contrastó con `/exec` en `sensors` y `days`.
