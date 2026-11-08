@@ -8,11 +8,11 @@ use crate::parse::{
     ExtractExpr, Filter, FloorExpr, FormatTypeExpr, GlobExpr, GreatestExpr, GroupedSelect,
     HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr,
     LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr,
-    MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PgGetPartKeyDefExpr,
-    PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
-    RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
-    SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
-    SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
+    MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PgGetExprExpr,
+    PgGetPartKeyDefExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
+    RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
+    RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr,
+    SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
     StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
     TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
     ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
@@ -316,6 +316,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::FormatType { label, .. }
             | ResolvedProj::CurrentSetting { label, .. }
             | ResolvedProj::PgGetPartKeyDef { label, .. }
+            | ResolvedProj::PgGetExpr { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -831,6 +832,9 @@ enum ResolvedProj {
     PgGetPartKeyDef {
         label: String,
     },
+    PgGetExpr {
+        label: String,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -1017,6 +1021,7 @@ impl ResolvedProj {
             | Self::FormatType { label, .. }
             | Self::CurrentSetting { label, .. }
             | Self::PgGetPartKeyDef { label, .. }
+            | Self::PgGetExpr { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1097,7 +1102,8 @@ impl ResolvedProj {
             | Self::Version { .. }
             | Self::FormatType { .. }
             | Self::CurrentSetting { .. }
-            | Self::PgGetPartKeyDef { .. } => qdb_types::TAG_STRING,
+            | Self::PgGetPartKeyDef { .. }
+            | Self::PgGetExpr { .. } => qdb_types::TAG_STRING,
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
             | Self::Add { result_tag, .. }
@@ -1251,6 +1257,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::FormatType(expr) => resolve_format_type(table, expr),
         Proj::CurrentSetting(expr) => resolve_current_setting(table, expr),
         Proj::PgGetPartKeyDef(expr) => resolve_pg_get_partkeydef(table, expr),
+        Proj::PgGetExpr(expr) => resolve_pg_get_expr(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1658,6 +1665,32 @@ fn resolve_pg_get_partkeydef(
         )));
     }
     Ok(ResolvedProj::PgGetPartKeyDef {
+        label: expr.label.clone(),
+    })
+}
+
+fn resolve_pg_get_expr(table: &Table, expr: &PgGetExprExpr) -> Result<ResolvedProj, Error> {
+    let types = timestamp_floor_types(table, &expr.args)?;
+    let names: Vec<&str> = if types.is_empty() {
+        Vec::new()
+    } else {
+        types.split(", ").collect()
+    };
+    let text = matches!(
+        names.first().copied(),
+        Some("STRING" | "SYMBOL" | "VARCHAR" | "CHAR" | "NULL")
+    );
+    let relation = matches!(
+        names.get(1).copied(),
+        Some("INT" | "BYTE" | "SHORT" | "NULL")
+    );
+    let pretty = names.len() == 2 || matches!(names.get(2).copied(), Some("BOOLEAN" | "NULL"));
+    if !((names.len() == 2 || names.len() == 3) && text && relation && pretty) {
+        return Err(Error::new(format!(
+            "there is no matching function `pg_get_expr` with the argument types: ({types})"
+        )));
+    }
+    Ok(ResolvedProj::PgGetExpr {
         label: expr.label.clone(),
     })
 }
@@ -8371,7 +8404,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::PgIsInRecovery { .. } => Scalar::Boolean(false),
         ResolvedProj::FormatType { .. } => Scalar::Null,
         ResolvedProj::CurrentSetting { value, .. } => Scalar::Text(value.clone()),
-        ResolvedProj::PgGetPartKeyDef { .. } => Scalar::Null,
+        ResolvedProj::PgGetPartKeyDef { .. } | ResolvedProj::PgGetExpr { .. } => Scalar::Null,
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39597,6 +39630,174 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn gx_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, 1) FROM sensors",
+                "expected/gx_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT PG_GET_EXPR(note, 1) FROM sensors LIMIT 1",
+                "expected/gx_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, 1) FROM sensors WHERE id = 1",
+                "expected/gx_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, 1) FROM sensors WHERE id > 100",
+                "expected/gx_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, 1) FROM sensors LIMIT 0",
+                "expected/gx_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, flags) FROM sensors",
+                "expected/gx_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr('alpha', 1) FROM sensors LIMIT 1",
+                "expected/gx_alpha.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(null, 1) FROM sensors LIMIT 1",
+                "expected/gx_n1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, null) FROM sensors LIMIT 1",
+                "expected/gx_nn.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(null, null) FROM sensors LIMIT 1",
+                "expected/gx_both.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(location, 1) FROM sensors LIMIT 1",
+                "expected/gx_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(tag, 1) FROM sensors LIMIT 1",
+                "expected/gx_tag.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(ch, 1) FROM sensors LIMIT 1",
+                "expected/gx_ch.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, b) FROM sensors LIMIT 1",
+                "expected/gx_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, code) FROM sensors LIMIT 1",
+                "expected/gx_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, -1) FROM sensors LIMIT 1",
+                "expected/gx_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, 1, true) FROM sensors LIMIT 1",
+                "expected/gx_true.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, 1, false) FROM sensors LIMIT 1",
+                "expected/gx_false.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, 1, null) FROM sensors LIMIT 1",
+                "expected/gx_tn.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_expr(note, 1, ok) FROM sensors",
+                "expected/gx_ok.tsv",
+            ),
+            (
+                &days,
+                "SELECT pg_get_expr(note, 1) FROM days",
+                "expected/gx_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let mismatches = [
+            (
+                "SELECT pg_get_expr() FROM sensors",
+                "function `pg_get_expr` requires arguments",
+            ),
+            (
+                "SELECT pg_get_expr(note) FROM sensors",
+                "there is no matching function `pg_get_expr` with the argument types: (STRING)",
+            ),
+            (
+                "SELECT pg_get_expr(note, 1, true, 1) FROM sensors",
+                "there is no matching function `pg_get_expr` with the argument types: (STRING, INT, BOOLEAN, INT)",
+            ),
+            (
+                "SELECT pg_get_expr(id, 1) FROM sensors",
+                "there is no matching function `pg_get_expr` with the argument types: (LONG, INT)",
+            ),
+            (
+                "SELECT pg_get_expr(note, id) FROM sensors",
+                "there is no matching function `pg_get_expr` with the argument types: (STRING, LONG)",
+            ),
+            (
+                "SELECT pg_get_expr(reading, 1) FROM sensors",
+                "there is no matching function `pg_get_expr` with the argument types: (DOUBLE, INT)",
+            ),
+            (
+                "SELECT pg_get_expr(note, score) FROM sensors",
+                "there is no matching function `pg_get_expr` with the argument types: (STRING, FLOAT)",
+            ),
+            (
+                "SELECT pg_get_expr(note, ts) FROM sensors",
+                "there is no matching function `pg_get_expr` with the argument types: (STRING, TIMESTAMP)",
+            ),
+            (
+                "SELECT pg_get_expr(note, 1, id) FROM sensors",
+                "there is no matching function `pg_get_expr` with the argument types: (STRING, INT, LONG)",
+            ),
+            (
+                "SELECT pg_get_expr(missing, 1) FROM sensors",
+                "Invalid column: missing",
+            ),
+            (
+                "SELECT pg_get_expr(note, missing) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

@@ -2922,7 +2922,27 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   pk_tag "SELECT pg_get_partkeydef(tag) FROM sensors LIMIT 1" \
   pk_alpha "SELECT pg_get_partkeydef('alpha') FROM sensors LIMIT 1" \
   pk_empty "SELECT pg_get_partkeydef('') FROM sensors LIMIT 1" \
-  pk_neg "SELECT pg_get_partkeydef(-1) FROM sensors LIMIT 1"
+  pk_neg "SELECT pg_get_partkeydef(-1) FROM sensors LIMIT 1" \
+  gx_note "SELECT pg_get_expr(note, 1) FROM sensors" \
+  gx_case "SELECT PG_GET_EXPR(note, 1) FROM sensors LIMIT 1" \
+  gx_one "SELECT pg_get_expr(note, 1) FROM sensors WHERE id = 1" \
+  gx_none "SELECT pg_get_expr(note, 1) FROM sensors WHERE id > 100" \
+  gx_lim0 "SELECT pg_get_expr(note, 1) FROM sensors LIMIT 0" \
+  gx_flags "SELECT pg_get_expr(note, flags) FROM sensors" \
+  gx_alpha "SELECT pg_get_expr('alpha', 1) FROM sensors LIMIT 1" \
+  gx_n1 "SELECT pg_get_expr(null, 1) FROM sensors LIMIT 1" \
+  gx_nn "SELECT pg_get_expr(note, null) FROM sensors LIMIT 1" \
+  gx_both "SELECT pg_get_expr(null, null) FROM sensors LIMIT 1" \
+  gx_loc "SELECT pg_get_expr(location, 1) FROM sensors LIMIT 1" \
+  gx_tag "SELECT pg_get_expr(tag, 1) FROM sensors LIMIT 1" \
+  gx_ch "SELECT pg_get_expr(ch, 1) FROM sensors LIMIT 1" \
+  gx_byte "SELECT pg_get_expr(note, b) FROM sensors LIMIT 1" \
+  gx_code "SELECT pg_get_expr(note, code) FROM sensors LIMIT 1" \
+  gx_neg "SELECT pg_get_expr(note, -1) FROM sensors LIMIT 1" \
+  gx_true "SELECT pg_get_expr(note, 1, true) FROM sensors LIMIT 1" \
+  gx_false "SELECT pg_get_expr(note, 1, false) FROM sensors LIMIT 1" \
+  gx_tn "SELECT pg_get_expr(note, 1, null) FROM sensors LIMIT 1" \
+  gx_ok "SELECT pg_get_expr(note, 1, ok) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3280,7 +3300,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ft_days "SELECT format_type(1, 1) FROM days" \
   rr_days "SELECT regexp_replace(note, 'a', 'b') FROM days" \
   cw_days "SELECT current_setting('server_version') FROM days" \
-  pk_days "SELECT pg_get_partkeydef(1) FROM days"
+  pk_days "SELECT pg_get_partkeydef(1) FROM days" \
+  gx_days "SELECT pg_get_expr(note, 1) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6150,6 +6171,26 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef('alpha') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef('') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT PG_GET_EXPR(note, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr('alpha', 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(null, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(null, null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(location, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(tag, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(ch, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, b) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, code) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1, true) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1, false) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1, null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1, ok) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6506,6 +6547,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT regexp_replace(note, 'a', 'b') FROM days"),
     (os.environ["DIFF_H2"], "SELECT current_setting('server_version') FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_get_partkeydef(1) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT pg_get_expr(note, 1) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

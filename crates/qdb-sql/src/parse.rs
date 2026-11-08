@@ -316,6 +316,7 @@ pub enum Proj {
     FormatType(FormatTypeExpr),
     CurrentSetting(CurrentSettingExpr),
     PgGetPartKeyDef(PgGetPartKeyDefExpr),
+    PgGetExpr(PgGetExprExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1125,6 +1126,13 @@ pub struct PgGetPartKeyDefExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `pg_get_expr(expr, relation [, pretty])`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PgGetExprExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `greatest(number, ...)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreatestExpr {
@@ -1380,6 +1388,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_current_setting()?.label
             } else if parser.starts_pg_get_partkeydef_call() {
                 parser.parse_pg_get_partkeydef()?.label
+            } else if parser.starts_pg_get_expr_call() {
+                parser.parse_pg_get_expr()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
             } else if parser.starts_least_call() {
@@ -1543,6 +1553,7 @@ enum SelectPiece {
     FormatType(FormatTypeExpr),
     CurrentSetting(CurrentSettingExpr),
     PgGetPartKeyDef(PgGetPartKeyDefExpr),
+    PgGetExpr(PgGetExprExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1835,6 +1846,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::PgGetPartKeyDef(
                     self.parse_pg_get_partkeydef()?,
                 ));
+            } else if self.starts_pg_get_expr_call() {
+                pieces.push(SelectPiece::PgGetExpr(self.parse_pg_get_expr()?));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else if self.starts_least_call() {
@@ -2017,6 +2030,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::FormatType(_)
                     | SelectPiece::CurrentSetting(_)
                     | SelectPiece::PgGetPartKeyDef(_)
+                    | SelectPiece::PgGetExpr(_)
                     | SelectPiece::Greatest(_)
                     | SelectPiece::Least(_)
             )
@@ -2138,6 +2152,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::FormatType(expr) => items.push(Proj::FormatType(expr)),
                     SelectPiece::CurrentSetting(expr) => items.push(Proj::CurrentSetting(expr)),
                     SelectPiece::PgGetPartKeyDef(expr) => items.push(Proj::PgGetPartKeyDef(expr)),
+                    SelectPiece::PgGetExpr(expr) => items.push(Proj::PgGetExpr(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
@@ -2279,6 +2294,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::FormatType(_)
                 | SelectPiece::CurrentSetting(_)
                 | SelectPiece::PgGetPartKeyDef(_)
+                | SelectPiece::PgGetExpr(_)
                 | SelectPiece::Greatest(_)
                 | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
@@ -2489,6 +2505,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(PgGetPartKeyDefExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_pg_get_expr_call(&self) -> bool {
+        self.starts_named_call("pg_get_expr")
+    }
+
+    fn parse_pg_get_expr(&mut self) -> Result<PgGetExprExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `pg_get_expr` requires arguments".to_string(),
+            ));
+        }
+        Ok(PgGetExprExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
@@ -5247,6 +5281,10 @@ impl<'a> Parser<'a> {
             let spelling = self.ident_spelling()?;
             let arg = if spelling.eq_ignore_ascii_case("null") {
                 ConcatArg::Literal(Scalar::Null)
+            } else if spelling.eq_ignore_ascii_case("true") {
+                ConcatArg::Literal(Scalar::Boolean(true))
+            } else if spelling.eq_ignore_ascii_case("false") {
+                ConcatArg::Literal(Scalar::Boolean(false))
             } else {
                 ConcatArg::Column(spelling.clone())
             };

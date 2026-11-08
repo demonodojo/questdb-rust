@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `pg_get_expr()`
+
+`pg_get_expr` devuelve `NULL` de tipo `STRING` con dos o tres argumentos aceptados. El primero es texto, símbolo, varchar, char o nulo. El segundo es un entero de 32 bits, byte, short o nulo. El tercero, si está, es booleano o nulo. `true` y `false` dentro de la llamada son literales booleanos. `pg_get_expr(note, 1)` son cuatro `NULL`. `PG_GET_EXPR` conserva las mayúsculas. `pg_get_expr(note, -1)` encabeza `pg_get_expr(note, -(1))`. Sin argumentos exige argumentos y no publica firma. Otra aridad o tipos distintos se rechazan con `there is no matching function `pg_get_expr``. Una columna ausente es `Invalid column: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `pg_get_partkeydef()`
 
 `pg_get_partkeydef` devuelve `NULL` de tipo `STRING` cuando el argumento se acepta. Acepta enteros de 32 bits, byte, short, char, texto, símbolo, varchar y nulos. Rechaza long, float, double, boolean, timestamp y date con `argument type mismatch ... expected: INT`. `pg_get_partkeydef(1)` son cuatro `NULL`. `PG_GET_PARTKEYDEF` conserva las mayúsculas. `pg_get_partkeydef(-1)` encabeza `pg_get_partkeydef(-(1))`. Sin argumentos exige `pg_get_partkeydef(INT)`. Dos argumentos dicen `expected: 1, provided: 2`. Se contrastó con `/exec` en `sensors` y `days`.
