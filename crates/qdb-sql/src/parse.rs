@@ -1610,6 +1610,11 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
             } else {
                 let mut column = parser.ident()?;
                 parser.skip();
+                if parser.eat(b'.') {
+                    column.push('.');
+                    column.push_str(&parser.ident()?);
+                    parser.skip();
+                }
                 if parser.eat_keyword("in") {
                     column = parser.parse_in_list(column)?.label;
                 } else if parser.starts_eq_or_ne() {

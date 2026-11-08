@@ -24,15 +24,15 @@ Tests que pasaron:
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
 | qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
-| qdb-sql | 254 ok, incluido `jj_matches_captured_exec` |
+| qdb-sql | 255 ok, incluido `oj_matches_captured_exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
-captured-oracle: 3190 queries match tests/fixtures/h1/expected
+captured-oracle: 3192 queries match tests/fixtures/h1/expected
 captured-oracle: 376 queries match tests/fixtures/h2/expected
-live-reference: 3566 queries matched row counts against http://127.0.0.1:19011/exec
+live-reference: 3568 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
 Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
@@ -51,4 +51,4 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 
 ## Próxima tarea
 
-Añadir `ORDER BY` de una columna cualificada y comprobarlo contra `/exec`. `SELECT a.id, b.id FROM sensors a JOIN days b ON a.id = b.id ORDER BY a.id` devuelve las columnas `id` e `id_2`, tres filas: `NULL`/`NULL`, `1`/`1` y `2`/`2`. `SELECT a.id, b.note FROM sensors a JOIN days b ON a.id = b.id ORDER BY b.note` devuelve las columnas `id` y `note`, tres filas: `2`/`NULL`, `1`/`alpha` y `NULL`/`東京`. No abrir WAL en ese paso.
+Añadir el alias `AS` y comprobarlo contra `/exec`. `SELECT a.id, b.id FROM sensors AS a JOIN days AS b ON a.id = b.id` devuelve las columnas `id` e `id_2`, tres filas: `1`/`1`, `2`/`2` y `NULL`/`NULL`. `SELECT s.id FROM sensors AS s WHERE s.id = 1` devuelve la columna `id` y la fila `1`. `SELECT id FROM sensors AS s ORDER BY s.id` devuelve `NULL`, `-1`, `1` y `2`. No abrir WAL en ese paso.
