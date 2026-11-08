@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `kurtosis_samp()`
+
+`kurtosis_samp` devuelve la curtosis excesiva muestral como `DOUBLE`. Con menos de cuatro valores finitos, o si todos son iguales, el resultado es `NULL`. `kurtosis_samp(b)` es `3.9926202441231036`, `kurtosis_samp(code)` es `3.9999992882590982` y `kurtosis_samp(ts)` es `-1.2000000000000024`. `flags`, `reading`, `score`, `id` y `day` salen `NULL`. Los grupos por `location` salen `NULL`. `KURTOSIS_SAMP` conserva las mayúsculas del encabezado. Un booleano o un símbolo no encajan. Un texto que no es número se rechaza en la fila. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `::timestamp`
 
 `column::timestamp` convierte una columna a `TIMESTAMP` y el encabezado conserva la grafía. Un nulo sigue siendo `NULL` y un texto es `NULL`. Un entero es microsegundos desde la época y una fecha conserva el instante en microsegundos. Un timestamp se queda igual. `id::timestamp` es `1970-01-01T00:00:00.000001Z`, `1970-01-01T00:00:00.000002Z`, `NULL` y `1969-12-31T23:59:59.999999Z`. En `days` es `1970-01-01T00:00:00.000001Z`, `1970-01-01T00:00:00.000002Z`, `1970-01-01T00:00:00.000003Z` y `NULL`. `ts::timestamp` es `2020-01-02T03:04:05.000000Z`, `2020-01-02T03:04:06.000000Z`, `2020-01-02T03:04:07.000000Z` y `2020-01-02T03:04:08.000000Z`. `day::timestamp` es `2020-01-02T00:00:00.000000Z`, `NULL`, `1970-01-01T00:00:00.000000Z` y `2020-06-15T12:30:00.000000Z`. `note::timestamp` es `NULL` en las cuatro filas. `flags::timestamp` es `1970-01-01T00:00:00.000010Z`, `NULL`, `1970-01-01T00:00:00.000000Z` y `1970-01-01T00:00:00.000042Z`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.

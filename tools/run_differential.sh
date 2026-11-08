@@ -2755,7 +2755,23 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   zt_ts "SELECT ts::timestamp FROM sensors" \
   zt_day "SELECT day::timestamp FROM sensors" \
   zt_note "SELECT note::timestamp FROM sensors" \
-  zt_flags "SELECT flags::timestamp FROM sensors"
+  zt_flags "SELECT flags::timestamp FROM sensors" \
+  ky_flags "SELECT kurtosis_samp(flags) FROM sensors" \
+  ky_one "SELECT kurtosis_samp(flags) FROM sensors WHERE id = 1" \
+  ky_none "SELECT kurtosis_samp(flags) FROM sensors WHERE id > 100" \
+  ky_read "SELECT kurtosis_samp(reading) FROM sensors" \
+  ky_score "SELECT kurtosis_samp(score) FROM sensors" \
+  ky_byte "SELECT kurtosis_samp(b) FROM sensors" \
+  ky_code "SELECT kurtosis_samp(code) FROM sensors" \
+  ky_id "SELECT kurtosis_samp(id) FROM sensors" \
+  ky_idpos "SELECT kurtosis_samp(id) FROM sensors WHERE id > 0" \
+  ky_flagpos "SELECT kurtosis_samp(flags) FROM sensors WHERE flags > 0" \
+  ky_grp "SELECT kurtosis_samp(flags) FROM sensors GROUP BY location ORDER BY location" \
+  ky_read_grp "SELECT kurtosis_samp(reading) FROM sensors GROUP BY location ORDER BY location" \
+  ky_lim0 "SELECT kurtosis_samp(flags) FROM sensors LIMIT 0" \
+  ky_case "SELECT KURTOSIS_SAMP(flags) FROM sensors" \
+  ky_day "SELECT kurtosis_samp(day) FROM sensors" \
+  ky_ts "SELECT kurtosis_samp(ts) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3093,7 +3109,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   zm_days "SELECT location::symbol FROM days" \
   zv_days "SELECT note::varchar FROM days" \
   zw_days "SELECT id::date FROM days" \
-  zt_days "SELECT id::timestamp FROM days"
+  zt_days "SELECT id::timestamp FROM days" \
+  ky_days "SELECT kurtosis_samp(id) FROM days" \
+  ky_days_grp "SELECT kurtosis_samp(id) FROM days GROUP BY location ORDER BY location"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5796,6 +5814,22 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT day::timestamp FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT note::timestamp FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT flags::timestamp FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(flags) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(flags) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(b) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(id) FROM sensors WHERE id > 0"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(flags) FROM sensors WHERE flags > 0"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(flags) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(reading) FROM sensors GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(flags) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT KURTOSIS_SAMP(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT kurtosis_samp(ts) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6132,6 +6166,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT note::varchar FROM days"),
     (os.environ["DIFF_H2"], "SELECT id::date FROM days"),
     (os.environ["DIFF_H2"], "SELECT id::timestamp FROM days"),
+    (os.environ["DIFF_H2"], "SELECT kurtosis_samp(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT kurtosis_samp(id) FROM days GROUP BY location ORDER BY location"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
