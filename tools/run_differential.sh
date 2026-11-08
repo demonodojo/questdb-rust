@@ -3018,7 +3018,42 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   wb_none "SELECT within_box(0, 0, -1, -1, 1, 1) FROM sensors WHERE id > 100" \
   wb_lim0 "SELECT within_box(0, 0, -1, -1, 1, 1) FROM sensors LIMIT 0" \
   wb_score "SELECT within_box(0, score, -1, -2, 1, 2) FROM sensors" \
-  wb_id "SELECT within_box(id, id, 0, 0, 1, 1) FROM sensors"
+  wb_id "SELECT within_box(id, id, 0, 0, 1, 1) FROM sensors" \
+  mg_mad "SELECT make_geohash(2.0, 41.0, 20) FROM sensors LIMIT 1" \
+  mg_s "SELECT make_geohash(0, 0, 5) FROM sensors LIMIT 1" \
+  mg_bit "SELECT make_geohash(0, 0, 1) FROM sensors LIMIT 1" \
+  mg_c2 "SELECT make_geohash(0, 0, 10) FROM sensors LIMIT 1" \
+  mg_c5 "SELECT make_geohash(0, 0, 25) FROM sensors LIMIT 1" \
+  mg_c12 "SELECT make_geohash(0, 0, 60) FROM sensors LIMIT 1" \
+  mg_b2 "SELECT make_geohash(0.0, 0.0, 2) FROM sensors LIMIT 1" \
+  mg_b3 "SELECT make_geohash(0.0, 0.0, 3) FROM sensors LIMIT 1" \
+  mg_b4 "SELECT make_geohash(0.0, 0.0, 4) FROM sensors LIMIT 1" \
+  mg_b6 "SELECT make_geohash(0.0, 0.0, 6) FROM sensors LIMIT 1" \
+  mg_c3 "SELECT make_geohash(2.0, 41.0, 15) FROM sensors LIMIT 1" \
+  mg_b16 "SELECT make_geohash(2.0, 41.0, 16) FROM sensors LIMIT 1" \
+  mg_sw "SELECT make_geohash(-180, -90, 10) FROM sensors LIMIT 1" \
+  mg_ne "SELECT make_geohash(180, 90, 10) FROM sensors LIMIT 1" \
+  mg_nlon "SELECT make_geohash(null, 0, 5) FROM sensors LIMIT 1" \
+  mg_nlat "SELECT make_geohash(0, null, 5) FROM sensors LIMIT 1" \
+  mg_read "SELECT make_geohash(reading, reading, 5) FROM sensors" \
+  mg_case "SELECT MAKE_GEOHASH(2.0, 41.0, 20) FROM sensors LIMIT 1" \
+  mg_one "SELECT make_geohash(2.0, 41.0, 20) FROM sensors WHERE id = 1" \
+  mg_none "SELECT make_geohash(2.0, 41.0, 20) FROM sensors WHERE id > 100" \
+  mg_lim0 "SELECT make_geohash(2.0, 41.0, 20) FROM sensors LIMIT 0" \
+  mg_ez "SELECT make_geohash(-3.0, 40.0, 20) FROM sensors LIMIT 1" \
+  mg_int "SELECT make_geohash(2, 41, 20) FROM sensors LIMIT 1" \
+  mg_str "SELECT make_geohash('2', '41', 5) FROM sensors LIMIT 1" \
+  mg_bitstr "SELECT make_geohash(0, 0, '5') FROM sensors LIMIT 1" \
+  mg_score "SELECT make_geohash(0, score, 5) FROM sensors" \
+  mg_id "SELECT make_geohash(id, 0, 5) FROM sensors" \
+  mg_r20 "SELECT make_geohash(reading, 0, 20) FROM sensors" \
+  mg_flags "SELECT make_geohash(flags, 0.0, 5) FROM sensors" \
+  mg_ts "SELECT make_geohash(ts, 0, 5) FROM sensors" \
+  mg_ts2 "SELECT make_geohash(0, ts, 5) FROM sensors" \
+  mg_out "SELECT make_geohash(200.0, reading, 5) FROM sensors" \
+  mg_lat "SELECT make_geohash(reading, 100, 5) FROM sensors" \
+  mg_neg0 "SELECT make_geohash(-0.0, 0, 5) FROM sensors LIMIT 1" \
+  mg_type "SELECT typeof(make_geohash(2.0, 41.0, 20)) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3383,7 +3418,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   gd_days "SELECT geo_distance_meters(0, 0, 0, 1) FROM days" \
   gw_days "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM days" \
   wn_days "SELECT within_radius(0, 0, 3, 4, 5) FROM days" \
-  wb_days "SELECT within_box(0, 0, -1, -1, 1, 1) FROM days"
+  wb_days "SELECT within_box(0, 0, -1, -1, 1, 1) FROM days" \
+  mg_days "SELECT make_geohash(2.0, 41.0, 20) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6349,6 +6385,41 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT within_box(0, 0, -1, -1, 1, 1) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT within_box(0, score, -1, -2, 1, 2) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT within_box(id, id, 0, 0, 1, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(2.0, 41.0, 20) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0, 0, 5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0, 0, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0, 0, 10) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0, 0, 25) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0, 0, 60) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0.0, 0.0, 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0.0, 0.0, 3) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0.0, 0.0, 4) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0.0, 0.0, 6) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(2.0, 41.0, 15) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(2.0, 41.0, 16) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(-180, -90, 10) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(180, 90, 10) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(null, 0, 5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0, null, 5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(reading, reading, 5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT MAKE_GEOHASH(2.0, 41.0, 20) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(2.0, 41.0, 20) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(2.0, 41.0, 20) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(2.0, 41.0, 20) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(-3.0, 40.0, 20) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(2, 41, 20) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash('2', '41', 5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0, 0, '5') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0, score, 5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(id, 0, 5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(reading, 0, 20) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(flags, 0.0, 5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(ts, 0, 5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(0, ts, 5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(200.0, reading, 5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(reading, 100, 5) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(-0.0, 0, 5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(make_geohash(2.0, 41.0, 20)) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6712,6 +6783,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM days"),
     (os.environ["DIFF_H2"], "SELECT within_radius(0, 0, 3, 4, 5) FROM days"),
     (os.environ["DIFF_H2"], "SELECT within_box(0, 0, -1, -1, 1, 1) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT make_geohash(2.0, 41.0, 20) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

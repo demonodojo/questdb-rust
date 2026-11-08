@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `make_geohash()`
+
+`make_geohash` convierte longitud, latitud y una precisión de 1 a 60 bits en un geohash. Si la precisión es múltiplo de cinco el texto es base32 y el tipo es `GEOHASH(Nc)`; si no, es una cadena de bits y el tipo es `GEOHASH(Nb)`. Una coordenada nula entra en el hash. Una coordenada fuera de rango, cuando viene de una columna, devuelve NULL. Sin argumentos publica `make_geohash(DOUBLE, DOUBLE, INT constant)`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `within_box()`
 
 `within_box` dice si un punto cartesiano cae en una caja alineada a los ejes, bordes incluidos. `(0, 0)` cabe en la caja de `(-1, -1)` a `(1, 1)` y `(2, 0)` no. El borde `(1, 1)` es `true` y el origen con caja nula también. Un argumento nulo devuelve `false`. Sin argumentos publica la firma de seis `DOUBLE`. Se contrastó con `/exec` en `sensors` y `days`.

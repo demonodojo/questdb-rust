@@ -1,0 +1,2 @@
+typeof(make_geohash(2.0, 41.0, 20))
+GEOHASH(4c)

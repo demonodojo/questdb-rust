@@ -7,16 +7,17 @@ use crate::parse::{
     DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr,
     ExtractExpr, Filter, FloorExpr, FormatTypeExpr, GeoDistanceExpr, GeoWithinExpr, GlobExpr,
     GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr,
-    LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr,
-    MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NetmaskExpr, NotExpr, NullIfExpr,
-    PadExpr, PgGetExprExpr, PgGetPartKeyDefExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj,
-    Query, QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
-    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr,
-    SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr,
-    SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
-    TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr,
-    ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr,
-    UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr, WmidExpr, YearExpr,
+    LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, MakeGeohashExpr, Md5Expr,
+    MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NetmaskExpr,
+    NotExpr, NullIfExpr, PadExpr, PgGetExprExpr, PgGetPartKeyDefExpr, PgIsInRecoveryExpr, PiExpr,
+    PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr,
+    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
+    SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
+    SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
+    SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr,
+    ToDateExpr, ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd,
+    TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr,
+    WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -322,6 +323,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::GeoWithin { label, .. }
             | ResolvedProj::WithinRadius { label, .. }
             | ResolvedProj::WithinBox { label, .. }
+            | ResolvedProj::MakeGeohash { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -860,6 +862,12 @@ enum ResolvedProj {
         label: String,
         args: [GeoSide; 6],
     },
+    MakeGeohash {
+        label: String,
+        lon: GeoSide,
+        lat: GeoSide,
+        bits: i32,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -1052,6 +1060,7 @@ impl ResolvedProj {
             | Self::GeoWithin { label, .. }
             | Self::WithinRadius { label, .. }
             | Self::WithinBox { label, .. }
+            | Self::MakeGeohash { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1158,6 +1167,7 @@ impl ResolvedProj {
             Self::GeoWithin { .. } => qdb_types::TAG_BOOLEAN,
             Self::WithinRadius { .. } => qdb_types::TAG_BOOLEAN,
             Self::WithinBox { .. } => qdb_types::TAG_BOOLEAN,
+            Self::MakeGeohash { .. } => qdb_types::TAG_STRING,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -1304,6 +1314,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::GeoWithin(expr) => resolve_geo_within(table, expr),
         Proj::WithinRadius(expr) => resolve_within_radius(table, expr),
         Proj::WithinBox(expr) => resolve_within_box(table, expr),
+        Proj::MakeGeohash(expr) => resolve_make_geohash(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1950,6 +1961,226 @@ fn within_box_scalar(table: &Table, row: usize, args: &[GeoSide; 6]) -> Result<S
     Ok(Scalar::Boolean(
         x >= min_x && x <= max_x && y >= min_y && y <= max_y,
     ))
+}
+
+fn resolve_make_geohash(table: &Table, expr: &MakeGeohashExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 3 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `make_geohash`; expected: 3, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let mut names = Vec::with_capacity(3);
+    for arg in &expr.args {
+        names.push(timestamp_floor_arg_type(table, arg)?);
+    }
+    let bits_constant = matches!(expr.args[2], ConcatArg::Literal(_));
+    let bits_ok = bits_constant && make_geohash_int_type(names[2]);
+    let coords_ok = geo_double_type(names[0]) && geo_double_type(names[1]);
+    if !bits_ok || !coords_ok {
+        return Err(make_geohash_mismatch(&names, bits_constant));
+    }
+    let bits = make_geohash_bits(&expr.args[2], names[2])?;
+    let lon = geo_side(table, &expr.args[0])?;
+    let lat = geo_side(table, &expr.args[1])?;
+    if geo_fixed(&lon) && geo_fixed(&lat) {
+        let lon_value = make_geohash_fixed(&lon);
+        let lat_value = make_geohash_fixed(&lat);
+        if coordinate_outside(lon_value, -180.0, 180.0) {
+            return Err(Error::new(
+                "longitude must be in [-180.0..180.0] range".to_string(),
+            ));
+        }
+        if coordinate_outside(lat_value, -90.0, 90.0) {
+            return Err(Error::new(
+                "latitude must be in [-90.0..90.0] range".to_string(),
+            ));
+        }
+    }
+    Ok(ResolvedProj::MakeGeohash {
+        label: expr.label.clone(),
+        lon,
+        lat,
+        bits,
+    })
+}
+
+fn make_geohash_int_type(name: &str) -> bool {
+    matches!(
+        name,
+        "NULL" | "INT" | "STRING" | "VARCHAR" | "CHAR" | "BYTE" | "SHORT" | "SYMBOL"
+    )
+}
+
+fn make_geohash_mismatch(names: &[&str], bits_constant: bool) -> Error {
+    let mut message = String::from("argument type mismatch for function `make_geohash`");
+    for (index, name) in names.iter().enumerate() {
+        let (bad, expected) = if index == 2 {
+            if *name == "INT" && !bits_constant {
+                (true, "INT constant")
+            } else {
+                (*name != "INT", "INT")
+            }
+        } else {
+            (*name != "DOUBLE", "DOUBLE")
+        };
+        if bad {
+            message.push_str(&format!(
+                " at #{} expected: {expected}, actual: {name}",
+                index + 1
+            ));
+        }
+    }
+    Error::new(message)
+}
+
+fn make_geohash_bits(arg: &ConcatArg, name: &str) -> Result<i32, Error> {
+    let value = match arg {
+        ConcatArg::Literal(Scalar::Null) => {
+            return Err(Error::new("precision must be in [1..60] range".to_string()));
+        }
+        ConcatArg::Literal(Scalar::Long(number)) => i32::try_from(*number).unwrap_or(i32::MAX),
+        ConcatArg::Literal(Scalar::Byte(number)) => i32::from(*number),
+        ConcatArg::Literal(Scalar::Short(number)) => i32::from(*number),
+        ConcatArg::Literal(Scalar::Text(text)) => {
+            let Some(parsed) = parse_java_int(text) else {
+                return Err(make_geohash_text_error(text, name));
+            };
+            parsed
+        }
+        _ => return Err(Error::new("precision must be in [1..60] range".to_string())),
+    };
+    if (1..=60).contains(&value) {
+        Ok(value)
+    } else {
+        Err(Error::new("precision must be in [1..60] range".to_string()))
+    }
+}
+
+fn make_geohash_text_error(text: &str, name: &str) -> Error {
+    if name == "CHAR" {
+        Error::new(format!("inconvertible value: {text} [CHAR -> INT]"))
+    } else {
+        Error::new(format!("inconvertible value: `{text}` [{name} -> INT]"))
+    }
+}
+
+fn make_geohash_fixed(side: &GeoSide) -> f64 {
+    match side {
+        GeoSide::Null => f64::NAN,
+        GeoSide::Number(number) => *number,
+        GeoSide::Column { .. } => f64::NAN,
+    }
+}
+
+fn coordinate_outside(value: f64, low: f64, high: f64) -> bool {
+    !value.is_nan() && !(low..=high).contains(&value)
+}
+
+fn make_geohash_scalar(
+    table: &Table,
+    row: usize,
+    lon: &GeoSide,
+    lat: &GeoSide,
+    bits: i32,
+) -> Result<Scalar, Error> {
+    let lon_value = make_geohash_coord(table, row, lon)?;
+    let lat_value = make_geohash_coord(table, row, lat)?;
+    let columnar = matches!(lon, GeoSide::Column { .. }) || matches!(lat, GeoSide::Column { .. });
+    if columnar
+        && (coordinate_outside(lon_value, -180.0, 180.0)
+            || coordinate_outside(lat_value, -90.0, 90.0))
+    {
+        return Ok(Scalar::Null);
+    }
+    let hash = geohash_from_coordinates(lat_value, lon_value, bits);
+    Ok(Scalar::Text(format_geohash(hash, bits)))
+}
+
+fn make_geohash_coord(table: &Table, row: usize, side: &GeoSide) -> Result<f64, Error> {
+    match side {
+        GeoSide::Null => Ok(f64::NAN),
+        GeoSide::Number(number) => Ok(*number),
+        GeoSide::Column { index, tag } => match &table.columns[*index][row] {
+            Scalar::Null => Ok(f64::NAN),
+            Scalar::Byte(number) => Ok(f64::from(*number)),
+            Scalar::Short(number) => Ok(f64::from(*number)),
+            Scalar::Int(number) => Ok(f64::from(*number)),
+            Scalar::Long(number) => Ok(*number as f64),
+            Scalar::Float(number) => Ok(f64::from(*number)),
+            Scalar::Double(number) => Ok(*number),
+            Scalar::Date(number) | Scalar::Timestamp(number) => Ok(*number as f64),
+            Scalar::Text(text) => {
+                let kind = if *tag == qdb_types::TAG_VARCHAR {
+                    "VARCHAR"
+                } else {
+                    "STRING"
+                };
+                parse_questdb_f64(text).ok_or_else(|| {
+                    Error::new(format!("inconvertible value: `{text}` [{kind} -> DOUBLE]"))
+                })
+            }
+            Scalar::Char(unit) => {
+                let ch = char::from_u32(u32::from(*unit)).unwrap_or('\u{0}');
+                parse_questdb_f64(&ch.to_string()).ok_or_else(|| {
+                    Error::new(format!("inconvertible value: {ch} [CHAR -> DOUBLE]"))
+                })
+            }
+            Scalar::Boolean(_) => Err(Error::new(
+                "argument type mismatch for function `make_geohash`".to_string(),
+            )),
+        },
+    }
+}
+
+fn geohash_type_name(bits: i32) -> String {
+    if bits % 5 == 0 {
+        format!("GEOHASH({}c)", bits / 5)
+    } else {
+        format!("GEOHASH({bits}b)")
+    }
+}
+
+fn geohash_from_coordinates(lat: f64, lon: f64, bits: i32) -> u64 {
+    let latq = java_scalb_long((lat + 90.0) / 180.0);
+    let lonq = java_scalb_long((lon + 180.0) / 360.0);
+    interleave_bits(latq, lonq) >> (64 - bits as u32)
+}
+
+fn java_scalb_long(value: f64) -> i64 {
+    (value * (1u64 << 32) as f64) as i64
+}
+
+fn interleave_bits(lat: i64, lon: i64) -> u64 {
+    spread_bits(lat as u64) | (spread_bits(lon as u64) << 1)
+}
+
+fn spread_bits(mut value: u64) -> u64 {
+    value = (value | (value << 16)) & 0x0000_FFFF_0000_FFFF;
+    value = (value | (value << 8)) & 0x00FF_00FF_00FF_00FF;
+    value = (value | (value << 4)) & 0x0F0F_0F0F_0F0F_0F0F;
+    value = (value | (value << 2)) & 0x3333_3333_3333_3333;
+    value = (value | (value << 1)) & 0x5555_5555_5555_5555;
+    value
+}
+
+fn format_geohash(hash: u64, bits: i32) -> String {
+    const BASE32: &[u8] = b"0123456789bcdefghjkmnpqrstuvwxyz";
+    if bits % 5 == 0 {
+        let chars = bits / 5;
+        (0..chars)
+            .rev()
+            .map(|index| {
+                let piece = ((hash >> (index * 5)) & 0x1F) as usize;
+                BASE32[piece] as char
+            })
+            .collect()
+    } else {
+        (0..bits)
+            .rev()
+            .map(|index| if (hash >> index) & 1 == 1 { '1' } else { '0' })
+            .collect()
+    }
 }
 
 fn geo_within_scalar(table: &Table, row: usize, args: &[GeoSide; 5]) -> Result<Scalar, Error> {
@@ -3270,6 +3501,17 @@ fn not_input(table: &Table, arg: &ConcatArg) -> Result<NotInput, Error> {
 }
 
 fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Error> {
+    if let Some(inner) = &expr.geohash {
+        let resolved = resolve_make_geohash(table, inner)?;
+        let ResolvedProj::MakeGeohash { bits, .. } = resolved else {
+            return Err(Error::new("internal: make_geohash"));
+        };
+        return Ok(ResolvedProj::Typeof {
+            label: expr.label.clone(),
+            name: geohash_type_name(bits),
+            result_tag: qdb_types::TAG_STRING,
+        });
+    }
     if expr.args.len() != 1 {
         return Err(Error::new("exactly one argument expected"));
     }
@@ -8767,6 +9009,9 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         ResolvedProj::GeoWithin { args, .. } => geo_within_scalar(table, row, args),
         ResolvedProj::WithinRadius { args, .. } => within_radius_scalar(table, row, args),
         ResolvedProj::WithinBox { args, .. } => within_box_scalar(table, row, args),
+        ResolvedProj::MakeGeohash { lon, lat, bits, .. } => {
+            make_geohash_scalar(table, row, lon, lat, *bits)
+        }
         _ => Ok(eval_resolved(table, row, item)),
     }
 }
@@ -8901,6 +9146,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::GeoWithin { .. } => Scalar::Boolean(false),
         ResolvedProj::WithinRadius { .. } => Scalar::Boolean(false),
         ResolvedProj::WithinBox { .. } => Scalar::Boolean(false),
+        ResolvedProj::MakeGeohash { .. } => Scalar::Null,
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -40126,6 +40372,265 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn mg_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT make_geohash(2.0, 41.0, 20) FROM sensors LIMIT 1",
+                "expected/mg_mad.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0, 0, 5) FROM sensors LIMIT 1",
+                "expected/mg_s.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0, 0, 1) FROM sensors LIMIT 1",
+                "expected/mg_bit.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0, 0, 10) FROM sensors LIMIT 1",
+                "expected/mg_c2.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0, 0, 25) FROM sensors LIMIT 1",
+                "expected/mg_c5.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0, 0, 60) FROM sensors LIMIT 1",
+                "expected/mg_c12.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0.0, 0.0, 2) FROM sensors LIMIT 1",
+                "expected/mg_b2.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0.0, 0.0, 3) FROM sensors LIMIT 1",
+                "expected/mg_b3.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0.0, 0.0, 4) FROM sensors LIMIT 1",
+                "expected/mg_b4.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0.0, 0.0, 6) FROM sensors LIMIT 1",
+                "expected/mg_b6.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(2.0, 41.0, 15) FROM sensors LIMIT 1",
+                "expected/mg_c3.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(2.0, 41.0, 16) FROM sensors LIMIT 1",
+                "expected/mg_b16.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(-180, -90, 10) FROM sensors LIMIT 1",
+                "expected/mg_sw.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(180, 90, 10) FROM sensors LIMIT 1",
+                "expected/mg_ne.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(null, 0, 5) FROM sensors LIMIT 1",
+                "expected/mg_nlon.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0, null, 5) FROM sensors LIMIT 1",
+                "expected/mg_nlat.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(reading, reading, 5) FROM sensors",
+                "expected/mg_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT MAKE_GEOHASH(2.0, 41.0, 20) FROM sensors LIMIT 1",
+                "expected/mg_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(2.0, 41.0, 20) FROM sensors WHERE id = 1",
+                "expected/mg_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(2.0, 41.0, 20) FROM sensors WHERE id > 100",
+                "expected/mg_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(2.0, 41.0, 20) FROM sensors LIMIT 0",
+                "expected/mg_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(-3.0, 40.0, 20) FROM sensors LIMIT 1",
+                "expected/mg_ez.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(2, 41, 20) FROM sensors LIMIT 1",
+                "expected/mg_int.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash('2', '41', 5) FROM sensors LIMIT 1",
+                "expected/mg_str.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0, 0, '5') FROM sensors LIMIT 1",
+                "expected/mg_bitstr.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0, score, 5) FROM sensors",
+                "expected/mg_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(id, 0, 5) FROM sensors",
+                "expected/mg_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(reading, 0, 20) FROM sensors",
+                "expected/mg_r20.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(flags, 0.0, 5) FROM sensors",
+                "expected/mg_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(ts, 0, 5) FROM sensors",
+                "expected/mg_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(0, ts, 5) FROM sensors",
+                "expected/mg_ts2.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(200.0, reading, 5) FROM sensors",
+                "expected/mg_out.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(reading, 100, 5) FROM sensors",
+                "expected/mg_lat.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT make_geohash(-0.0, 0, 5) FROM sensors LIMIT 1",
+                "expected/mg_neg0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT typeof(make_geohash(2.0, 41.0, 20)) FROM sensors LIMIT 1",
+                "expected/mg_type.tsv",
+            ),
+            (
+                &days,
+                "SELECT make_geohash(2.0, 41.0, 20) FROM days",
+                "expected/mg_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let mismatches = [
+            (
+                "SELECT make_geohash() FROM sensors",
+                "function `make_geohash` requires arguments: make_geohash(DOUBLE, DOUBLE, INT constant)",
+            ),
+            (
+                "SELECT make_geohash(0, 0) FROM sensors",
+                "wrong number of arguments for function `make_geohash`; expected: 3, provided: 2",
+            ),
+            (
+                "SELECT make_geohash(0, 0, 5, 1) FROM sensors",
+                "wrong number of arguments for function `make_geohash`; expected: 3, provided: 4",
+            ),
+            (
+                "SELECT make_geohash(note, 0, 5) FROM sensors",
+                "inconvertible value: `alpha` [STRING -> DOUBLE]",
+            ),
+            (
+                "SELECT make_geohash(ch, 0, 5) FROM sensors",
+                "inconvertible value: A [CHAR -> DOUBLE]",
+            ),
+            (
+                "SELECT make_geohash(ok, 0, 5) FROM sensors",
+                "argument type mismatch for function `make_geohash` at #1 expected: DOUBLE, actual: BOOLEAN at #2 expected: DOUBLE, actual: INT",
+            ),
+            (
+                "SELECT make_geohash(missing, 0, 5) FROM sensors",
+                "Invalid column: missing",
+            ),
+            (
+                "SELECT make_geohash(0, 0, flags) FROM sensors",
+                "argument type mismatch for function `make_geohash` at #1 expected: DOUBLE, actual: INT at #2 expected: DOUBLE, actual: INT at #3 expected: INT constant, actual: INT",
+            ),
+            (
+                "SELECT make_geohash(0.0, 0.0, 5.0) FROM sensors",
+                "at #3 expected: INT, actual: DOUBLE",
+            ),
+            (
+                "SELECT make_geohash(0, 0, 0) FROM sensors",
+                "precision must be in [1..60] range",
+            ),
+            (
+                "SELECT make_geohash(0, 0, 61) FROM sensors",
+                "precision must be in [1..60] range",
+            ),
+            (
+                "SELECT make_geohash(0, 0, -1) FROM sensors",
+                "precision must be in [1..60] range",
+            ),
+            (
+                "SELECT make_geohash(0, 0, null) FROM sensors",
+                "precision must be in [1..60] range",
+            ),
+            (
+                "SELECT make_geohash(181, 0, 5) FROM sensors",
+                "longitude must be in [-180.0..180.0] range",
+            ),
+            (
+                "SELECT make_geohash(0, 91, 5) FROM sensors",
+                "latitude must be in [-90.0..90.0] range",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

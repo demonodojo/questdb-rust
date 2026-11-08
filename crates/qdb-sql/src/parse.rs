@@ -322,6 +322,7 @@ pub enum Proj {
     GeoWithin(GeoWithinExpr),
     WithinRadius(WithinRadiusExpr),
     WithinBox(WithinBoxExpr),
+    MakeGeohash(MakeGeohashExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -846,11 +847,19 @@ pub struct CotExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `make_geohash(lon, lat, bits)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MakeGeohashExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `typeof(value)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeofExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
+    pub geohash: Option<MakeGeohashExpr>,
 }
 
 /// `not(value)`. Extra arguments are ignored; the last one is negated.
@@ -1440,6 +1449,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_within_radius()?.label
             } else if parser.starts_within_box_call() {
                 parser.parse_within_box()?.label
+            } else if parser.starts_make_geohash_call() {
+                parser.parse_make_geohash()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
             } else if parser.starts_least_call() {
@@ -1609,6 +1620,7 @@ enum SelectPiece {
     GeoWithin(GeoWithinExpr),
     WithinRadius(WithinRadiusExpr),
     WithinBox(WithinBoxExpr),
+    MakeGeohash(MakeGeohashExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1913,6 +1925,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::WithinRadius(self.parse_within_radius()?));
             } else if self.starts_within_box_call() {
                 pieces.push(SelectPiece::WithinBox(self.parse_within_box()?));
+            } else if self.starts_make_geohash_call() {
+                pieces.push(SelectPiece::MakeGeohash(self.parse_make_geohash()?));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else if self.starts_least_call() {
@@ -2101,6 +2115,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::GeoWithin(_)
                     | SelectPiece::WithinRadius(_)
                     | SelectPiece::WithinBox(_)
+                    | SelectPiece::MakeGeohash(_)
                     | SelectPiece::Greatest(_)
                     | SelectPiece::Least(_)
             )
@@ -2228,6 +2243,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::GeoWithin(expr) => items.push(Proj::GeoWithin(expr)),
                     SelectPiece::WithinRadius(expr) => items.push(Proj::WithinRadius(expr)),
                     SelectPiece::WithinBox(expr) => items.push(Proj::WithinBox(expr)),
+                    SelectPiece::MakeGeohash(expr) => items.push(Proj::MakeGeohash(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
@@ -2375,6 +2391,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::GeoWithin(_)
                 | SelectPiece::WithinRadius(_)
                 | SelectPiece::WithinBox(_)
+                | SelectPiece::MakeGeohash(_)
                 | SelectPiece::Greatest(_)
                 | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
@@ -2693,6 +2710,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(WithinBoxExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_make_geohash_call(&self) -> bool {
+        self.starts_named_call("make_geohash")
+    }
+
+    fn parse_make_geohash(&mut self) -> Result<MakeGeohashExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `make_geohash` requires arguments: make_geohash(DOUBLE, DOUBLE, INT constant)".to_string(),
+            ));
+        }
+        Ok(MakeGeohashExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
@@ -3838,6 +3873,23 @@ impl<'a> Parser<'a> {
 
     fn parse_typeof(&mut self) -> Result<TypeofExpr, Error> {
         let name = self.ident_spelling()?;
+        if self.argument_is_make_geohash() {
+            self.skip();
+            self.eat(b'(');
+            self.skip();
+            let inner = self.parse_make_geohash()?;
+            self.skip();
+            if !self.eat(b')') {
+                return Err(Error::new(
+                    "unsupported: expected ')' after typeof".to_string(),
+                ));
+            }
+            return Ok(TypeofExpr {
+                label: format!("{name}({})", inner.label),
+                args: Vec::new(),
+                geohash: Some(inner),
+            });
+        }
         let (labels, args) = self.parse_call_args(&name, true)?;
         if args.is_empty() {
             return Err(Error::new("exactly one argument expected"));
@@ -3845,7 +3897,18 @@ impl<'a> Parser<'a> {
         Ok(TypeofExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
+            geohash: None,
         })
+    }
+
+    fn argument_is_make_geohash(&mut self) -> bool {
+        let saved = self.pos;
+        self.skip();
+        let open = self.eat(b'(');
+        self.skip();
+        let nested = open && self.starts_make_geohash_call();
+        self.pos = saved;
+        nested
     }
 
     fn starts_cot_call(&self) -> bool {
