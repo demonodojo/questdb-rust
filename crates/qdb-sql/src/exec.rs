@@ -17787,6 +17787,61 @@ mod tests {
     }
 
     #[test]
+    fn zh_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id::short FROM sensors",
+                "expected/zh_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::SHORT FROM sensors",
+                "expected/zh_upper.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::short FROM sensors WHERE id = 1",
+                "expected/zh_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::short FROM sensors WHERE id > 100",
+                "expected/zh_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags::short FROM sensors",
+                "expected/zh_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note::short FROM sensors",
+                "expected/zh_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT code::short FROM sensors",
+                "expected/zh_code.tsv",
+            ),
+            (&days, "SELECT id::short FROM days", "expected/zh_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id::missing FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid constant: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
     fn dj_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
