@@ -312,6 +312,7 @@ pub enum Proj {
     CurrentCatalog(CurrentCatalogExpr),
     Version(VersionExpr),
     PgIsInRecovery(PgIsInRecoveryExpr),
+    FormatType(FormatTypeExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1093,6 +1094,13 @@ pub struct PgIsInRecoveryExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `format_type(oid, typmod)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatTypeExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `greatest(number, ...)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreatestExpr {
@@ -1340,6 +1348,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_version()?.label
             } else if parser.starts_pg_is_in_recovery_call() {
                 parser.parse_pg_is_in_recovery()?.label
+            } else if parser.starts_format_type_call() {
+                parser.parse_format_type()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
             } else if parser.starts_least_call() {
@@ -1499,6 +1509,7 @@ enum SelectPiece {
     CurrentCatalog(CurrentCatalogExpr),
     Version(VersionExpr),
     PgIsInRecovery(PgIsInRecoveryExpr),
+    FormatType(FormatTypeExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1781,6 +1792,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Version(self.parse_version()?));
             } else if self.starts_pg_is_in_recovery_call() {
                 pieces.push(SelectPiece::PgIsInRecovery(self.parse_pg_is_in_recovery()?));
+            } else if self.starts_format_type_call() {
+                pieces.push(SelectPiece::FormatType(self.parse_format_type()?));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else if self.starts_least_call() {
@@ -1959,6 +1972,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::CurrentCatalog(_)
                     | SelectPiece::Version(_)
                     | SelectPiece::PgIsInRecovery(_)
+                    | SelectPiece::FormatType(_)
                     | SelectPiece::Greatest(_)
                     | SelectPiece::Least(_)
             )
@@ -2076,6 +2090,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::CurrentCatalog(expr) => items.push(Proj::CurrentCatalog(expr)),
                     SelectPiece::Version(expr) => items.push(Proj::Version(expr)),
                     SelectPiece::PgIsInRecovery(expr) => items.push(Proj::PgIsInRecovery(expr)),
+                    SelectPiece::FormatType(expr) => items.push(Proj::FormatType(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
@@ -2213,6 +2228,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::CurrentCatalog(_)
                 | SelectPiece::Version(_)
                 | SelectPiece::PgIsInRecovery(_)
+                | SelectPiece::FormatType(_)
                 | SelectPiece::Greatest(_)
                 | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
@@ -2385,6 +2401,24 @@ impl<'a> Parser<'a> {
         let name = self.ident_spelling()?;
         let (labels, args) = self.parse_call_args(&name, true)?;
         Ok(PgIsInRecoveryExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_format_type_call(&self) -> bool {
+        self.starts_named_call("format_type")
+    }
+
+    fn parse_format_type(&mut self) -> Result<FormatTypeExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `format_type` requires arguments: format_type(INT, INT)".to_string(),
+            ));
+        }
+        Ok(FormatTypeExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

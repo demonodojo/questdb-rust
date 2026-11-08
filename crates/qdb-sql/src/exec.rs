@@ -4,13 +4,13 @@ use crate::parse::{
     BarExpr, BetweenExpr, BitNotExpr, BoolOp, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg,
     CosExpr, CotExpr, CurrentCatalogExpr, CurrentDatabaseExpr, CurrentSchemaExpr, CurrentUserExpr,
     DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr,
-    DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr,
-    GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr,
-    LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr,
-    MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr,
-    PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr,
-    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
-    SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
+    DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, FormatTypeExpr,
+    GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr,
+    IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr,
+    MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NotExpr,
+    NullIfExpr, PadExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
+    RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr,
+    SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
     SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
     SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr,
     ToDateExpr, ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd,
@@ -310,6 +310,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::CurrentCatalog { label, .. }
             | ResolvedProj::Version { label, .. }
             | ResolvedProj::PgIsInRecovery { label, .. }
+            | ResolvedProj::FormatType { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -811,6 +812,9 @@ enum ResolvedProj {
     PgIsInRecovery {
         label: String,
     },
+    FormatType {
+        label: String,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -993,6 +997,7 @@ impl ResolvedProj {
             | Self::CurrentCatalog { label, .. }
             | Self::Version { label, .. }
             | Self::PgIsInRecovery { label, .. }
+            | Self::FormatType { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1070,7 +1075,8 @@ impl ResolvedProj {
             | Self::CurrentUser { .. }
             | Self::SessionUser { .. }
             | Self::CurrentCatalog { .. }
-            | Self::Version { .. } => qdb_types::TAG_STRING,
+            | Self::Version { .. }
+            | Self::FormatType { .. } => qdb_types::TAG_STRING,
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
             | Self::Add { result_tag, .. }
@@ -1220,6 +1226,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::CurrentCatalog(expr) => resolve_current_catalog(expr),
         Proj::Version(expr) => resolve_version(expr),
         Proj::PgIsInRecovery(expr) => resolve_pg_is_in_recovery(expr),
+        Proj::FormatType(expr) => resolve_format_type(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1536,6 +1543,29 @@ fn least_i64(table: &Table, row: usize, arg: &GreatestArg) -> Option<i64> {
             _ => None,
         },
     }
+}
+
+fn resolve_format_type(table: &Table, expr: &FormatTypeExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `format_type`; expected: 2, provided: {}",
+            expr.args.len()
+        )));
+    }
+    for arg in &expr.args {
+        let actual = timestamp_floor_arg_type(table, arg)?;
+        if !matches!(
+            actual,
+            "INT" | "BYTE" | "SHORT" | "CHAR" | "STRING" | "SYMBOL" | "VARCHAR" | "NULL"
+        ) {
+            return Err(Error::new(format!(
+                "expression type mismatch, expected: INT, actual: {actual}"
+            )));
+        }
+    }
+    Ok(ResolvedProj::FormatType {
+        label: expr.label.clone(),
+    })
 }
 
 fn resolve_pg_is_in_recovery(expr: &PgIsInRecoveryExpr) -> Result<ResolvedProj, Error> {
@@ -8218,6 +8248,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit, QuestDB".to_string(),
         ),
         ResolvedProj::PgIsInRecovery { .. } => Scalar::Boolean(false),
+        ResolvedProj::FormatType { .. } => Scalar::Null,
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39442,6 +39473,167 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn ft_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT format_type(20, 0) FROM sensors",
+                "expected/ft_lit.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT FORMAT_TYPE(20, 0) FROM sensors",
+                "expected/ft_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(1114, -1) FROM sensors LIMIT 1",
+                "expected/ft_neg.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(flags, 0) FROM sensors WHERE id = 1",
+                "expected/ft_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(note, 0) FROM sensors",
+                "expected/ft_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(b, 0) FROM sensors",
+                "expected/ft_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(code, 0) FROM sensors",
+                "expected/ft_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(ch, 0) FROM sensors",
+                "expected/ft_ch.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(location, 0) FROM sensors LIMIT 1",
+                "expected/ft_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(tag, 0) FROM sensors LIMIT 1",
+                "expected/ft_tag.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(0, flags) FROM sensors LIMIT 1",
+                "expected/ft_zflags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(0, note) FROM sensors LIMIT 1",
+                "expected/ft_znote.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(0, b) FROM sensors LIMIT 1",
+                "expected/ft_zbyte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(0, tag) FROM sensors LIMIT 1",
+                "expected/ft_ztag.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(null, null) FROM sensors LIMIT 1",
+                "expected/ft_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(20, 0) FROM sensors WHERE id > 100",
+                "expected/ft_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT format_type(20, 0) FROM sensors LIMIT 0",
+                "expected/ft_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT format_type(1, 1) FROM days",
+                "expected/ft_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let mismatches = [
+            (
+                "SELECT format_type(flags, id) FROM sensors",
+                "expression type mismatch, expected: INT, actual: LONG",
+            ),
+            (
+                "SELECT format_type(reading, score) FROM sensors",
+                "expression type mismatch, expected: INT, actual: DOUBLE",
+            ),
+            (
+                "SELECT format_type(ok, ok) FROM sensors",
+                "expression type mismatch, expected: INT, actual: BOOLEAN",
+            ),
+            (
+                "SELECT format_type(ts, 0) FROM sensors",
+                "expression type mismatch, expected: INT, actual: TIMESTAMP",
+            ),
+            (
+                "SELECT format_type(day, 0) FROM sensors",
+                "expression type mismatch, expected: INT, actual: DATE",
+            ),
+            (
+                "SELECT format_type(score, 0) FROM sensors",
+                "expression type mismatch, expected: INT, actual: FLOAT",
+            ),
+            (
+                "SELECT format_type(0, score) FROM sensors",
+                "expression type mismatch, expected: INT, actual: FLOAT",
+            ),
+            (
+                "SELECT format_type(0, id) FROM sensors",
+                "expression type mismatch, expected: INT, actual: LONG",
+            ),
+            (
+                "SELECT format_type(0, ts) FROM sensors",
+                "expression type mismatch, expected: INT, actual: TIMESTAMP",
+            ),
+            (
+                "SELECT format_type(20) FROM sensors",
+                "wrong number of arguments for function `format_type`; expected: 2, provided: 1",
+            ),
+            (
+                "SELECT format_type() FROM sensors",
+                "function `format_type` requires arguments: format_type(INT, INT)",
+            ),
+            (
+                "SELECT format_type(20, 0, 1) FROM sensors",
+                "wrong number of arguments for function `format_type`; expected: 2, provided: 3",
+            ),
+            (
+                "SELECT format_type(missing, 0) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

@@ -2870,7 +2870,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   pr_case "SELECT PG_IS_IN_RECOVERY() FROM sensors" \
   pr_one "SELECT pg_is_in_recovery() FROM sensors WHERE id = 1" \
   pr_none "SELECT pg_is_in_recovery() FROM sensors WHERE id > 100" \
-  pr_lim0 "SELECT pg_is_in_recovery() FROM sensors LIMIT 0"
+  pr_lim0 "SELECT pg_is_in_recovery() FROM sensors LIMIT 0" \
+  ft_lit "SELECT format_type(20, 0) FROM sensors" \
+  ft_case "SELECT FORMAT_TYPE(20, 0) FROM sensors" \
+  ft_neg "SELECT format_type(1114, -1) FROM sensors LIMIT 1" \
+  ft_flags "SELECT format_type(flags, 0) FROM sensors WHERE id = 1" \
+  ft_note "SELECT format_type(note, 0) FROM sensors" \
+  ft_byte "SELECT format_type(b, 0) FROM sensors" \
+  ft_code "SELECT format_type(code, 0) FROM sensors" \
+  ft_ch "SELECT format_type(ch, 0) FROM sensors" \
+  ft_loc "SELECT format_type(location, 0) FROM sensors LIMIT 1" \
+  ft_tag "SELECT format_type(tag, 0) FROM sensors LIMIT 1" \
+  ft_zflags "SELECT format_type(0, flags) FROM sensors LIMIT 1" \
+  ft_znote "SELECT format_type(0, note) FROM sensors LIMIT 1" \
+  ft_zbyte "SELECT format_type(0, b) FROM sensors LIMIT 1" \
+  ft_ztag "SELECT format_type(0, tag) FROM sensors LIMIT 1" \
+  ft_null "SELECT format_type(null, null) FROM sensors LIMIT 1" \
+  ft_none "SELECT format_type(20, 0) FROM sensors WHERE id > 100" \
+  ft_lim0 "SELECT format_type(20, 0) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3224,7 +3241,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   su_days "SELECT session_user() FROM days" \
   cg_days "SELECT current_catalog() FROM days" \
   vn_days "SELECT version() FROM days" \
-  pr_days "SELECT pg_is_in_recovery() FROM days"
+  pr_days "SELECT pg_is_in_recovery() FROM days" \
+  ft_days "SELECT format_type(1, 1) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6042,6 +6060,23 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_is_in_recovery() FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT pg_is_in_recovery() FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT pg_is_in_recovery() FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT format_type(20, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT FORMAT_TYPE(20, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT format_type(1114, -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT format_type(flags, 0) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT format_type(note, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT format_type(b, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT format_type(code, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT format_type(ch, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT format_type(location, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT format_type(tag, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT format_type(0, flags) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT format_type(0, note) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT format_type(0, b) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT format_type(0, tag) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT format_type(null, null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT format_type(20, 0) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT format_type(20, 0) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6394,6 +6429,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT current_catalog() FROM days"),
     (os.environ["DIFF_H2"], "SELECT version() FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_is_in_recovery() FROM days"),
+    (os.environ["DIFF_H2"], "SELECT format_type(1, 1) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
