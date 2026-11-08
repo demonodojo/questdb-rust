@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `pg_get_partkeydef()`
+
+`pg_get_partkeydef` devuelve `NULL` de tipo `STRING` cuando el argumento se acepta. Acepta enteros de 32 bits, byte, short, char, texto, símbolo, varchar y nulos. Rechaza long, float, double, boolean, timestamp y date con `argument type mismatch ... expected: INT`. `pg_get_partkeydef(1)` son cuatro `NULL`. `PG_GET_PARTKEYDEF` conserva las mayúsculas. `pg_get_partkeydef(-1)` encabeza `pg_get_partkeydef(-(1))`. Sin argumentos exige `pg_get_partkeydef(INT)`. Dos argumentos dicen `expected: 1, provided: 2`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `current_setting()`
 
 `current_setting` devuelve una cadena vacía de tipo `STRING` para una constante de texto o un nulo. `server_version_num`, sin distinguir mayúsculas, devuelve `123000`. Una columna de texto se rechaza porque el argumento tiene que ser una constante: `expected: STRING constant, actual: STRING`. Un entero se rechaza con `expected: STRING, actual: INT`. Sin argumentos exige `current_setting(STRING constant)`. Dos argumentos dicen `expected: 1, provided: 2`. Se contrastó con `/exec` en `sensors` y `days`.

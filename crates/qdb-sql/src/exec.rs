@@ -8,14 +8,15 @@ use crate::parse::{
     ExtractExpr, Filter, FloorExpr, FormatTypeExpr, GlobExpr, GreatestExpr, GroupedSelect,
     HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr,
     LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr,
-    MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PgIsInRecoveryExpr, PiExpr,
-    PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr,
-    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
-    SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
-    SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
-    SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr,
-    ToDateExpr, ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd,
-    TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr, WmidExpr, YearExpr,
+    MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PgGetPartKeyDefExpr,
+    PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
+    RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
+    SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
+    SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
+    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
+    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
+    VersionExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -314,6 +315,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::PgIsInRecovery { label, .. }
             | ResolvedProj::FormatType { label, .. }
             | ResolvedProj::CurrentSetting { label, .. }
+            | ResolvedProj::PgGetPartKeyDef { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -826,6 +828,9 @@ enum ResolvedProj {
         label: String,
         value: String,
     },
+    PgGetPartKeyDef {
+        label: String,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -1011,6 +1016,7 @@ impl ResolvedProj {
             | Self::PgIsInRecovery { label, .. }
             | Self::FormatType { label, .. }
             | Self::CurrentSetting { label, .. }
+            | Self::PgGetPartKeyDef { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1090,7 +1096,8 @@ impl ResolvedProj {
             | Self::CurrentCatalog { .. }
             | Self::Version { .. }
             | Self::FormatType { .. }
-            | Self::CurrentSetting { .. } => qdb_types::TAG_STRING,
+            | Self::CurrentSetting { .. }
+            | Self::PgGetPartKeyDef { .. } => qdb_types::TAG_STRING,
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
             | Self::Add { result_tag, .. }
@@ -1243,6 +1250,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::PgIsInRecovery(expr) => resolve_pg_is_in_recovery(expr),
         Proj::FormatType(expr) => resolve_format_type(table, expr),
         Proj::CurrentSetting(expr) => resolve_current_setting(table, expr),
+        Proj::PgGetPartKeyDef(expr) => resolve_pg_get_partkeydef(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1627,6 +1635,30 @@ fn resolve_current_setting(
     Ok(ResolvedProj::CurrentSetting {
         label: expr.label.clone(),
         value,
+    })
+}
+
+fn resolve_pg_get_partkeydef(
+    table: &Table,
+    expr: &PgGetPartKeyDefExpr,
+) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `pg_get_partkeydef`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let actual = timestamp_floor_arg_type(table, &expr.args[0])?;
+    if !matches!(
+        actual,
+        "INT" | "BYTE" | "SHORT" | "CHAR" | "STRING" | "SYMBOL" | "VARCHAR" | "NULL"
+    ) {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `pg_get_partkeydef` at #1 expected: INT, actual: {actual}"
+        )));
+    }
+    Ok(ResolvedProj::PgGetPartKeyDef {
+        label: expr.label.clone(),
     })
 }
 
@@ -8339,6 +8371,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::PgIsInRecovery { .. } => Scalar::Boolean(false),
         ResolvedProj::FormatType { .. } => Scalar::Null,
         ResolvedProj::CurrentSetting { value, .. } => Scalar::Text(value.clone()),
+        ResolvedProj::PgGetPartKeyDef { .. } => Scalar::Null,
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39564,6 +39597,146 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn pk_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(1) FROM sensors",
+                "expected/pk_lit.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT PG_GET_PARTKEYDEF(1) FROM sensors LIMIT 1",
+                "expected/pk_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(1) FROM sensors WHERE id = 1",
+                "expected/pk_id1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(1) FROM sensors WHERE id > 100",
+                "expected/pk_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(1) FROM sensors LIMIT 0",
+                "expected/pk_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(null) FROM sensors LIMIT 1",
+                "expected/pk_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(flags) FROM sensors LIMIT 1",
+                "expected/pk_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(note) FROM sensors",
+                "expected/pk_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(b) FROM sensors LIMIT 1",
+                "expected/pk_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(code) FROM sensors LIMIT 1",
+                "expected/pk_code.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(ch) FROM sensors LIMIT 1",
+                "expected/pk_ch.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(location) FROM sensors LIMIT 1",
+                "expected/pk_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(tag) FROM sensors LIMIT 1",
+                "expected/pk_tag.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef('alpha') FROM sensors LIMIT 1",
+                "expected/pk_alpha.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef('') FROM sensors LIMIT 1",
+                "expected/pk_empty.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT pg_get_partkeydef(-1) FROM sensors LIMIT 1",
+                "expected/pk_neg.tsv",
+            ),
+            (
+                &days,
+                "SELECT pg_get_partkeydef(1) FROM days",
+                "expected/pk_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let mismatches = [
+            (
+                "SELECT pg_get_partkeydef(id) FROM sensors",
+                "argument type mismatch for function `pg_get_partkeydef` at #1 expected: INT, actual: LONG",
+            ),
+            (
+                "SELECT pg_get_partkeydef(score) FROM sensors",
+                "argument type mismatch for function `pg_get_partkeydef` at #1 expected: INT, actual: FLOAT",
+            ),
+            (
+                "SELECT pg_get_partkeydef(reading) FROM sensors",
+                "argument type mismatch for function `pg_get_partkeydef` at #1 expected: INT, actual: DOUBLE",
+            ),
+            (
+                "SELECT pg_get_partkeydef(ok) FROM sensors",
+                "argument type mismatch for function `pg_get_partkeydef` at #1 expected: INT, actual: BOOLEAN",
+            ),
+            (
+                "SELECT pg_get_partkeydef(ts) FROM sensors",
+                "argument type mismatch for function `pg_get_partkeydef` at #1 expected: INT, actual: TIMESTAMP",
+            ),
+            (
+                "SELECT pg_get_partkeydef(day) FROM sensors",
+                "argument type mismatch for function `pg_get_partkeydef` at #1 expected: INT, actual: DATE",
+            ),
+            (
+                "SELECT pg_get_partkeydef() FROM sensors",
+                "function `pg_get_partkeydef` requires arguments: pg_get_partkeydef(INT)",
+            ),
+            (
+                "SELECT pg_get_partkeydef(1, 2) FROM sensors",
+                "wrong number of arguments for function `pg_get_partkeydef`; expected: 1, provided: 2",
+            ),
+            (
+                "SELECT pg_get_partkeydef(missing) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

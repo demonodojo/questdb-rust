@@ -2906,7 +2906,23 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   cw_empty "SELECT current_setting('') FROM sensors LIMIT 1" \
   cw_wal "SELECT current_setting('cairo.wal.enabled.default') FROM sensors LIMIT 1" \
   cw_bind "SELECT current_setting('http.bind.to') FROM sensors LIMIT 1" \
-  cw_num "SELECT current_setting('server_version_num') FROM sensors LIMIT 1"
+  cw_num "SELECT current_setting('server_version_num') FROM sensors LIMIT 1" \
+  pk_lit "SELECT pg_get_partkeydef(1) FROM sensors" \
+  pk_case "SELECT PG_GET_PARTKEYDEF(1) FROM sensors LIMIT 1" \
+  pk_id1 "SELECT pg_get_partkeydef(1) FROM sensors WHERE id = 1" \
+  pk_none "SELECT pg_get_partkeydef(1) FROM sensors WHERE id > 100" \
+  pk_lim0 "SELECT pg_get_partkeydef(1) FROM sensors LIMIT 0" \
+  pk_null "SELECT pg_get_partkeydef(null) FROM sensors LIMIT 1" \
+  pk_flags "SELECT pg_get_partkeydef(flags) FROM sensors LIMIT 1" \
+  pk_note "SELECT pg_get_partkeydef(note) FROM sensors" \
+  pk_byte "SELECT pg_get_partkeydef(b) FROM sensors LIMIT 1" \
+  pk_code "SELECT pg_get_partkeydef(code) FROM sensors LIMIT 1" \
+  pk_ch "SELECT pg_get_partkeydef(ch) FROM sensors LIMIT 1" \
+  pk_loc "SELECT pg_get_partkeydef(location) FROM sensors LIMIT 1" \
+  pk_tag "SELECT pg_get_partkeydef(tag) FROM sensors LIMIT 1" \
+  pk_alpha "SELECT pg_get_partkeydef('alpha') FROM sensors LIMIT 1" \
+  pk_empty "SELECT pg_get_partkeydef('') FROM sensors LIMIT 1" \
+  pk_neg "SELECT pg_get_partkeydef(-1) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3263,7 +3279,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   pr_days "SELECT pg_is_in_recovery() FROM days" \
   ft_days "SELECT format_type(1, 1) FROM days" \
   rr_days "SELECT regexp_replace(note, 'a', 'b') FROM days" \
-  cw_days "SELECT current_setting('server_version') FROM days"
+  cw_days "SELECT current_setting('server_version') FROM days" \
+  pk_days "SELECT pg_get_partkeydef(1) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6117,6 +6134,22 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT current_setting('cairo.wal.enabled.default') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT current_setting('http.bind.to') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT current_setting('server_version_num') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT PG_GET_PARTKEYDEF(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(1) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(1) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(1) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(flags) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(b) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(code) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(ch) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(location) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(tag) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef('alpha') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef('') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_get_partkeydef(-1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6472,6 +6505,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT format_type(1, 1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT regexp_replace(note, 'a', 'b') FROM days"),
     (os.environ["DIFF_H2"], "SELECT current_setting('server_version') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT pg_get_partkeydef(1) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
