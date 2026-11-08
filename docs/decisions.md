@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `::byte`
+
+`column::byte` convierte una columna a `BYTE` y el encabezado conserva la grafía. Un nulo es `0` y un texto es `0`. `id::byte` es `1`, `2`, `0` y `-1`. En `days` es `1`, `2`, `3` y `0`. `flags::byte` es `10`, `0`, `0` y `42`. `note::byte` es `0`, `0`, `0` y `0`. `b::byte` es `3`, `0`, `-128` y `1`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `::boolean`
 
 `column::boolean` convierte una columna a `BOOLEAN` y el encabezado conserva la grafía. Un nulo es `false`, el cero es `false` y un texto es `false`. Cualquier otro número es `true`. `id::boolean` es `true`, `true`, `false` y `true`. En `days` es `true`, `true`, `true` y `false`. `ok::boolean` es `true`, `false`, `true` y `false`. `flags::boolean` es `true`, `false`, `false` y `true`. `note::boolean` es `false`, `false`, `false` y `false`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.

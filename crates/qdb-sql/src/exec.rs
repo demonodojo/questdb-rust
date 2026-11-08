@@ -17736,6 +17736,57 @@ mod tests {
     }
 
     #[test]
+    fn zx_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT id::byte FROM sensors",
+                "expected/zx_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::BYTE FROM sensors",
+                "expected/zx_upper.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::byte FROM sensors WHERE id = 1",
+                "expected/zx_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT id::byte FROM sensors WHERE id > 100",
+                "expected/zx_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT flags::byte FROM sensors",
+                "expected/zx_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT note::byte FROM sensors",
+                "expected/zx_note.tsv",
+            ),
+            (&sensors, "SELECT b::byte FROM sensors", "expected/zx_b.tsv"),
+            (&days, "SELECT id::byte FROM days", "expected/zx_days.tsv"),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id::missing FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid constant: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
     fn dj_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
