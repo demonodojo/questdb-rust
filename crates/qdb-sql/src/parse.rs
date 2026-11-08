@@ -2759,10 +2759,19 @@ impl<'a> Parser<'a> {
 
     fn starts_pg_is_in_recovery_call(&self) -> bool {
         self.starts_named_call("pg_is_in_recovery")
+            || self.starts_qualified_call("pg_catalog", "pg_is_in_recovery")
     }
 
     fn parse_pg_is_in_recovery(&mut self) -> Result<PgIsInRecoveryExpr, Error> {
-        let name = self.ident_spelling()?;
+        let first = self.ident_spelling()?;
+        self.skip();
+        let name = if self.eat(b'.') {
+            self.skip();
+            let second = self.ident_spelling()?;
+            format!("{first}.{second}")
+        } else {
+            first
+        };
         let (labels, args) = self.parse_call_args(&name, true)?;
         Ok(PgIsInRecoveryExpr {
             label: format!("{name}({})", labels.join(", ")),
@@ -4319,6 +4328,37 @@ impl<'a> Parser<'a> {
                 to_char: None,
             });
         }
+        if self.argument_is_pg_is_in_recovery() {
+            self.skip();
+            self.eat(b'(');
+            self.skip();
+            let inner = self.parse_pg_is_in_recovery()?;
+            self.skip();
+            if !self.eat(b')') {
+                return Err(Error::new(
+                    "unsupported: expected ')' after typeof".to_string(),
+                ));
+            }
+            if !inner.args.is_empty() {
+                let reported = if inner.label.to_ascii_lowercase().contains("pg_catalog.") {
+                    "pg_catalog.pg_is_in_recovery"
+                } else {
+                    "pg_is_in_recovery"
+                };
+                return Err(Error::new(format!(
+                    "wrong number of arguments for function `{reported}`; expected: 0, provided: {}",
+                    inner.args.len()
+                )));
+            }
+            return Ok(TypeofExpr {
+                label: format!("{name}({})", inner.label),
+                args: vec![ConcatArg::Literal(Scalar::Boolean(false))],
+                geohash: None,
+                uuid: None,
+                json: None,
+                to_char: None,
+            });
+        }
         if self.argument_is_current_database() {
             self.skip();
             self.eat(b'(');
@@ -4532,6 +4572,16 @@ impl<'a> Parser<'a> {
         let open = self.eat(b'(');
         self.skip();
         let nested = open && self.starts_pg_get_userbyid_call();
+        self.pos = saved;
+        nested
+    }
+
+    fn argument_is_pg_is_in_recovery(&mut self) -> bool {
+        let saved = self.pos;
+        self.skip();
+        let open = self.eat(b'(');
+        self.skip();
+        let nested = open && self.starts_pg_is_in_recovery_call();
         self.pos = saved;
         nested
     }

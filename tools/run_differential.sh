@@ -3159,7 +3159,13 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   qb_one "SELECT pg_catalog.current_database() FROM sensors WHERE id = 1" \
   qb_none "SELECT pg_catalog.current_database() FROM sensors WHERE id > 100" \
   qb_lim0 "SELECT pg_catalog.current_database() FROM sensors LIMIT 0" \
-  qb_type "SELECT typeof(pg_catalog.current_database()) FROM sensors LIMIT 1"
+  qb_type "SELECT typeof(pg_catalog.current_database()) FROM sensors LIMIT 1" \
+  ir_all "SELECT pg_catalog.pg_is_in_recovery() FROM sensors" \
+  ir_case "SELECT pg_catalog.PG_IS_IN_RECOVERY() FROM sensors LIMIT 1" \
+  ir_one "SELECT pg_catalog.pg_is_in_recovery() FROM sensors WHERE id = 1" \
+  ir_none "SELECT pg_catalog.pg_is_in_recovery() FROM sensors WHERE id > 100" \
+  ir_lim0 "SELECT pg_catalog.pg_is_in_recovery() FROM sensors LIMIT 0" \
+  ir_type "SELECT typeof(pg_catalog.pg_is_in_recovery()) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3534,7 +3540,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   tv_days "SELECT pg_catalog.pg_table_is_visible(1) FROM days" \
   ag_days "SELECT pg_catalog.age(1) FROM days" \
   qs_days "SELECT pg_catalog.current_schema() FROM days" \
-  qb_days "SELECT pg_catalog.current_database() FROM days"
+  qb_days "SELECT pg_catalog.current_database() FROM days" \
+  ir_days "SELECT pg_catalog.pg_is_in_recovery() FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6641,6 +6648,12 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_catalog.current_database() FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.current_database() FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.current_database()) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_is_in_recovery() FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.PG_IS_IN_RECOVERY() FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_is_in_recovery() FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_is_in_recovery() FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_is_in_recovery() FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.pg_is_in_recovery()) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -7014,6 +7027,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT pg_catalog.age(1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_catalog.current_schema() FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_catalog.current_database() FROM days"),
+    (os.environ["DIFF_H2"], "SELECT pg_catalog.pg_is_in_recovery() FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

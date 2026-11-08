@@ -3294,8 +3294,13 @@ fn parse_java_int(text: &str) -> Option<i32> {
 
 fn resolve_pg_is_in_recovery(expr: &PgIsInRecoveryExpr) -> Result<ResolvedProj, Error> {
     if !expr.args.is_empty() {
+        let name = if expr.label.to_ascii_lowercase().contains("pg_catalog.") {
+            "pg_catalog.pg_is_in_recovery"
+        } else {
+            "pg_is_in_recovery"
+        };
         return Err(Error::new(format!(
-            "wrong number of arguments for function `pg_is_in_recovery`; expected: 0, provided: {}",
+            "wrong number of arguments for function `{name}`; expected: 0, provided: {}",
             expr.args.len()
         )));
     }
@@ -41348,6 +41353,58 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn ir_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                "SELECT pg_catalog.pg_is_in_recovery() FROM sensors",
+                "expected/ir_all.tsv",
+            ),
+            (
+                "SELECT pg_catalog.PG_IS_IN_RECOVERY() FROM sensors LIMIT 1",
+                "expected/ir_case.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_is_in_recovery() FROM sensors WHERE id = 1",
+                "expected/ir_one.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_is_in_recovery() FROM sensors WHERE id > 100",
+                "expected/ir_none.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_is_in_recovery() FROM sensors LIMIT 0",
+                "expected/ir_lim0.tsv",
+            ),
+            (
+                "SELECT typeof(pg_catalog.pg_is_in_recovery()) FROM sensors LIMIT 1",
+                "expected/ir_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let result = execute(&days, "SELECT pg_catalog.pg_is_in_recovery() FROM days").unwrap();
+        let expected = std::fs::read_to_string(days.join("expected/ir_days.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let err = execute(
+            &sensors,
+            "SELECT pg_catalog.pg_is_in_recovery(1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `pg_catalog.pg_is_in_recovery`; expected: 0, provided: 1"
+            ),
             "{}",
             err.message
         );
