@@ -10,10 +10,10 @@ use crate::parse::{
     IsLeapYearExpr, JsonExtractExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
     MakeGeohashExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr,
     NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr, PgGetExprExpr, PgGetPartKeyDefExpr,
-    PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
-    RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
-    SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
-    SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
+    PgGetUserByIdExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
+    RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
+    RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr,
+    SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
     StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
     TimestampFloorExpr, TimestampSequenceExpr, ToCharExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
     ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr, TrimEnd, TrimExpr, TypeofExpr,
@@ -317,6 +317,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::FormatType { label, .. }
             | ResolvedProj::CurrentSetting { label, .. }
             | ResolvedProj::PgGetPartKeyDef { label, .. }
+            | ResolvedProj::PgGetUserById { label, .. }
             | ResolvedProj::PgGetExpr { label, .. }
             | ResolvedProj::Netmask { label, .. }
             | ResolvedProj::GeoDistance { label, .. }
@@ -842,6 +843,9 @@ enum ResolvedProj {
     PgGetPartKeyDef {
         label: String,
     },
+    PgGetUserById {
+        label: String,
+    },
     PgGetExpr {
         label: String,
     },
@@ -1072,6 +1076,7 @@ impl ResolvedProj {
             | Self::FormatType { label, .. }
             | Self::CurrentSetting { label, .. }
             | Self::PgGetPartKeyDef { label, .. }
+            | Self::PgGetUserById { label, .. }
             | Self::PgGetExpr { label, .. }
             | Self::Netmask { label, .. }
             | Self::GeoDistance { label, .. }
@@ -1163,6 +1168,7 @@ impl ResolvedProj {
             | Self::FormatType { .. }
             | Self::CurrentSetting { .. }
             | Self::PgGetPartKeyDef { .. }
+            | Self::PgGetUserById { .. }
             | Self::PgGetExpr { .. } => qdb_types::TAG_STRING,
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
@@ -1343,6 +1349,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::FormatType(expr) => resolve_format_type(table, expr),
         Proj::CurrentSetting(expr) => resolve_current_setting(table, expr),
         Proj::PgGetPartKeyDef(expr) => resolve_pg_get_partkeydef(table, expr),
+        Proj::PgGetUserById(expr) => resolve_pg_get_userbyid(table, expr),
         Proj::PgGetExpr(expr) => resolve_pg_get_expr(table, expr),
         Proj::Netmask(expr) => resolve_netmask(table, expr),
         Proj::GeoDistance(expr) => resolve_geo_distance(table, expr),
@@ -1737,6 +1744,43 @@ fn resolve_current_setting(
     Ok(ResolvedProj::CurrentSetting {
         label: expr.label.clone(),
         value,
+    })
+}
+
+fn resolve_pg_get_userbyid(table: &Table, expr: &PgGetUserByIdExpr) -> Result<ResolvedProj, Error> {
+    let reported = if expr.qualified {
+        "pg_catalog.pg_get_userbyid"
+    } else {
+        "pg_get_userbyid"
+    };
+    if !expr.qualified {
+        let types = if expr.args.is_empty() {
+            String::new()
+        } else {
+            timestamp_floor_types(table, &expr.args)?
+        };
+        let listed = types.replace(", ", ",");
+        return Err(Error::new(format!(
+            "unknown function name: {reported}({listed})"
+        )));
+    }
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `{reported}`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let actual = timestamp_floor_arg_type(table, &expr.args[0])?;
+    if !matches!(
+        actual,
+        "INT" | "BYTE" | "SHORT" | "CHAR" | "STRING" | "SYMBOL" | "VARCHAR" | "NULL"
+    ) {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `{reported}` at #1 expected: INT, actual: {actual}"
+        )));
+    }
+    Ok(ResolvedProj::PgGetUserById {
+        label: expr.label.clone(),
     })
 }
 
@@ -4275,6 +4319,19 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
         return Ok(ResolvedProj::Typeof {
             label: expr.label.clone(),
             name: name.to_string(),
+            result_tag: qdb_types::TAG_STRING,
+        });
+    }
+    if expr.label.to_ascii_lowercase().contains("pg_get_userbyid(") {
+        let inner = PgGetUserByIdExpr {
+            label: String::new(),
+            args: expr.args.clone(),
+            qualified: expr.label.to_ascii_lowercase().contains("pg_catalog."),
+        };
+        resolve_pg_get_userbyid(table, &inner)?;
+        return Ok(ResolvedProj::Typeof {
+            label: expr.label.clone(),
+            name: "STRING".to_string(),
             result_tag: qdb_types::TAG_STRING,
         });
     }
@@ -9911,6 +9968,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::FormatType { .. } => Scalar::Null,
         ResolvedProj::CurrentSetting { value, .. } => Scalar::Text(value.clone()),
         ResolvedProj::PgGetPartKeyDef { .. } | ResolvedProj::PgGetExpr { .. } => Scalar::Null,
+        ResolvedProj::PgGetUserById { .. } => Scalar::Text("public".to_string()),
         ResolvedProj::Netmask { arg, .. } => match text_of(table, row, arg) {
             Some(text) => match ipv4_netmask(&text) {
                 Some(mask) => Scalar::Text(mask),
@@ -41153,6 +41211,100 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn ub_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors",
+                "expected/ub_all.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(0) FROM sensors LIMIT 1",
+                "expected/ub_zero.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(null) FROM sensors LIMIT 1",
+                "expected/ub_null.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(-1) FROM sensors LIMIT 1",
+                "expected/ub_neg.tsv",
+            ),
+            (
+                "SELECT pg_catalog.PG_GET_USERBYID(1) FROM sensors LIMIT 1",
+                "expected/ub_case.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid('2') FROM sensors LIMIT 1",
+                "expected/ub_str.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(note) FROM sensors LIMIT 1",
+                "expected/ub_note.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors WHERE id = 1",
+                "expected/ub_one.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors WHERE id > 100",
+                "expected/ub_none.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors LIMIT 0",
+                "expected/ub_lim0.tsv",
+            ),
+            (
+                "SELECT typeof(pg_catalog.pg_get_userbyid(1)) FROM sensors LIMIT 1",
+                "expected/ub_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let result = execute(&days, "SELECT pg_catalog.pg_get_userbyid(1) FROM days").unwrap();
+        let expected = std::fs::read_to_string(days.join("expected/ub_days.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let messages = [
+            (
+                "SELECT pg_get_userbyid(1) FROM sensors",
+                "unknown function name: pg_get_userbyid(INT)",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid() FROM sensors",
+                "function `pg_catalog.pg_get_userbyid` requires arguments: pg_catalog.pg_get_userbyid(INT)",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(1, 2) FROM sensors",
+                "wrong number of arguments for function `pg_catalog.pg_get_userbyid`; expected: 1, provided: 2",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(id) FROM sensors",
+                "argument type mismatch for function `pg_catalog.pg_get_userbyid` at #1 expected: INT, actual: LONG",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(ok) FROM sensors",
+                "argument type mismatch for function `pg_catalog.pg_get_userbyid` at #1 expected: INT, actual: BOOLEAN",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(1.5) FROM sensors",
+                "argument type mismatch for function `pg_catalog.pg_get_userbyid` at #1 expected: INT, actual: DOUBLE",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_userbyid(missing) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, message) in messages {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(message), "{}: {}", sql, err.message);
+        }
     }
 
     #[test]

@@ -1,0 +1,2 @@
+typeof(pg_catalog.pg_get_userbyid(1))
+STRING
