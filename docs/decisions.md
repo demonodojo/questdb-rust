@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — pasos `1h`, `1m` y `1w` de `generate_series`
+
+El paso de la serie de marcas acepta horas, minutos y semanas como anchos fijos. Un paso que no es un periodo, como `'1x'`, se rechaza con `invalid period`. Un paso nulo dice `step argument must be a non-null constant or bind variable constant`. Se contrastó con `/exec`.
+
 ## 2026-11-08 — `generate_series` de marcas de tiempo
 
 `generate_series` con dos textos de marca y un paso `'1s'` o `'1d'` produce la columna `TIMESTAMP` `generate_series`. Un día suelto `YYYY-MM-DD` es medianoche UTC. Si el final es anterior al inicio y el paso es positivo, la serie sale en orden ascendente. Dos textos de marca sin paso se rechazan con `inconvertible value`. Se contrastó con `/exec`.

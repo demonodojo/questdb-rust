@@ -41544,6 +41544,51 @@ mod tests {
     }
 
     #[test]
+    fn yk_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T02:00:00.000000Z', '1h')",
+                "expected/yk_hour.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:02:00.000000Z', '1m')",
+                "expected/yk_min.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('2020-01-01', '2020-01-15', '1w')",
+                "expected/yk_week.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let period = execute(
+            &sensors,
+            "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:02.000000Z', '1x')",
+        )
+        .unwrap_err();
+        assert!(
+            period.message.contains("invalid period [period=1x]"),
+            "{}",
+            period.message
+        );
+        let step = execute(
+            &sensors,
+            "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:02.000000Z', null)",
+        )
+        .unwrap_err();
+        assert!(
+            step.message
+                .contains("step argument must be a non-null constant or bind variable constant"),
+            "{}",
+            step.message
+        );
+    }
+
+    #[test]
     fn yt_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let cases = [

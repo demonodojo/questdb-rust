@@ -1658,15 +1658,24 @@ fn generate_series_spec(args: &[ConcatArg]) -> Result<GenerateSeries, Error> {
         )));
     }
     if args.len() == 3 {
-        if let (Some(start), Some(end), Some(step)) = (
-            series_clock_arg(&args[0]),
-            series_clock_arg(&args[1]),
-            series_period_arg(&args[2]),
-        ) {
-            if step == 0 {
-                return Err(Error::new("step cannot be zero"));
+        if let (Some(start), Some(end)) = (series_clock_arg(&args[0]), series_clock_arg(&args[1])) {
+            if matches!(
+                &args[2],
+                ConcatArg::Literal(Scalar::Null) | ConcatArg::Column(_)
+            ) {
+                return Err(Error::new(
+                    "step argument must be a non-null constant or bind variable constant",
+                ));
             }
-            return Ok(GenerateSeries::Timestamp { start, end, step });
+            if let ConcatArg::Literal(Scalar::Text(text)) = &args[2] {
+                let Some(step) = series_period(text) else {
+                    return Err(Error::new(format!("invalid period [period={text}]")));
+                };
+                if step == 0 {
+                    return Err(Error::new("step cannot be zero"));
+                }
+                return Ok(GenerateSeries::Timestamp { start, end, step });
+            }
         }
     }
     if args.len() == 2 {
@@ -1734,13 +1743,6 @@ fn series_clock(text: &str) -> Option<i64> {
     unix_days_from_civil(year, month, day)?.checked_mul(86_400_000_000)
 }
 
-fn series_period_arg(arg: &ConcatArg) -> Option<i64> {
-    match arg {
-        ConcatArg::Literal(Scalar::Text(text)) => series_period(text),
-        _ => None,
-    }
-}
-
 fn series_period(text: &str) -> Option<i64> {
     let (sign, rest) = if let Some(rest) = text.strip_prefix('-') {
         (-1, rest)
@@ -1755,7 +1757,10 @@ fn series_period(text: &str) -> Option<i64> {
     let count: i64 = digits.parse().ok()?;
     let width = match unit {
         's' => 1_000_000,
+        'm' => 60_000_000,
+        'h' => 3_600_000_000,
         'd' => 86_400_000_000,
+        'w' => 604_800_000_000,
         _ => return None,
     };
     count.checked_mul(width)?.checked_mul(sign)

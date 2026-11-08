@@ -24,15 +24,15 @@ Tests que pasaron:
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
 | qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
-| qdb-sql | 243 ok, incluido `yt_matches_captured_exec` |
+| qdb-sql | 244 ok, incluido `yk_matches_captured_exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
-captured-oracle: 3162 queries match tests/fixtures/h1/expected
+captured-oracle: 3165 queries match tests/fixtures/h1/expected
 captured-oracle: 376 queries match tests/fixtures/h2/expected
-live-reference: 3538 queries matched row counts against http://127.0.0.1:19011/exec
+live-reference: 3541 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
 Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
@@ -51,4 +51,4 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 
 ## Próxima tarea
 
-Ampliar el paso de `generate_series` de marcas de tiempo con `'1h'`, `'1m'` y `'1w'`, y comprobarlo contra `/exec`. La columna sigue llamándose `generate_series` y el tipo es `TIMESTAMP`. `generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T02:00:00.000000Z', '1h')` devuelve las 00:00, las 01:00 y las 02:00. `generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:02:00.000000Z', '1m')` devuelve las 00:00, las 00:01 y las 00:02. `generate_series('2020-01-01', '2020-01-15', '1w')` devuelve el día 1, el día 8 y el día 15 a medianoche UTC. El paso `'1x'` se rechaza con `invalid period [period=1x]`. Un paso `null` dice `step argument must be a non-null constant or bind variable constant`. No abrir WAL en ese paso.
+Ampliar el paso de `generate_series` de marcas de tiempo con `'1M'`, `'1y'`, `'1T'` y `'1U'`, y comprobarlo contra `/exec`. La columna sigue llamándose `generate_series` y el tipo es `TIMESTAMP`. `generate_series('2020-01-31', '2020-04-30', '1M')` devuelve `2020-01-31T00:00:00.000000Z`, `2020-02-29T00:00:00.000000Z`, `2020-03-29T00:00:00.000000Z` y `2020-04-29T00:00:00.000000Z`. `generate_series('2020-01-31', '2020-03-31', '1M')` devuelve el 31 de enero, el 29 de febrero y el 29 de marzo. `generate_series('2020-01-01', '2022-01-01', '1y')` devuelve el 1 de enero de 2020, de 2021 y de 2022. `'1T'` entre `2020-01-01T00:00:00.000000Z` y `2020-01-01T00:00:00.002000Z` devuelve los milisegundos 000, 001 y 002. `'1U'` entre `2020-01-01T00:00:00.000000Z` y `2020-01-01T00:00:00.000002Z` devuelve los micros 000000, 000001 y 000002. No abrir WAL en ese paso.
