@@ -2724,7 +2724,14 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   zc_one "SELECT id::char FROM sensors WHERE id = 1" \
   zc_none "SELECT id::char FROM sensors WHERE id > 100" \
   zc_ch "SELECT ch::char FROM sensors" \
-  zc_note "SELECT note::char FROM sensors"
+  zc_note "SELECT note::char FROM sensors" \
+  zm_all "SELECT location::symbol FROM sensors" \
+  zm_upper "SELECT location::SYMBOL FROM sensors" \
+  zm_one "SELECT location::symbol FROM sensors WHERE id = 1" \
+  zm_none "SELECT location::symbol FROM sensors WHERE id > 100" \
+  zm_note "SELECT note::symbol FROM sensors" \
+  zm_id "SELECT id::symbol FROM sensors" \
+  zm_ch "SELECT ch::symbol FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3058,7 +3065,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   zb_days "SELECT id::boolean FROM days" \
   zx_days "SELECT id::byte FROM days" \
   zh_days "SELECT id::short FROM days" \
-  zc_days "SELECT id::char FROM days"
+  zc_days "SELECT id::char FROM days" \
+  zm_days "SELECT location::symbol FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5730,6 +5738,13 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT id::char FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT ch::char FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT note::char FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT location::symbol FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT location::SYMBOL FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT location::symbol FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT location::symbol FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT note::symbol FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id::symbol FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ch::symbol FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6062,6 +6077,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT id::byte FROM days"),
     (os.environ["DIFF_H2"], "SELECT id::short FROM days"),
     (os.environ["DIFF_H2"], "SELECT id::char FROM days"),
+    (os.environ["DIFF_H2"], "SELECT location::symbol FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
