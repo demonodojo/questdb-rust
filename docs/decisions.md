@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `nanos()`
+
+`nanos` devuelve los nanosegundos dentro del microsegundo como `INT`. Un timestamp en microsegundos no tiene ese resto, así que un valor presente es `0` y un nulo sigue `NULL`. `nanos(ts)` es `0` en las cuatro filas. `nanos(day)` es `0`, `NULL`, `0` y `0`. `nanos(id)` es `0`, `0`, `NULL` y `0`. `nanos(flags)` es `0`, `NULL`, `0` y `0`. En `days`, `nanos(id)` es `0`, `0`, `0` y `NULL`. `NANOS` conserva las mayúsculas del encabezado. Un booleano o un `CHAR` no encajan. Un símbolo o un texto se rechaza como inconvertible a `TIMESTAMP_NS`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `kurtosis()`
 
 `kurtosis` devuelve la misma curtosis excesiva muestral que `kurtosis_samp`, como `DOUBLE`. Con menos de cuatro valores finitos, o si todos son iguales, el resultado es `NULL`. `kurtosis(b)` es `3.9926202441231036`, `kurtosis(code)` es `3.9999992882590982` y `kurtosis(ts)` es `-1.2000000000000024`. `flags`, `reading`, `score`, `id` y `day` salen `NULL`. Los grupos por `location` salen `NULL`. `KURTOSIS` conserva las mayúsculas del encabezado. Un booleano o un símbolo no encajan. Un texto que no es número se rechaza en la fila. Se contrastó con `/exec` en `sensors` y `days`.

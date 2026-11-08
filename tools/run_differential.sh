@@ -2787,7 +2787,15 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ku_lim0 "SELECT kurtosis(flags) FROM sensors LIMIT 0" \
   ku_case "SELECT KURTOSIS(flags) FROM sensors" \
   ku_day "SELECT kurtosis(day) FROM sensors" \
-  ku_ts "SELECT kurtosis(ts) FROM sensors"
+  ku_ts "SELECT kurtosis(ts) FROM sensors" \
+  na_ts "SELECT nanos(ts) FROM sensors" \
+  na_day "SELECT nanos(day) FROM sensors" \
+  na_id "SELECT nanos(id) FROM sensors" \
+  na_flags "SELECT nanos(flags) FROM sensors" \
+  na_one "SELECT nanos(ts) FROM sensors WHERE id = 1" \
+  na_none "SELECT nanos(ts) FROM sensors WHERE id > 100" \
+  na_lim0 "SELECT nanos(ts) FROM sensors LIMIT 0" \
+  na_case "SELECT NANOS(ts) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3129,7 +3137,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ky_days "SELECT kurtosis_samp(id) FROM days" \
   ky_days_grp "SELECT kurtosis_samp(id) FROM days GROUP BY location ORDER BY location" \
   ku_days "SELECT kurtosis(id) FROM days" \
-  ku_days_grp "SELECT kurtosis(id) FROM days GROUP BY location ORDER BY location"
+  ku_days_grp "SELECT kurtosis(id) FROM days GROUP BY location ORDER BY location" \
+  na_days "SELECT nanos(ts) FROM days" \
+  na_days_id "SELECT nanos(id) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5864,6 +5874,14 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT KURTOSIS(flags) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT kurtosis(day) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT kurtosis(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nanos(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nanos(day) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nanos(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nanos(flags) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT nanos(ts) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT nanos(ts) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT nanos(ts) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT NANOS(ts) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6204,6 +6222,8 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT kurtosis_samp(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT kurtosis(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT kurtosis(id) FROM days GROUP BY location ORDER BY location"),
+    (os.environ["DIFF_H2"], "SELECT nanos(ts) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT nanos(id) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

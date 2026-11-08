@@ -253,6 +253,7 @@ pub enum Proj {
     Second(SecondExpr),
     Millis(MillisExpr),
     Micros(MicrosExpr),
+    Nanos(NanosExpr),
     DayOfWeek(DayOfWeekExpr),
     WeekOfYear(WeekOfYearExpr),
     DateTrunc(DateTruncExpr),
@@ -575,6 +576,13 @@ pub struct MillisExpr {
 /// `micros(timestamp)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MicrosExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `nanos(timestamp)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NanosExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -1144,6 +1152,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_millis()?.label
             } else if parser.starts_micros_call() {
                 parser.parse_micros()?.label
+            } else if parser.starts_nanos_call() {
+                parser.parse_nanos()?.label
             } else if parser.starts_day_of_week_call() {
                 parser.parse_day_of_week()?.label
             } else if parser.starts_week_of_year_call() {
@@ -1330,6 +1340,7 @@ enum SelectPiece {
     Second(SecondExpr),
     Millis(MillisExpr),
     Micros(MicrosExpr),
+    Nanos(NanosExpr),
     DayOfWeek(DayOfWeekExpr),
     WeekOfYear(WeekOfYearExpr),
     DateTrunc(DateTruncExpr),
@@ -1548,6 +1559,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Millis(self.parse_millis()?));
             } else if self.starts_micros_call() {
                 pieces.push(SelectPiece::Micros(self.parse_micros()?));
+            } else if self.starts_nanos_call() {
+                pieces.push(SelectPiece::Nanos(self.parse_nanos()?));
             } else if self.starts_day_of_week_call() {
                 pieces.push(SelectPiece::DayOfWeek(self.parse_day_of_week()?));
             } else if self.starts_week_of_year_call() {
@@ -1757,6 +1770,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Second(_)
                     | SelectPiece::Millis(_)
                     | SelectPiece::Micros(_)
+                    | SelectPiece::Nanos(_)
                     | SelectPiece::DayOfWeek(_)
                     | SelectPiece::WeekOfYear(_)
                     | SelectPiece::DateTrunc(_)
@@ -1861,6 +1875,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Second(expr) => items.push(Proj::Second(expr)),
                     SelectPiece::Millis(expr) => items.push(Proj::Millis(expr)),
                     SelectPiece::Micros(expr) => items.push(Proj::Micros(expr)),
+                    SelectPiece::Nanos(expr) => items.push(Proj::Nanos(expr)),
                     SelectPiece::DayOfWeek(expr) => items.push(Proj::DayOfWeek(expr)),
                     SelectPiece::WeekOfYear(expr) => items.push(Proj::WeekOfYear(expr)),
                     SelectPiece::DateTrunc(expr) => items.push(Proj::DateTrunc(expr)),
@@ -1989,6 +2004,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Second(_)
                 | SelectPiece::Millis(_)
                 | SelectPiece::Micros(_)
+                | SelectPiece::Nanos(_)
                 | SelectPiece::DayOfWeek(_)
                 | SelectPiece::WeekOfYear(_)
                 | SelectPiece::DateTrunc(_)
@@ -3835,6 +3851,36 @@ impl<'a> Parser<'a> {
 
     fn starts_micros_call(&self) -> bool {
         self.starts_named_call("micros")
+    }
+
+    fn starts_nanos_call(&self) -> bool {
+        self.starts_named_call("nanos")
+    }
+
+    fn parse_nanos(&mut self) -> Result<NanosExpr, Error> {
+        let name = self.ident_spelling()?;
+        let fname = name.to_ascii_lowercase();
+        self.skip();
+        let open = self.pos;
+        if self.eat(b'(') {
+            self.skip();
+            if self.peek() == Some(b'*') {
+                return Err(Error::new(
+                    "too few arguments for '*' [found=0,expected=2]".to_string(),
+                ));
+            }
+        }
+        self.pos = open;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{fname}` requires arguments: {fname}(TIMESTAMP)"
+            )));
+        }
+        Ok(NanosExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn parse_micros(&mut self) -> Result<MicrosExpr, Error> {

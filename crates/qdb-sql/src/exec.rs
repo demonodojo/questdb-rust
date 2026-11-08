@@ -6,8 +6,8 @@ use crate::parse::{
     DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter,
     FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr,
     IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
-    Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NegExpr, NotExpr, NullIfExpr,
-    PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr,
+    Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NotExpr,
+    NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr,
     RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr,
     Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr,
     SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr,
@@ -249,6 +249,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Second { label, .. }
             | ResolvedProj::Millis { label, .. }
             | ResolvedProj::Micros { label, .. }
+            | ResolvedProj::Nanos { label, .. }
             | ResolvedProj::DayOfWeek { label, .. }
             | ResolvedProj::WeekOfYear { label, .. }
             | ResolvedProj::DateTrunc { label, .. }
@@ -516,6 +517,10 @@ enum ResolvedProj {
         value: DateDiffSide,
     },
     Micros {
+        label: String,
+        value: DateDiffSide,
+    },
+    Nanos {
         label: String,
         value: DateDiffSide,
     },
@@ -868,6 +873,7 @@ impl ResolvedProj {
             | Self::Second { label, .. }
             | Self::Millis { label, .. }
             | Self::Micros { label, .. }
+            | Self::Nanos { label, .. }
             | Self::DayOfWeek { label, .. }
             | Self::WeekOfYear { label, .. }
             | Self::DateTrunc { label, .. }
@@ -942,6 +948,7 @@ impl ResolvedProj {
             | Self::Second { .. }
             | Self::Millis { .. }
             | Self::Micros { .. }
+            | Self::Nanos { .. }
             | Self::DayOfWeek { .. }
             | Self::WeekOfYear { .. } => qdb_types::TAG_INT,
             Self::DateTrunc { .. } | Self::TimestampFloor { .. } | Self::TimestampCeil { .. } => {
@@ -1075,6 +1082,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Second(expr) => resolve_second(table, expr),
         Proj::Millis(expr) => resolve_millis(table, expr),
         Proj::Micros(expr) => resolve_micros(table, expr),
+        Proj::Nanos(expr) => resolve_nanos(table, expr),
         Proj::DayOfWeek(expr) => resolve_day_of_week(table, expr),
         Proj::WeekOfYear(expr) => resolve_week_of_year(table, expr),
         Proj::DateTrunc(expr) => resolve_date_trunc(table, expr),
@@ -4600,6 +4608,60 @@ fn weekday_monday(micros: i64) -> i32 {
     }
 }
 
+fn resolve_nanos(table: &Table, expr: &NanosExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `nanos`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::Nanos {
+        label: expr.label.clone(),
+        value: nanos_side(table, &expr.args[0])?,
+    })
+}
+
+fn nanos_side(table: &Table, arg: &ConcatArg) -> Result<DateDiffSide, Error> {
+    let ConcatArg::Column(name) = arg else {
+        return Err(datediff_type_mismatch("nanos", 1, "UNSUPPORTED"));
+    };
+    let Some(index) = table.column_index(name) else {
+        return Err(Error::new(format!("Invalid column: {name}")));
+    };
+    let tag = table.meta.columns[index].tag;
+    match tag {
+        qdb_types::TAG_TIMESTAMP
+        | qdb_types::TAG_DATE
+        | qdb_types::TAG_LONG
+        | qdb_types::TAG_INT => Ok(DateDiffSide::Column { index }),
+        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR | qdb_types::TAG_SYMBOL => {
+            let sample = table
+                .columns
+                .get(index)
+                .and_then(|column| column.first())
+                .map(scalar_text)
+                .unwrap_or_default();
+            Err(Error::new(format!(
+                "inconvertible value: `{sample}` [{} -> TIMESTAMP_NS]",
+                qdb_types::type_name(tag)
+            )))
+        }
+        _ => Err(datediff_type_mismatch(
+            "nanos",
+            1,
+            qdb_types::type_name(tag),
+        )),
+    }
+}
+
+fn nanos_scalar(table: &Table, row: usize, value: &DateDiffSide) -> Scalar {
+    match value {
+        DateDiffSide::Null => Scalar::Null,
+        DateDiffSide::Column { index } if table.columns[*index][row].is_null() => Scalar::Null,
+        _ => Scalar::Int(0),
+    }
+}
+
 fn resolve_micros(table: &Table, expr: &MicrosExpr) -> Result<ResolvedProj, Error> {
     if expr.args.len() != 1 {
         return Err(Error::new(format!(
@@ -7831,6 +7893,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Some(micros) => Scalar::Int(((dateadd_parts(micros).3 / 1_000) % 1_000) as i32),
             None => Scalar::Null,
         },
+        ResolvedProj::Nanos { value, .. } => nanos_scalar(table, row, value),
         ResolvedProj::Micros { value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Int((dateadd_parts(micros).3 % 1_000) as i32),
             None => Scalar::Null,
@@ -38795,6 +38858,123 @@ mod tests {
         let err = execute(&sensors, "SELECT day_of_week('nope') FROM sensors").unwrap_err();
         assert!(
             err.message.contains("Invalid date [str=nope]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn na_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT nanos(ts) FROM sensors",
+                "expected/na_ts.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT nanos(day) FROM sensors",
+                "expected/na_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT nanos(id) FROM sensors",
+                "expected/na_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT nanos(flags) FROM sensors",
+                "expected/na_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT nanos(ts) FROM sensors WHERE id = 1",
+                "expected/na_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT nanos(ts) FROM sensors WHERE id > 100",
+                "expected/na_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT nanos(ts) FROM sensors LIMIT 0",
+                "expected/na_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT NANOS(ts) FROM sensors",
+                "expected/na_case.tsv",
+            ),
+            (&days, "SELECT nanos(ts) FROM days", "expected/na_days.tsv"),
+            (
+                &days,
+                "SELECT nanos(id) FROM days",
+                "expected/na_days_id.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT nanos() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `nanos` requires arguments: nanos(TIMESTAMP)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nanos(ts, 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `nanos`; expected: 1, provided: 2"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nanos(*) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("too few arguments for '*' [found=0,expected=2]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nanos(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nanos(ok) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `nanos` at #1 expected: TIMESTAMP, actual: BOOLEAN"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nanos(ch) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "argument type mismatch for function `nanos` at #1 expected: TIMESTAMP, actual: CHAR"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nanos(location) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `madrid` [SYMBOL -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT nanos(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
             "{}",
             err.message
         );
