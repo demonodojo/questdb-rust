@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `long_sequence()`
+
+`long_sequence(n)` es el origen de `FROM` y produce la columna `LONG` `x` con los enteros `1`…`n`. Un conteo nulo, cero o negativo no devuelve filas. Un argumento que no es constante dice `constant expected`. Usarla en la lista de `SELECT` dice `cursor function cannot be used as a column`. Se contrastó con `/exec`.
+
 ## 2026-11-08 — `pg_catalog.pg_get_expr()`
 
 `pg_catalog.pg_get_expr` acepta un texto y un entero, o esos dos más un booleano, y devuelve `NULL`. El encabezado conserva la grafía del nombre cualificado. Sin argumentos dice `requires arguments`. Una firma que no encaja lista los tipos entre paréntesis. Se contrastó con `/exec` en `sensors` y `days`.

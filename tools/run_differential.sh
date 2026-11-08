@@ -3188,7 +3188,20 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ge_true "SELECT pg_catalog.pg_get_expr(note, 1, true) FROM sensors LIMIT 1" \
   ge_false "SELECT pg_catalog.pg_get_expr(note, 1, false) FROM sensors LIMIT 1" \
   ge_tnull "SELECT pg_catalog.pg_get_expr(note, 1, null) FROM sensors LIMIT 1" \
-  ge_type "SELECT typeof(pg_catalog.pg_get_expr(note, 1)) FROM sensors LIMIT 1"
+  ge_type "SELECT typeof(pg_catalog.pg_get_expr(note, 1)) FROM sensors LIMIT 1" \
+  xq_four "SELECT x FROM long_sequence(4)" \
+  xq_one "SELECT x FROM long_sequence(1)" \
+  xq_zero "SELECT x FROM long_sequence(0)" \
+  xq_neg "SELECT x FROM long_sequence(-1)" \
+  xq_null "SELECT x FROM long_sequence(null)" \
+  xq_case "SELECT x FROM LONG_SEQUENCE(2)" \
+  xq_str "SELECT x FROM long_sequence('2')" \
+  xq_where "SELECT x FROM long_sequence(4) WHERE x > 2" \
+  xq_none "SELECT x FROM long_sequence(4) WHERE x > 100" \
+  xq_lim1 "SELECT x FROM long_sequence(4) LIMIT 1" \
+  xq_lim2 "SELECT x FROM long_sequence(4) LIMIT 2" \
+  xq_lim0 "SELECT x FROM long_sequence(4) LIMIT 0" \
+  xq_type "SELECT typeof(x) FROM long_sequence(1)"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -6702,6 +6715,19 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_expr(note, 1, false) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_expr(note, 1, null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.pg_get_expr(note, 1)) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(4)"),
+    (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(1)"),
+    (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(0)"),
+    (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(-1)"),
+    (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(null)"),
+    (os.environ["DIFF_H1"], "SELECT x FROM LONG_SEQUENCE(2)"),
+    (os.environ["DIFF_H1"], "SELECT x FROM long_sequence('2')"),
+    (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(4) WHERE x > 2"),
+    (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(4) WHERE x > 100"),
+    (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(4) LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(4) LIMIT 2"),
+    (os.environ["DIFF_H1"], "SELECT x FROM long_sequence(4) LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT typeof(x) FROM long_sequence(1)"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),

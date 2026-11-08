@@ -27,6 +27,8 @@ pub struct Query {
     /// `LIMIT` bounds after the single-argument form is rewritten.
     /// `LIMIT n` with `n >= 0` is `[0, n)`. A negative `n` is `[n, 0)`.
     pub limit: Option<Limit>,
+    /// Row count of `FROM long_sequence(n)`. `None` reads `table` from disk.
+    pub long_sequence: Option<i64>,
 }
 
 /// Inclusive lower bound and exclusive upper bound, as QuestDB stores them
@@ -1287,7 +1289,16 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
     parser.expect_keyword("select")?;
     let columns = parser.parse_select_list()?;
     parser.expect_keyword("from")?;
-    let table = parser.ident()?;
+    parser.skip();
+    let (table, long_sequence) = if parser.starts_named_call("long_sequence") {
+        let (_, args) = parser.parse_long_sequence_call()?;
+        (
+            String::from("long_sequence"),
+            Some(long_sequence_count(&args)?),
+        )
+    } else {
+        (parser.ident()?, None)
+    };
     parser.skip();
     let mut filter = None;
     let mut order_by = Vec::new();
@@ -1583,7 +1594,36 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         group_by,
         order_by,
         limit,
+        long_sequence,
     })
+}
+
+fn long_sequence_count(args: &[ConcatArg]) -> Result<i64, Error> {
+    let [arg] = args else {
+        return Err(Error::new("invalid arguments"));
+    };
+    match arg {
+        ConcatArg::Column(_) => Err(Error::new("constant expected")),
+        ConcatArg::Literal(Scalar::Null) => Ok(0),
+        ConcatArg::Literal(Scalar::Boolean(_)) => Err(Error::new("invalid arguments")),
+        ConcatArg::Literal(Scalar::Double(_)) => {
+            Err(Error::new("argument type DOUBLE is not supported"))
+        }
+        ConcatArg::Literal(Scalar::Float(_)) => {
+            Err(Error::new("argument type FLOAT is not supported"))
+        }
+        ConcatArg::Literal(Scalar::Long(number)) => Ok((*number).max(0)),
+        ConcatArg::Literal(Scalar::Int(number)) => Ok(i64::from(*number).max(0)),
+        ConcatArg::Literal(Scalar::Byte(number)) => Ok(i64::from(*number).max(0)),
+        ConcatArg::Literal(Scalar::Short(number)) => Ok(i64::from(*number).max(0)),
+        ConcatArg::Literal(Scalar::Text(text)) => match text.parse::<i64>() {
+            Ok(number) => Ok(number.max(0)),
+            Err(_) => Err(Error::new("invalid arguments")),
+        },
+        ConcatArg::Literal(Scalar::Char(_) | Scalar::Date(_) | Scalar::Timestamp(_)) => {
+            Err(Error::new("invalid arguments"))
+        }
+    }
 }
 
 enum SelectPiece {
@@ -1810,7 +1850,12 @@ impl<'a> Parser<'a> {
         let mut pieces = Vec::new();
         loop {
             self.skip();
-            if self.starts_aggregate_call() {
+            if self.starts_named_call("long_sequence") {
+                let (label, _) = self.parse_long_sequence_call()?;
+                return Err(Error::new(format!(
+                    "cursor function cannot be used as a column [column={label}]"
+                )));
+            } else if self.starts_aggregate_call() {
                 pieces.push(SelectPiece::Aggregate(self.parse_aggregate()?));
             } else if self.starts_concat_call() {
                 pieces.push(SelectPiece::Concat(self.parse_concat()?));
@@ -2913,6 +2958,40 @@ impl<'a> Parser<'a> {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
+    }
+
+    fn parse_long_sequence_call(&mut self) -> Result<(String, Vec<ConcatArg>), Error> {
+        let name = self.ident_spelling()?;
+        self.skip();
+        if !self.eat(b'(') {
+            return Err(Error::new("invalid arguments"));
+        }
+        self.skip();
+        if self.eat(b')') {
+            return Err(Error::new("invalid arguments"));
+        }
+        let mut labels = Vec::new();
+        let mut args = Vec::new();
+        loop {
+            let (label, arg) = self.parse_call_arg(true)?;
+            labels.push(label);
+            args.push(arg);
+            self.skip();
+            if !self.eat(b',') {
+                break;
+            }
+        }
+        self.skip();
+        if !self.eat(b')') {
+            return Err(Error::new(format!(
+                "unsupported: expected ')' after long_sequence near `{}`",
+                self.rest()
+            )));
+        }
+        if args.len() != 1 {
+            return Err(Error::new("invalid arguments"));
+        }
+        Ok((format!("{name}({})", labels.join(", ")), args))
     }
 
     fn starts_pg_get_expr_call(&self) -> bool {

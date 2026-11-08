@@ -20,8 +20,8 @@ use crate::parse::{
     ToUuidExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr,
     WithinBoxExpr, WithinRadiusExpr, WmidExpr, YearExpr,
 };
-use qdb_storage::{open_table, Table};
-use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
+use qdb_storage::{open_table, ColumnMeta, Table, TableMeta, TxnHeader};
+use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar, PARTITION_BY_NONE, TAG_LONG};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::path::Path;
@@ -34,8 +34,48 @@ pub struct QueryResult {
 
 pub fn execute(data_dir: &Path, sql: &str) -> Result<QueryResult, Error> {
     let query = parse_query(sql)?;
+    if let Some(count) = query.long_sequence {
+        let table = long_sequence_table(count)?;
+        return execute_on(&table, &query);
+    }
     let table = open_table(data_dir, &query.table)?;
     execute_on(&table, &query)
+}
+
+fn long_sequence_table(count: i64) -> Result<Table, Error> {
+    let rows = usize::try_from(count.max(0))
+        .map_err(|_| Error::new("unsupported: long_sequence count"))?;
+    let values = (1..=rows)
+        .map(|row| Scalar::Long(i64::try_from(row).unwrap_or(i64::MAX)))
+        .collect();
+    Ok(Table {
+        name: "long_sequence".to_string(),
+        meta: TableMeta {
+            column_count: 1,
+            partition_by: PARTITION_BY_NONE,
+            timestamp_index: -1,
+            version: qdb_types::METADATA_VERSION_10_1_0,
+            table_id: 0,
+            wal_enabled: false,
+            columns: vec![ColumnMeta {
+                name: "x".to_string(),
+                raw_type: TAG_LONG,
+                tag: TAG_LONG,
+                symbol_index: None,
+            }],
+        },
+        txn: TxnHeader {
+            txn: 0,
+            transient_row_count: i64::try_from(rows).unwrap_or(i64::MAX),
+            fixed_row_count: 0,
+            min_timestamp: i64::MIN,
+            max_timestamp: i64::MIN,
+            symbol_counts: Vec::new(),
+            partitions: Vec::new(),
+        },
+        columns: vec![values],
+        symbol_maps: Vec::new(),
+    })
 }
 
 pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
@@ -41390,6 +41430,68 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn xq_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT x FROM long_sequence(4)", "expected/xq_four.tsv"),
+            ("SELECT x FROM long_sequence(1)", "expected/xq_one.tsv"),
+            ("SELECT x FROM long_sequence(0)", "expected/xq_zero.tsv"),
+            ("SELECT x FROM long_sequence(-1)", "expected/xq_neg.tsv"),
+            ("SELECT x FROM long_sequence(null)", "expected/xq_null.tsv"),
+            ("SELECT x FROM LONG_SEQUENCE(2)", "expected/xq_case.tsv"),
+            ("SELECT x FROM long_sequence('2')", "expected/xq_str.tsv"),
+            (
+                "SELECT x FROM long_sequence(4) WHERE x > 2",
+                "expected/xq_where.tsv",
+            ),
+            (
+                "SELECT x FROM long_sequence(4) WHERE x > 100",
+                "expected/xq_none.tsv",
+            ),
+            (
+                "SELECT x FROM long_sequence(4) LIMIT 1",
+                "expected/xq_lim1.tsv",
+            ),
+            (
+                "SELECT x FROM long_sequence(4) LIMIT 2",
+                "expected/xq_lim2.tsv",
+            ),
+            (
+                "SELECT x FROM long_sequence(4) LIMIT 0",
+                "expected/xq_lim0.tsv",
+            ),
+            (
+                "SELECT typeof(x) FROM long_sequence(1)",
+                "expected/xq_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let errors = [
+            ("SELECT x FROM long_sequence()", "invalid arguments"),
+            ("SELECT x FROM long_sequence(1, 2)", "invalid arguments"),
+            ("SELECT x FROM long_sequence(true)", "invalid arguments"),
+            (
+                "SELECT x FROM long_sequence(2.5)",
+                "argument type DOUBLE is not supported",
+            ),
+            ("SELECT x FROM long_sequence(missing)", "constant expected"),
+            ("SELECT x FROM long_sequence(ok)", "constant expected"),
+            (
+                "SELECT LONG_SEQUENCE(2)",
+                "cursor function cannot be used as a column [column=LONG_SEQUENCE(2)]",
+            ),
+        ];
+        for (sql, expected) in errors {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]
