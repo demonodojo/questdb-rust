@@ -1931,8 +1931,13 @@ fn resolve_pg_get_expr(table: &Table, expr: &PgGetExprExpr) -> Result<ResolvedPr
     );
     let pretty = names.len() == 2 || matches!(names.get(2).copied(), Some("BOOLEAN" | "NULL"));
     if !((names.len() == 2 || names.len() == 3) && text && relation && pretty) {
+        let reported = if expr.label.to_ascii_lowercase().contains("pg_catalog.") {
+            "pg_catalog.pg_get_expr"
+        } else {
+            "pg_get_expr"
+        };
         return Err(Error::new(format!(
-            "there is no matching function `pg_get_expr` with the argument types: ({types})"
+            "there is no matching function `{reported}` with the argument types: ({types})"
         )));
     }
     Ok(ResolvedProj::PgGetExpr {
@@ -4467,6 +4472,18 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
         return Ok(ResolvedProj::Typeof {
             label: expr.label.clone(),
             name: "BOOLEAN".to_string(),
+            result_tag: qdb_types::TAG_STRING,
+        });
+    }
+    if lowered.contains("pg_get_expr(") {
+        let inner = PgGetExprExpr {
+            label: expr.label.clone(),
+            args: expr.args.clone(),
+        };
+        resolve_pg_get_expr(table, &inner)?;
+        return Ok(ResolvedProj::Typeof {
+            label: expr.label.clone(),
+            name: "STRING".to_string(),
             result_tag: qdb_types::TAG_STRING,
         });
     }
@@ -41373,6 +41390,108 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn ge_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                "SELECT pg_catalog.pg_get_expr(note, 1) FROM sensors",
+                "expected/ge_all.tsv",
+            ),
+            (
+                "SELECT pg_catalog.PG_GET_EXPR(note, 1) FROM sensors LIMIT 1",
+                "expected/ge_case.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note, 1) FROM sensors WHERE id = 1",
+                "expected/ge_one.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note, 1) FROM sensors WHERE id > 100",
+                "expected/ge_none.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note, 1) FROM sensors LIMIT 0",
+                "expected/ge_lim0.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr('alpha', 1) FROM sensors LIMIT 1",
+                "expected/ge_alpha.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(null, 1) FROM sensors LIMIT 1",
+                "expected/ge_null.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note, null) FROM sensors LIMIT 1",
+                "expected/ge_nrel.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note, 1, true) FROM sensors LIMIT 1",
+                "expected/ge_true.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note, 1, false) FROM sensors LIMIT 1",
+                "expected/ge_false.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note, 1, null) FROM sensors LIMIT 1",
+                "expected/ge_tnull.tsv",
+            ),
+            (
+                "SELECT typeof(pg_catalog.pg_get_expr(note, 1)) FROM sensors LIMIT 1",
+                "expected/ge_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let result = execute(&days, "SELECT pg_catalog.pg_get_expr(note, 1) FROM days").unwrap();
+        let expected = std::fs::read_to_string(days.join("expected/ge_days.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let errors = [
+            (
+                "SELECT pg_catalog.pg_get_expr() FROM sensors",
+                "function `pg_catalog.pg_get_expr` requires arguments",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note) FROM sensors",
+                "there is no matching function `pg_catalog.pg_get_expr` with the argument types: (STRING)",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note, 1, true, 1) FROM sensors",
+                "there is no matching function `pg_catalog.pg_get_expr` with the argument types: (STRING, INT, BOOLEAN, INT)",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(id, 1) FROM sensors",
+                "there is no matching function `pg_catalog.pg_get_expr` with the argument types: (LONG, INT)",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note, id) FROM sensors",
+                "there is no matching function `pg_catalog.pg_get_expr` with the argument types: (STRING, LONG)",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note, 1.5) FROM sensors",
+                "there is no matching function `pg_catalog.pg_get_expr` with the argument types: (STRING, DOUBLE)",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(note, 1.5, ok) FROM sensors",
+                "there is no matching function `pg_catalog.pg_get_expr` with the argument types: (STRING, DOUBLE, BOOLEAN)",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(missing, 1) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in errors {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

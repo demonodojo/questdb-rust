@@ -1,0 +1,2 @@
+typeof(pg_catalog.pg_get_expr(note, 1))
+STRING

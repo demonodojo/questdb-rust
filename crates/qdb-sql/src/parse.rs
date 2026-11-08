@@ -2917,15 +2917,29 @@ impl<'a> Parser<'a> {
 
     fn starts_pg_get_expr_call(&self) -> bool {
         self.starts_named_call("pg_get_expr")
+            || self.starts_qualified_call("pg_catalog", "pg_get_expr")
     }
 
     fn parse_pg_get_expr(&mut self) -> Result<PgGetExprExpr, Error> {
-        let name = self.ident_spelling()?;
+        let first = self.ident_spelling()?;
+        self.skip();
+        let name = if self.eat(b'.') {
+            self.skip();
+            let second = self.ident_spelling()?;
+            format!("{first}.{second}")
+        } else {
+            first
+        };
         let (labels, args) = self.parse_call_args(&name, true)?;
         if args.is_empty() {
-            return Err(Error::new(
-                "function `pg_get_expr` requires arguments".to_string(),
-            ));
+            let reported = if name.to_ascii_lowercase().contains("pg_catalog.") {
+                "pg_catalog.pg_get_expr"
+            } else {
+                "pg_get_expr"
+            };
+            return Err(Error::new(format!(
+                "function `{reported}` requires arguments"
+            )));
         }
         Ok(PgGetExprExpr {
             label: format!("{name}({})", labels.join(", ")),
@@ -4505,6 +4519,26 @@ impl<'a> Parser<'a> {
                 to_char: None,
             });
         }
+        if self.argument_is_pg_get_expr() {
+            self.skip();
+            self.eat(b'(');
+            self.skip();
+            let inner = self.parse_pg_get_expr()?;
+            self.skip();
+            if !self.eat(b')') {
+                return Err(Error::new(
+                    "unsupported: expected ')' after typeof".to_string(),
+                ));
+            }
+            return Ok(TypeofExpr {
+                label: format!("{name}({})", inner.label),
+                args: inner.args,
+                geohash: None,
+                uuid: None,
+                json: None,
+                to_char: None,
+            });
+        }
         if self.argument_is_pg_get_partkeydef() {
             self.skip();
             self.eat(b'(');
@@ -4595,6 +4629,16 @@ impl<'a> Parser<'a> {
         let open = self.eat(b'(');
         self.skip();
         let nested = open && self.starts_pg_table_is_visible_call();
+        self.pos = saved;
+        nested
+    }
+
+    fn argument_is_pg_get_expr(&mut self) -> bool {
+        let saved = self.pos;
+        self.skip();
+        let open = self.eat(b'(');
+        self.skip();
+        let nested = open && self.starts_pg_get_expr_call();
         self.pos = saved;
         nested
     }
