@@ -24,15 +24,15 @@ Tests que pasaron:
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
 | qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
-| qdb-sql | 245 ok, incluido `yu_matches_captured_exec` |
+| qdb-sql | 246 ok, incluido `yv_matches_captured_exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
-captured-oracle: 3170 queries match tests/fixtures/h1/expected
+captured-oracle: 3173 queries match tests/fixtures/h1/expected
 captured-oracle: 376 queries match tests/fixtures/h2/expected
-live-reference: 3546 queries matched row counts against http://127.0.0.1:19011/exec
+live-reference: 3549 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
 Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
@@ -51,4 +51,4 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 
 ## Próxima tarea
 
-Ampliar el paso de `generate_series` con `'1H'`, `'1000n'` y el paso vacío, y comprobarlo contra `/exec`. La columna sigue llamándose `generate_series` y el tipo es `TIMESTAMP`. `generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T02:00:00.000000Z', '1H')` devuelve las 00:00, las 01:00 y las 02:00. `generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000003Z', '1000n')` devuelve los micros 000000, 000001, 000002 y 000003. `typeof(generate_series)` de esa serie devuelve `TIMESTAMP`. El paso `''` se rechaza con `empty step`. No abrir WAL en ese paso.
+Añadir el `JOIN` interno de una tabla consigo misma y comprobarlo contra `/exec`. `SELECT a.id, b.id FROM sensors a JOIN sensors b ON a.id = b.id` devuelve las columnas `id` e `id_2`, con las filas `1`/`1`, `2`/`2`, `NULL`/`NULL` y `-1`/`-1`. `NULL` casa con `NULL`. `INNER JOIN` devuelve las mismas cuatro filas. `SELECT a.id, b.note FROM sensors a JOIN sensors b ON a.id = b.id WHERE a.id = 1` devuelve `1` y `alpha`. Sin `ON`, la consulta se rechaza con `'on' expected`. No abrir WAL en ese paso.

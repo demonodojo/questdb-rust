@@ -1688,6 +1688,9 @@ fn generate_series_spec(args: &[ConcatArg]) -> Result<GenerateSeries, Error> {
                 ));
             }
             if let ConcatArg::Literal(Scalar::Text(text)) = &args[2] {
+                if text.is_empty() {
+                    return Err(Error::new("empty step"));
+                }
                 let Some(step) = series_period(text) else {
                     return Err(Error::new(format!("invalid period [period={text}]")));
                 };
@@ -1783,11 +1786,12 @@ fn series_period(text: &str) -> Option<SeriesStep> {
     match unit {
         's' => Some(SeriesStep::Fixed(signed.checked_mul(1_000_000)?)),
         'm' => Some(SeriesStep::Fixed(signed.checked_mul(60_000_000)?)),
-        'h' => Some(SeriesStep::Fixed(signed.checked_mul(3_600_000_000)?)),
+        'h' | 'H' => Some(SeriesStep::Fixed(signed.checked_mul(3_600_000_000)?)),
         'd' => Some(SeriesStep::Fixed(signed.checked_mul(86_400_000_000)?)),
         'w' => Some(SeriesStep::Fixed(signed.checked_mul(604_800_000_000)?)),
         'T' => Some(SeriesStep::Fixed(signed.checked_mul(1_000)?)),
         'U' | 'u' => Some(SeriesStep::Fixed(signed)),
+        'n' => Some(SeriesStep::Fixed(signed / 1_000)),
         'M' => Some(SeriesStep::Months(i32::try_from(signed).ok()?)),
         'y' => Some(SeriesStep::Years(i32::try_from(signed).ok()?)),
         _ => None,

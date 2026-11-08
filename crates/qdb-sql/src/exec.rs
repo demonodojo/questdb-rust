@@ -41629,6 +41629,36 @@ mod tests {
     }
 
     #[test]
+    fn yv_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T02:00:00.000000Z', '1H')",
+                "expected/yv_hour.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000003Z', '1000n')",
+                "expected/yv_nano.tsv",
+            ),
+            (
+                "SELECT typeof(generate_series) FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000003Z', '1000n')",
+                "expected/yv_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(
+            &sensors,
+            "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:02.000000Z', '')",
+        )
+        .unwrap_err();
+        assert!(err.message.contains("empty step"), "{}", err.message);
+    }
+
+    #[test]
     fn yu_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let cases = [
