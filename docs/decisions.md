@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `::varchar`
+
+`column::varchar` convierte una columna a `VARCHAR` y el encabezado conserva la grafía. Un nulo sigue siendo `NULL`, el carácter cero es `NULL` y una cadena vacía sigue vacía. Un número se escribe en decimal. `note::varchar` es `alpha`, `NULL`, vacío y `βeta`. En `days` es `alpha`, `NULL`, `beta` y `東京`. `location::varchar` es `madrid`, `NULL`, `madrid` y `東京`. `id::varchar` es `1`, `2`, `NULL` y `-1`. `ch::varchar` es `A`, `NULL`, `β` y `東`. `tag::varchar` es `v1`, `NULL`, `héllo` y `0123456789ABCDEF`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `::symbol`
 
 `column::symbol` convierte una columna a `SYMBOL` y el encabezado conserva la grafía. Un nulo sigue siendo `NULL`, el carácter cero es `NULL` y una cadena vacía sigue vacía. Un número se escribe en decimal. `location::symbol` es `madrid`, `NULL`, `madrid` y `東京`. En `days` es lo mismo. `note::symbol` es `alpha`, `NULL`, vacío y `βeta`. `id::symbol` es `1`, `2`, `NULL` y `-1`. `ch::symbol` es `A`, `NULL`, `β` y `東`. Un tipo desconocido se rechaza con `invalid constant: missing`. Se contrastó con `/exec` en `sensors` y `days`.
