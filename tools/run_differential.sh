@@ -3215,7 +3215,13 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   gs_where "SELECT * FROM generate_series(1, 4) WHERE generate_series > 2" \
   gs_lim1 "SELECT * FROM generate_series(1, 4) LIMIT 1" \
   gs_lim0 "SELECT * FROM generate_series(1, 4) LIMIT 0" \
-  gs_type "SELECT typeof(generate_series) FROM generate_series(1, 1)"
+  gs_type "SELECT typeof(generate_series) FROM generate_series(1, 1)" \
+  yt_sec "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:02.000000Z', '1s')" \
+  yt_day "SELECT * FROM generate_series('2020-01-01', '2020-01-03', '1d')" \
+  yt_same "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000Z', '1s')" \
+  yt_rev "SELECT * FROM generate_series('2020-01-01T00:00:02.000000Z', '2020-01-01T00:00:00.000000Z', '1s')" \
+  yt_lim0 "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:02.000000Z', '2s') LIMIT 0" \
+  yt_type "SELECT typeof(generate_series) FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000Z', '1s')"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -6756,6 +6762,12 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT * FROM generate_series(1, 4) LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT * FROM generate_series(1, 4) LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(generate_series) FROM generate_series(1, 1)"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:02.000000Z', '1s')"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01', '2020-01-03', '1d')"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000Z', '1s')"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01T00:00:02.000000Z', '2020-01-01T00:00:00.000000Z', '1s')"),
+    (os.environ["DIFF_H1"], "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:02.000000Z', '2s') LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT typeof(generate_series) FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000Z', '1s')"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),

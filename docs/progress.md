@@ -24,15 +24,15 @@ Tests que pasaron:
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
 | qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
-| qdb-sql | 242 ok, incluido `gs_matches_captured_exec` |
+| qdb-sql | 243 ok, incluido `yt_matches_captured_exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
-captured-oracle: 3156 queries match tests/fixtures/h1/expected
+captured-oracle: 3162 queries match tests/fixtures/h1/expected
 captured-oracle: 376 queries match tests/fixtures/h2/expected
-live-reference: 3532 queries matched row counts against http://127.0.0.1:19011/exec
+live-reference: 3538 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
 Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
@@ -51,4 +51,4 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 
 ## Próxima tarea
 
-Añadir `generate_series` de marcas de tiempo como origen de `FROM` y comprobarlo contra `/exec`. La columna se llama `generate_series` y el tipo es `TIMESTAMP`. `generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:02.000000Z', '1s')` devuelve `2020-01-01T00:00:00.000000Z`, `2020-01-01T00:00:01.000000Z` y `2020-01-01T00:00:02.000000Z`. `generate_series('2020-01-01', '2020-01-03', '1d')` devuelve el día 1, el día 2 y el día 3 a medianoche UTC. El mismo instante en los dos extremos con paso `'1s'` devuelve una fila. El extremo final anterior al inicial, con paso `'1s'`, devuelve las mismas tres marcas en orden ascendente. `LIMIT 0` no devuelve filas. `typeof(generate_series)` devuelve `TIMESTAMP`. Dos textos de marca sin paso se rechazan con `inconvertible value: `2020-01-01T00:00:00.000000Z` [STRING -> DOUBLE]`. No abrir WAL en ese paso.
+Ampliar el paso de `generate_series` de marcas de tiempo con `'1h'`, `'1m'` y `'1w'`, y comprobarlo contra `/exec`. La columna sigue llamándose `generate_series` y el tipo es `TIMESTAMP`. `generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T02:00:00.000000Z', '1h')` devuelve las 00:00, las 01:00 y las 02:00. `generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:02:00.000000Z', '1m')` devuelve las 00:00, las 00:01 y las 00:02. `generate_series('2020-01-01', '2020-01-15', '1w')` devuelve el día 1, el día 8 y el día 15 a medianoche UTC. El paso `'1x'` se rechaza con `invalid period [period=1x]`. Un paso `null` dice `step argument must be a non-null constant or bind variable constant`. No abrir WAL en ese paso.

@@ -1,4 +1,4 @@
-use qdb_types::{parse_date_millis, parse_timestamp_micros, Error, Scalar};
+use qdb_types::{parse_date_millis, parse_timestamp_micros, unix_days_from_civil, Error, Scalar};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
@@ -38,6 +38,7 @@ pub struct Query {
 pub enum GenerateSeries {
     Long { start: i64, end: i64, step: i64 },
     Double { start: f64, end: f64, step: f64 },
+    Timestamp { start: i64, end: i64, step: i64 },
 }
 
 /// Inclusive lower bound and exclusive upper bound, as QuestDB stores them
@@ -1656,6 +1657,27 @@ fn generate_series_spec(args: &[ConcatArg]) -> Result<GenerateSeries, Error> {
             series_type_list(args)
         )));
     }
+    if args.len() == 3 {
+        if let (Some(start), Some(end), Some(step)) = (
+            series_clock_arg(&args[0]),
+            series_clock_arg(&args[1]),
+            series_period_arg(&args[2]),
+        ) {
+            if step == 0 {
+                return Err(Error::new("step cannot be zero"));
+            }
+            return Ok(GenerateSeries::Timestamp { start, end, step });
+        }
+    }
+    if args.len() == 2 {
+        if let ConcatArg::Literal(Scalar::Text(text)) = &args[0] {
+            if series_clock(text).is_some() {
+                return Err(Error::new(format!(
+                    "inconvertible value: `{text}` [STRING -> DOUBLE]"
+                )));
+            }
+        }
+    }
     if args.iter().all(series_long_ok) {
         let start = series_i64(&args[0], "start")?;
         let end = series_i64(&args[1], "end")?;
@@ -1686,6 +1708,57 @@ fn generate_series_spec(args: &[ConcatArg]) -> Result<GenerateSeries, Error> {
         "there is no matching function `generate_series` with the argument types: ({})",
         series_type_list(args)
     )))
+}
+
+fn series_clock_arg(arg: &ConcatArg) -> Option<i64> {
+    match arg {
+        ConcatArg::Literal(Scalar::Text(text)) => series_clock(text),
+        _ => None,
+    }
+}
+
+fn series_clock(text: &str) -> Option<i64> {
+    if let Some(micros) = parse_timestamp_micros(text) {
+        return Some(micros);
+    }
+    if text.len() != 10 {
+        return None;
+    }
+    let mut parts = text.split('-');
+    let year: i32 = parts.next()?.parse().ok()?;
+    let month: u32 = parts.next()?.parse().ok()?;
+    let day: u32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    unix_days_from_civil(year, month, day)?.checked_mul(86_400_000_000)
+}
+
+fn series_period_arg(arg: &ConcatArg) -> Option<i64> {
+    match arg {
+        ConcatArg::Literal(Scalar::Text(text)) => series_period(text),
+        _ => None,
+    }
+}
+
+fn series_period(text: &str) -> Option<i64> {
+    let (sign, rest) = if let Some(rest) = text.strip_prefix('-') {
+        (-1, rest)
+    } else {
+        (1, text)
+    };
+    let unit = rest.chars().last()?;
+    let digits = &rest[..rest.len() - unit.len_utf8()];
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let count: i64 = digits.parse().ok()?;
+    let width = match unit {
+        's' => 1_000_000,
+        'd' => 86_400_000_000,
+        _ => return None,
+    };
+    count.checked_mul(width)?.checked_mul(sign)
 }
 
 fn series_type_list(args: &[ConcatArg]) -> String {

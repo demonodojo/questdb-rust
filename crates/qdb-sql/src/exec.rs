@@ -23,6 +23,7 @@ use crate::parse::{
 use qdb_storage::{open_table, ColumnMeta, Table, TableMeta, TxnHeader};
 use qdb_types::{
     format_f64, format_timestamp_micros, Error, Scalar, PARTITION_BY_NONE, TAG_DOUBLE, TAG_LONG,
+    TAG_TIMESTAMP,
 };
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -55,6 +56,16 @@ fn generate_series_table(series: &GenerateSeries) -> Result<Table, Error> {
         }
         GenerateSeries::Double { start, end, step } => {
             (TAG_DOUBLE, double_series_values(*start, *end, *step)?)
+        }
+        GenerateSeries::Timestamp { start, end, step } => {
+            let values = long_series_values(*start, *end, *step)?
+                .into_iter()
+                .map(|value| match value {
+                    Scalar::Long(micros) => Scalar::Timestamp(micros),
+                    other => other,
+                })
+                .collect();
+            (TAG_TIMESTAMP, values)
         }
     };
     cursor_table("generate_series", "generate_series", tag, values)
@@ -41527,6 +41538,53 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn yt_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:02.000000Z', '1s')",
+                "expected/yt_sec.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('2020-01-01', '2020-01-03', '1d')",
+                "expected/yt_day.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000Z', '1s')",
+                "expected/yt_same.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('2020-01-01T00:00:02.000000Z', '2020-01-01T00:00:00.000000Z', '1s')",
+                "expected/yt_rev.tsv",
+            ),
+            (
+                "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:02.000000Z', '2s') LIMIT 0",
+                "expected/yt_lim0.tsv",
+            ),
+            (
+                "SELECT typeof(generate_series) FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000Z', '1s')",
+                "expected/yt_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(
+            &sensors,
+            "SELECT * FROM generate_series('2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:02.000000Z')",
+        )
+        .unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `2020-01-01T00:00:00.000000Z` [STRING -> DOUBLE]"),
             "{}",
             err.message
         );
