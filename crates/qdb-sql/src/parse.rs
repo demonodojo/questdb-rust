@@ -1341,6 +1341,7 @@ fn strip_alias_refs(
     columns: &mut SelectList,
     filter: &mut Option<Filter>,
     order_by: &mut [OrderBy],
+    group_by: &mut Option<String>,
     alias: &str,
 ) {
     match columns {
@@ -1356,13 +1357,19 @@ fn strip_alias_refs(
                 *name = strip_table_alias(name, alias);
             }
         }
-        SelectList::Star | SelectList::Aggregate(_) | SelectList::Grouped(_) => {}
+        SelectList::Grouped(grouped) => {
+            grouped.key = strip_table_alias(&grouped.key, alias);
+        }
+        SelectList::Star | SelectList::Aggregate(_) => {}
     }
     if let Some(filter) = filter {
         filter.column = strip_table_alias(&filter.column, alias);
     }
     for order in order_by.iter_mut() {
         order.column = strip_table_alias(&order.column, alias);
+    }
+    if let Some(name) = group_by {
+        *name = strip_table_alias(name, alias);
     }
 }
 
@@ -1420,8 +1427,13 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
     let mut group_by = None;
     if parser.eat_keyword("group") {
         parser.expect_keyword("by")?;
-        let column = parser.ident()?;
+        let mut column = parser.ident()?;
         parser.skip();
+        if parser.eat(b'.') {
+            column.push('.');
+            column.push_str(&parser.ident()?);
+            parser.skip();
+        }
         if parser.peek() == Some(b',') {
             return Err(Error::new("unsupported: multiple GROUP BY columns"));
         }
@@ -1705,7 +1717,13 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
     }
     if join.is_empty() {
         if let Some(alias) = &table_alias {
-            strip_alias_refs(&mut columns, &mut filter, &mut order_by, alias);
+            strip_alias_refs(
+                &mut columns,
+                &mut filter,
+                &mut order_by,
+                &mut group_by,
+                alias,
+            );
         }
     } else if let Some(alias) = table_alias {
         join[0].left_alias = alias;

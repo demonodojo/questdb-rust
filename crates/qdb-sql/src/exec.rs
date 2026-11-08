@@ -41858,6 +41858,26 @@ mod tests {
     }
 
     #[test]
+    fn gy_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT location, count() FROM sensors AS s GROUP BY s.location ORDER BY location",
+                "expected/gy_loc.tsv",
+            ),
+            (
+                "SELECT s.location, count() FROM sensors AS s GROUP BY s.location ORDER BY s.location",
+                "expected/gy_qual.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
     fn az_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let cases = [
