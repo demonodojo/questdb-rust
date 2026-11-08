@@ -24,15 +24,15 @@ Tests que pasaron:
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
 | qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
-| qdb-sql | 262 ok, incluido `lx_matches_captured_exec` |
+| qdb-sql | 263 ok, incluido `sv_matches_captured_exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
-captured-oracle: 3202 queries match tests/fixtures/h1/expected
+captured-oracle: 3203 queries match tests/fixtures/h1/expected
 captured-oracle: 376 queries match tests/fixtures/h2/expected
-live-reference: 3578 queries matched row counts against http://127.0.0.1:19011/exec
+live-reference: 3579 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
 Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
@@ -51,4 +51,4 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 
 ## Próxima tarea
 
-Añadir `substring` de una columna cualificada y comprobarlo contra `/exec`. `SELECT substring(s.note, 1, 1) FROM sensors AS s` devuelve la columna `substring(s.note, 1, 1)`, cuatro filas: `a`, `NULL`, cadena vacía y `β`. No abrir WAL en ese paso.
+Añadir `trim` de una columna cualificada y comprobarlo contra `/exec`. `SELECT trim(s.note) FROM sensors AS s` devuelve la columna `trim(s.note)`, cuatro filas: `alpha`, `NULL`, cadena vacía y `βeta`. No abrir WAL en ese paso.

@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `substring` cualificado
+
+`substring(s.note, 1, 1)` conserva la etiqueta `substring(s.note, 1, 1)` y lee `note`. Las cuatro filas son `a`, `NULL`, cadena vacía y `β`. Se contrastó con `/exec`.
+
 ## 2026-11-08 — `left` cualificado
 
 `left(s.note, 1)` conserva la etiqueta `left(s.note, 1)` y lee `note`. Las cuatro filas son `a`, `NULL`, cadena vacía y `β`. Se contrastó con `/exec`.
