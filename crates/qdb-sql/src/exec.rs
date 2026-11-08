@@ -11,9 +11,9 @@ use crate::parse::{
     RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, Sha1Expr,
     Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr,
     SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr,
-    TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr,
-    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
-    WeekOfYearExpr, WmidExpr, YearExpr,
+    TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr,
+    ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr,
+    TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -253,6 +253,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Nanos { label, .. }
             | ResolvedProj::ToUtc { label, .. }
             | ResolvedProj::ToTimezone { label, .. }
+            | ResolvedProj::ToPgDate { label, .. }
             | ResolvedProj::DayOfWeek { label, .. }
             | ResolvedProj::WeekOfYear { label, .. }
             | ResolvedProj::DateTrunc { label, .. }
@@ -327,6 +328,13 @@ impl OrderKey {
             Self::Column(_, _, descending) | Self::Expr(_, descending) => *descending,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PgDateInput {
+    Null,
+    Millis(i64),
+    Column(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -543,6 +551,10 @@ enum ResolvedProj {
         label: String,
         index: usize,
         zone: UtcZone,
+    },
+    ToPgDate {
+        label: String,
+        value: PgDateInput,
     },
     DayOfWeek {
         label: String,
@@ -896,6 +908,7 @@ impl ResolvedProj {
             | Self::Nanos { label, .. }
             | Self::ToUtc { label, .. }
             | Self::ToTimezone { label, .. }
+            | Self::ToPgDate { label, .. }
             | Self::DayOfWeek { label, .. }
             | Self::WeekOfYear { label, .. }
             | Self::DateTrunc { label, .. }
@@ -989,7 +1002,7 @@ impl ResolvedProj {
             | Self::And { .. } => qdb_types::TAG_BOOLEAN,
             Self::DayOfWeekSundayFirst { .. } => qdb_types::TAG_INT,
             Self::ToTimestamp { .. } => qdb_types::TAG_TIMESTAMP,
-            Self::ToDate { .. } => qdb_types::TAG_DATE,
+            Self::ToDate { .. } | Self::ToPgDate { .. } => qdb_types::TAG_DATE,
             Self::Md5 { .. } | Self::Sha1 { .. } | Self::Sha256 { .. } => qdb_types::TAG_VARCHAR,
             Self::Extract { part, .. } => match part {
                 ExtractPart::Epoch => qdb_types::TAG_LONG,
@@ -1109,6 +1122,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Nanos(expr) => resolve_nanos(table, expr),
         Proj::ToUtc(expr) => resolve_to_utc(table, expr),
         Proj::ToTimezone(expr) => resolve_to_timezone(table, expr),
+        Proj::ToPgDate(expr) => resolve_to_pg_date(table, expr),
         Proj::DayOfWeek(expr) => resolve_day_of_week(table, expr),
         Proj::WeekOfYear(expr) => resolve_week_of_year(table, expr),
         Proj::DateTrunc(expr) => resolve_date_trunc(table, expr),
@@ -4713,6 +4727,100 @@ fn resolve_to_timezone(table: &Table, expr: &ToTimezoneExpr) -> Result<ResolvedP
     })
 }
 
+fn resolve_to_pg_date(table: &Table, expr: &ToPgDateExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.is_empty() {
+        return Err(Error::new(
+            "function `to_pg_date` requires arguments".to_string(),
+        ));
+    }
+    if expr.args.len() != 1 {
+        return Err(Error::new(pg_date_type_message(table, &expr.args)?));
+    }
+    Ok(ResolvedProj::ToPgDate {
+        label: expr.label.clone(),
+        value: pg_date_input(table, &expr.args[0])?,
+    })
+}
+
+fn pg_date_type_message(table: &Table, args: &[ConcatArg]) -> Result<String, Error> {
+    Ok(format!(
+        "there is no matching function `to_pg_date` with the argument types: ({})",
+        timestamp_floor_types(table, args)?
+    ))
+}
+
+fn pg_date_input(table: &Table, arg: &ConcatArg) -> Result<PgDateInput, Error> {
+    match arg {
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            match table.meta.columns[index].tag {
+                qdb_types::TAG_STRING
+                | qdb_types::TAG_VARCHAR
+                | qdb_types::TAG_SYMBOL
+                | qdb_types::TAG_CHAR => Ok(PgDateInput::Column(index)),
+                _ => Err(Error::new(pg_date_type_message(
+                    table,
+                    std::slice::from_ref(arg),
+                )?)),
+            }
+        }
+        ConcatArg::Literal(Scalar::Null) => Ok(PgDateInput::Null),
+        ConcatArg::Literal(Scalar::Text(text)) => Ok(pg_date_parsed(text)),
+        ConcatArg::Literal(Scalar::Char(unit)) => {
+            Ok(pg_date_parsed(&scalar_text(&Scalar::Char(*unit))))
+        }
+        _ => Err(Error::new(pg_date_type_message(
+            table,
+            std::slice::from_ref(arg),
+        )?)),
+    }
+}
+
+fn pg_date_parsed(text: &str) -> PgDateInput {
+    pg_date_millis(text)
+        .map(PgDateInput::Millis)
+        .unwrap_or(PgDateInput::Null)
+}
+
+fn pg_date_millis(text: &str) -> Option<i64> {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() && bytes[index].is_ascii_digit() {
+        index += 1;
+    }
+    if index == 0 || index + 6 != bytes.len() || bytes[index] != b'-' || bytes[index + 3] != b'-' {
+        return None;
+    }
+    let year: i32 = text[..index].parse().ok()?;
+    let month: u32 = text[index + 1..index + 3].parse().ok()?;
+    let day: u32 = text[index + 4..index + 6].parse().ok()?;
+    if month == 0 || month > 12 || day == 0 || day > dateadd_days_in_month(year, month) {
+        return None;
+    }
+    let days = qdb_types::unix_days_from_civil(year, month, day)?;
+    Some(days.wrapping_mul(86_400_000))
+}
+
+fn to_pg_date_scalar(table: &Table, row: usize, value: &PgDateInput) -> Scalar {
+    let millis = match value {
+        PgDateInput::Null => return Scalar::Null,
+        PgDateInput::Millis(millis) => *millis,
+        PgDateInput::Column(index) => {
+            let text = match &table.columns[*index][row] {
+                Scalar::Null => return Scalar::Null,
+                other => scalar_text(other),
+            };
+            match pg_date_millis(&text) {
+                Some(millis) => millis,
+                None => return Scalar::Null,
+            }
+        }
+    };
+    Scalar::Date(millis)
+}
+
 fn to_timezone_scalar(table: &Table, row: usize, index: usize, zone: UtcZone) -> Scalar {
     let local = to_zone_local(table, row, index);
     let shifted = local.wrapping_add(utc_offset(zone, local));
@@ -8107,6 +8215,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::ToTimezone { index, zone, .. } => {
             to_timezone_scalar(table, row, *index, *zone)
         }
+        ResolvedProj::ToPgDate { value, .. } => to_pg_date_scalar(table, row, value),
         ResolvedProj::Micros { value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Int((dateadd_parts(micros).3 % 1_000) as i32),
             None => Scalar::Null,
@@ -39188,6 +39297,160 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn pg_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT to_pg_date('2020-01-02') FROM sensors LIMIT 1",
+                "expected/pg_lit.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT TO_PG_DATE('2020-01-02') FROM sensors LIMIT 1",
+                "expected/pg_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date('1970-01-01') FROM sensors LIMIT 1",
+                "expected/pg_epoch.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date('1969-12-31') FROM sensors LIMIT 1",
+                "expected/pg_prev.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date('2020-06-15') FROM sensors LIMIT 1",
+                "expected/pg_june.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date('2020-01-02 03:04:05') FROM sensors LIMIT 1",
+                "expected/pg_time.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1",
+                "expected/pg_iso.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date('') FROM sensors LIMIT 1",
+                "expected/pg_empty.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date('nope') FROM sensors LIMIT 1",
+                "expected/pg_nope.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date(null) FROM sensors LIMIT 1",
+                "expected/pg_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date(note) FROM sensors",
+                "expected/pg_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date(ch) FROM sensors",
+                "expected/pg_ch.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date(location) FROM sensors",
+                "expected/pg_loc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date(tag) FROM sensors",
+                "expected/pg_tag.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date(note) FROM sensors WHERE id = 1",
+                "expected/pg_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date(note) FROM sensors WHERE id > 100",
+                "expected/pg_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_pg_date(note) FROM sensors LIMIT 0",
+                "expected/pg_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT to_pg_date(note) FROM days",
+                "expected/pg_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT to_pg_date() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `to_pg_date` requires arguments"),
+            "{}",
+            err.message
+        );
+        let rejected = [
+            (
+                "SELECT to_pg_date(ts) FROM sensors",
+                "there is no matching function `to_pg_date` with the argument types: (TIMESTAMP)",
+            ),
+            (
+                "SELECT to_pg_date(day) FROM sensors",
+                "there is no matching function `to_pg_date` with the argument types: (DATE)",
+            ),
+            (
+                "SELECT to_pg_date(id) FROM sensors",
+                "there is no matching function `to_pg_date` with the argument types: (LONG)",
+            ),
+            (
+                "SELECT to_pg_date(flags) FROM sensors",
+                "there is no matching function `to_pg_date` with the argument types: (INT)",
+            ),
+            (
+                "SELECT to_pg_date(ok) FROM sensors",
+                "there is no matching function `to_pg_date` with the argument types: (BOOLEAN)",
+            ),
+            (
+                "SELECT to_pg_date(reading) FROM sensors",
+                "there is no matching function `to_pg_date` with the argument types: (DOUBLE)",
+            ),
+            (
+                "SELECT to_pg_date(b) FROM sensors",
+                "there is no matching function `to_pg_date` with the argument types: (BYTE)",
+            ),
+            (
+                "SELECT to_pg_date(ts, 1) FROM sensors",
+                "there is no matching function `to_pg_date` with the argument types: (TIMESTAMP, INT)",
+            ),
+        ];
+        for (sql, message) in rejected {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(message), "{}", err.message);
+        }
+        let err = execute(&sensors, "SELECT to_pg_date(missing) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );

@@ -2818,7 +2818,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tz_id "SELECT to_timezone(id, 'UTC') FROM sensors" \
   tz_flags "SELECT to_timezone(flags, 'UTC') FROM sensors" \
   tz_none "SELECT to_timezone(ts, 'UTC') FROM sensors WHERE id > 100" \
-  tz_lim0 "SELECT to_timezone(ts, 'UTC') FROM sensors LIMIT 0"
+  tz_lim0 "SELECT to_timezone(ts, 'UTC') FROM sensors LIMIT 0" \
+  pg_lit "SELECT to_pg_date('2020-01-02') FROM sensors LIMIT 1" \
+  pg_case "SELECT TO_PG_DATE('2020-01-02') FROM sensors LIMIT 1" \
+  pg_epoch "SELECT to_pg_date('1970-01-01') FROM sensors LIMIT 1" \
+  pg_prev "SELECT to_pg_date('1969-12-31') FROM sensors LIMIT 1" \
+  pg_june "SELECT to_pg_date('2020-06-15') FROM sensors LIMIT 1" \
+  pg_time "SELECT to_pg_date('2020-01-02 03:04:05') FROM sensors LIMIT 1" \
+  pg_iso "SELECT to_pg_date('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
+  pg_empty "SELECT to_pg_date('') FROM sensors LIMIT 1" \
+  pg_nope "SELECT to_pg_date('nope') FROM sensors LIMIT 1" \
+  pg_null "SELECT to_pg_date(null) FROM sensors LIMIT 1" \
+  pg_note "SELECT to_pg_date(note) FROM sensors" \
+  pg_ch "SELECT to_pg_date(ch) FROM sensors" \
+  pg_loc "SELECT to_pg_date(location) FROM sensors" \
+  pg_tag "SELECT to_pg_date(tag) FROM sensors" \
+  pg_one "SELECT to_pg_date(note) FROM sensors WHERE id = 1" \
+  pg_none "SELECT to_pg_date(note) FROM sensors WHERE id > 100" \
+  pg_lim0 "SELECT to_pg_date(note) FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3164,7 +3181,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   na_days "SELECT nanos(ts) FROM days" \
   na_days_id "SELECT nanos(id) FROM days" \
   uc_days "SELECT to_utc(ts, 'UTC') FROM days" \
-  tz_days "SELECT to_timezone(ts, 'UTC') FROM days"
+  tz_days "SELECT to_timezone(ts, 'UTC') FROM days" \
+  pg_days "SELECT to_pg_date(note) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5930,6 +5948,23 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_timezone(flags, 'UTC') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT to_timezone(ts, 'UTC') FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT to_timezone(ts, 'UTC') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date('2020-01-02') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT TO_PG_DATE('2020-01-02') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date('1970-01-01') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date('1969-12-31') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date('2020-06-15') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date('2020-01-02 03:04:05') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date('') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date('nope') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date(ch) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date(tag) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date(note) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date(note) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT to_pg_date(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6274,6 +6309,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT nanos(id) FROM days"),
     (os.environ["DIFF_H2"], "SELECT to_utc(ts, 'UTC') FROM days"),
     (os.environ["DIFF_H2"], "SELECT to_timezone(ts, 'UTC') FROM days"),
+    (os.environ["DIFF_H2"], "SELECT to_pg_date(note) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
