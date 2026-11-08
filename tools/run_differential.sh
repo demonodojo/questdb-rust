@@ -3105,7 +3105,13 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   th_none "SELECT to_char(from_base64('YWI=')) FROM sensors WHERE id > 100" \
   th_lim0 "SELECT to_char(from_base64('YWI=')) FROM sensors LIMIT 0" \
   th_16 "SELECT to_char(from_base64('MDEyMzQ1Njc4OWFiY2RlZg==')) FROM sensors LIMIT 1" \
-  th_type "SELECT typeof(to_char(from_base64('YWI='))) FROM sensors LIMIT 1"
+  th_type "SELECT typeof(to_char(from_base64('YWI='))) FROM sensors LIMIT 1" \
+  pv_all "SELECT pg_catalog.version() FROM sensors" \
+  pv_case "SELECT pg_catalog.VERSION() FROM sensors LIMIT 1" \
+  pv_one "SELECT pg_catalog.version() FROM sensors WHERE id = 1" \
+  pv_none "SELECT pg_catalog.version() FROM sensors WHERE id > 100" \
+  pv_lim0 "SELECT pg_catalog.version() FROM sensors LIMIT 0" \
+  pv_type "SELECT typeof(pg_catalog.version()) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3474,7 +3480,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   mg_days "SELECT make_geohash(2.0, 41.0, 20) FROM days" \
   uu_days "SELECT to_uuid(1, 2) FROM days" \
   je_days "SELECT json_extract('{\"a\":1}', '$.a') FROM days" \
-  th_days "SELECT to_char(from_base64('YWI=')) FROM days"
+  th_days "SELECT to_char(from_base64('YWI=')) FROM days" \
+  pv_days "SELECT pg_catalog.version() FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6527,6 +6534,12 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_char(from_base64('YWI=')) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT to_char(from_base64('MDEyMzQ1Njc4OWFiY2RlZg==')) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT typeof(to_char(from_base64('YWI='))) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.version() FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.VERSION() FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.version() FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.version() FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.version() FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.version()) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6894,6 +6907,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT to_uuid(1, 2) FROM days"),
     (os.environ["DIFF_H2"], "SELECT json_extract('{\"a\":1}', '$.a') FROM days"),
     (os.environ["DIFF_H2"], "SELECT to_char(from_base64('YWI=')) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT pg_catalog.version() FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -1676,6 +1676,21 @@ struct Parser<'a> {
     pos: usize,
 }
 
+fn qualified_ident_len(bytes: &[u8]) -> Option<usize> {
+    let first = *bytes.first()?;
+    if !first.is_ascii_alphabetic() && first != b'_' {
+        return None;
+    }
+    let mut index = 1;
+    while bytes
+        .get(index)
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+    {
+        index += 1;
+    }
+    Some(index)
+}
+
 impl<'a> Parser<'a> {
     fn rest(&self) -> &str {
         std::str::from_utf8(&self.src[self.pos..]).unwrap_or("")
@@ -2608,16 +2623,67 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_version_call(&self) -> bool {
-        self.starts_named_call("version")
+        self.starts_named_call("version") || self.starts_qualified_call("pg_catalog", "version")
     }
 
     fn parse_version(&mut self) -> Result<VersionExpr, Error> {
-        let name = self.ident_spelling()?;
+        let first = self.ident_spelling()?;
+        self.skip();
+        let name = if self.eat(b'.') {
+            self.skip();
+            let second = self.ident_spelling()?;
+            format!("{first}.{second}")
+        } else {
+            first
+        };
         let (labels, args) = self.parse_call_args(&name, true)?;
         Ok(VersionExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
+    }
+
+    fn starts_qualified_call(&self, schema: &str, name: &str) -> bool {
+        let bytes = &self.src[self.pos..];
+        let Some(schema_len) = qualified_ident_len(bytes) else {
+            return false;
+        };
+        let schema_text = std::str::from_utf8(&bytes[..schema_len]).unwrap_or("");
+        if !schema_text.eq_ignore_ascii_case(schema) {
+            return false;
+        }
+        let mut index = schema_len;
+        while bytes
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            index += 1;
+        }
+        if bytes.get(index) != Some(&b'.') {
+            return false;
+        }
+        index += 1;
+        while bytes
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            index += 1;
+        }
+        let Some(name_len) = qualified_ident_len(&bytes[index..]) else {
+            return false;
+        };
+        let name_text = std::str::from_utf8(&bytes[index..index + name_len]).unwrap_or("");
+        if !name_text.eq_ignore_ascii_case(name) {
+            return false;
+        }
+        index += name_len;
+        while bytes
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            index += 1;
+        }
+        bytes.get(index) == Some(&b'(')
     }
 
     fn starts_pg_is_in_recovery_call(&self) -> bool {
@@ -4097,6 +4163,37 @@ impl<'a> Parser<'a> {
                 to_char: None,
             });
         }
+        if self.argument_is_version() {
+            self.skip();
+            self.eat(b'(');
+            self.skip();
+            let inner = self.parse_version()?;
+            self.skip();
+            if !self.eat(b')') {
+                return Err(Error::new(
+                    "unsupported: expected ')' after typeof".to_string(),
+                ));
+            }
+            if !inner.args.is_empty() {
+                let reported = if inner.label.to_ascii_lowercase().contains("pg_catalog.") {
+                    "pg_catalog.version"
+                } else {
+                    "version"
+                };
+                return Err(Error::new(format!(
+                    "wrong number of arguments for function `{reported}`; expected: 0, provided: {}",
+                    inner.args.len()
+                )));
+            }
+            return Ok(TypeofExpr {
+                label: format!("{name}({})", inner.label),
+                args: vec![ConcatArg::Literal(Scalar::Text("version".to_string()))],
+                geohash: None,
+                uuid: None,
+                json: None,
+                to_char: None,
+            });
+        }
         if self.argument_is_to_char() {
             self.skip();
             self.eat(b'(');
@@ -4129,6 +4226,16 @@ impl<'a> Parser<'a> {
             json: None,
             to_char: None,
         })
+    }
+
+    fn argument_is_version(&mut self) -> bool {
+        let saved = self.pos;
+        self.skip();
+        let open = self.eat(b'(');
+        self.skip();
+        let nested = open && self.starts_version_call();
+        self.pos = saved;
+        nested
     }
 
     fn argument_is_to_char(&mut self) -> bool {

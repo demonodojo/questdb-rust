@@ -3161,8 +3161,13 @@ fn resolve_pg_is_in_recovery(expr: &PgIsInRecoveryExpr) -> Result<ResolvedProj, 
 
 fn resolve_version(expr: &VersionExpr) -> Result<ResolvedProj, Error> {
     if !expr.args.is_empty() {
+        let name = if expr.label.to_ascii_lowercase().contains("pg_catalog.") {
+            "pg_catalog.version"
+        } else {
+            "version"
+        };
         return Err(Error::new(format!(
-            "wrong number of arguments for function `version`; expected: 0, provided: {}",
+            "wrong number of arguments for function `{name}`; expected: 0, provided: {}",
             expr.args.len()
         )));
     }
@@ -41145,6 +41150,62 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn pv_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let text = "PostgreSQL 12.3, compiled by Visual C++ build 1914, 64-bit, QuestDB";
+        let cases = [
+            (
+                "SELECT pg_catalog.version() FROM sensors",
+                "expected/pv_all.tsv",
+            ),
+            (
+                "SELECT pg_catalog.VERSION() FROM sensors LIMIT 1",
+                "expected/pv_case.tsv",
+            ),
+            (
+                "SELECT pg_catalog.version() FROM sensors WHERE id = 1",
+                "expected/pv_one.tsv",
+            ),
+            (
+                "SELECT pg_catalog.version() FROM sensors WHERE id > 100",
+                "expected/pv_none.tsv",
+            ),
+            (
+                "SELECT pg_catalog.version() FROM sensors LIMIT 0",
+                "expected/pv_lim0.tsv",
+            ),
+            (
+                "SELECT typeof(pg_catalog.version()) FROM sensors LIMIT 1",
+                "expected/pv_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+            if sql.contains("FROM sensors")
+                && !sql.contains("WHERE")
+                && !sql.contains("LIMIT")
+                && !sql.contains("typeof")
+            {
+                assert!(render_tsv(&result).contains(text), "{sql}");
+            }
+        }
+        let result = execute(&days, "SELECT pg_catalog.version() FROM days").unwrap();
+        let expected = std::fs::read_to_string(days.join("expected/pv_days.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let err = execute(&sensors, "SELECT pg_catalog.version(1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `pg_catalog.version`; expected: 0, provided: 1"
+            ),
             "{}",
             err.message
         );
