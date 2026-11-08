@@ -2138,12 +2138,17 @@ impl<'a> Parser<'a> {
         } else {
             self.eat_keyword("right")
         };
-        let inner = if left_outer || right_outer {
+        let full = if left_outer || right_outer {
+            false
+        } else {
+            self.eat_keyword("full")
+        };
+        let inner = if left_outer || right_outer || full {
             false
         } else {
             self.eat_keyword("inner")
         };
-        let joined = if left_outer || right_outer || inner {
+        let joined = if left_outer || right_outer || full || inner {
             self.expect_keyword("join")?;
             true
         } else {
@@ -2177,14 +2182,14 @@ impl<'a> Parser<'a> {
                 .next()
                 .unwrap_or(&right_name)
                 .to_string(),
-            left_outer,
-            right_outer,
+            left_outer: left_outer || full,
+            right_outer: right_outer || full,
         }))
     }
 
     fn clause_keyword_ahead(&mut self) -> bool {
         [
-            "where", "group", "order", "limit", "join", "inner", "left", "right",
+            "where", "group", "order", "limit", "join", "inner", "left", "right", "full",
         ]
         .into_iter()
         .any(|word| {

@@ -3244,7 +3244,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   lf_note "SELECT a.id, b.note FROM sensors a LEFT JOIN days b ON a.id = b.id" \
   lf_self "SELECT a.id, b.id FROM sensors a LEFT JOIN sensors b ON a.id = b.id" \
   rj_id "SELECT a.id, b.id FROM sensors a RIGHT JOIN days b ON a.id = b.id" \
-  rj_note "SELECT a.id, b.note FROM sensors a RIGHT JOIN days b ON a.id = b.id"
+  rj_note "SELECT a.id, b.note FROM sensors a RIGHT JOIN days b ON a.id = b.id" \
+  fj_id "SELECT a.id, b.id FROM sensors a FULL JOIN days b ON a.id = b.id" \
+  fj_note "SELECT a.id, b.note FROM sensors a FULL JOIN days b ON a.id = b.id"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -6814,6 +6816,8 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT a.id, b.id FROM sensors a LEFT JOIN sensors b ON a.id = b.id"),
     (os.environ["DIFF_H1"], "SELECT a.id, b.id FROM sensors a RIGHT JOIN days b ON a.id = b.id"),
     (os.environ["DIFF_H1"], "SELECT a.id, b.note FROM sensors a RIGHT JOIN days b ON a.id = b.id"),
+    (os.environ["DIFF_H1"], "SELECT a.id, b.id FROM sensors a FULL JOIN days b ON a.id = b.id"),
+    (os.environ["DIFF_H1"], "SELECT a.id, b.note FROM sensors a FULL JOIN days b ON a.id = b.id"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
