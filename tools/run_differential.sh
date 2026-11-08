@@ -3165,7 +3165,18 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ir_one "SELECT pg_catalog.pg_is_in_recovery() FROM sensors WHERE id = 1" \
   ir_none "SELECT pg_catalog.pg_is_in_recovery() FROM sensors WHERE id > 100" \
   ir_lim0 "SELECT pg_catalog.pg_is_in_recovery() FROM sensors LIMIT 0" \
-  ir_type "SELECT typeof(pg_catalog.pg_is_in_recovery()) FROM sensors LIMIT 1"
+  ir_type "SELECT typeof(pg_catalog.pg_is_in_recovery()) FROM sensors LIMIT 1" \
+  kf_all "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors" \
+  kf_zero "SELECT pg_catalog.pg_get_partkeydef(0) FROM sensors LIMIT 1" \
+  kf_null "SELECT pg_catalog.pg_get_partkeydef(null) FROM sensors LIMIT 1" \
+  kf_neg "SELECT pg_catalog.pg_get_partkeydef(-1) FROM sensors LIMIT 1" \
+  kf_case "SELECT pg_catalog.PG_GET_PARTKEYDEF(1) FROM sensors LIMIT 1" \
+  kf_str "SELECT pg_catalog.pg_get_partkeydef('2') FROM sensors LIMIT 1" \
+  kf_note "SELECT pg_catalog.pg_get_partkeydef(note) FROM sensors LIMIT 1" \
+  kf_one "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors WHERE id = 1" \
+  kf_none "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors WHERE id > 100" \
+  kf_lim0 "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors LIMIT 0" \
+  kf_type "SELECT typeof(pg_catalog.pg_get_partkeydef(1)) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3541,7 +3552,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ag_days "SELECT pg_catalog.age(1) FROM days" \
   qs_days "SELECT pg_catalog.current_schema() FROM days" \
   qb_days "SELECT pg_catalog.current_database() FROM days" \
-  ir_days "SELECT pg_catalog.pg_is_in_recovery() FROM days"
+  ir_days "SELECT pg_catalog.pg_is_in_recovery() FROM days" \
+  kf_days "SELECT pg_catalog.pg_get_partkeydef(1) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6654,6 +6666,17 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_is_in_recovery() FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_is_in_recovery() FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.pg_is_in_recovery()) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.PG_GET_PARTKEYDEF(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef('2') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(note) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.pg_get_partkeydef(1)) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -7028,6 +7051,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT pg_catalog.current_schema() FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_catalog.current_database() FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_catalog.pg_is_in_recovery() FROM days"),
+    (os.environ["DIFF_H2"], "SELECT pg_catalog.pg_get_partkeydef(1) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

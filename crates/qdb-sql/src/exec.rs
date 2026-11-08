@@ -1889,9 +1889,14 @@ fn resolve_pg_get_partkeydef(
     table: &Table,
     expr: &PgGetPartKeyDefExpr,
 ) -> Result<ResolvedProj, Error> {
+    let reported = if expr.label.to_ascii_lowercase().contains("pg_catalog.") {
+        "pg_catalog.pg_get_partkeydef"
+    } else {
+        "pg_get_partkeydef"
+    };
     if expr.args.len() != 1 {
         return Err(Error::new(format!(
-            "wrong number of arguments for function `pg_get_partkeydef`; expected: 1, provided: {}",
+            "wrong number of arguments for function `{reported}`; expected: 1, provided: {}",
             expr.args.len()
         )));
     }
@@ -1901,7 +1906,7 @@ fn resolve_pg_get_partkeydef(
         "INT" | "BYTE" | "SHORT" | "CHAR" | "STRING" | "SYMBOL" | "VARCHAR" | "NULL"
     ) {
         return Err(Error::new(format!(
-            "argument type mismatch for function `pg_get_partkeydef` at #1 expected: INT, actual: {actual}"
+            "argument type mismatch for function `{reported}` at #1 expected: INT, actual: {actual}"
         )));
     }
     Ok(ResolvedProj::PgGetPartKeyDef {
@@ -4462,6 +4467,18 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
         return Ok(ResolvedProj::Typeof {
             label: expr.label.clone(),
             name: "BOOLEAN".to_string(),
+            result_tag: qdb_types::TAG_STRING,
+        });
+    }
+    if lowered.contains("pg_get_partkeydef(") {
+        let inner = PgGetPartKeyDefExpr {
+            label: expr.label.clone(),
+            args: expr.args.clone(),
+        };
+        resolve_pg_get_partkeydef(table, &inner)?;
+        return Ok(ResolvedProj::Typeof {
+            label: expr.label.clone(),
+            name: "STRING".to_string(),
             result_tag: qdb_types::TAG_STRING,
         });
     }
@@ -41356,6 +41373,96 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn kf_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors",
+                "expected/kf_all.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(0) FROM sensors LIMIT 1",
+                "expected/kf_zero.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(null) FROM sensors LIMIT 1",
+                "expected/kf_null.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(-1) FROM sensors LIMIT 1",
+                "expected/kf_neg.tsv",
+            ),
+            (
+                "SELECT pg_catalog.PG_GET_PARTKEYDEF(1) FROM sensors LIMIT 1",
+                "expected/kf_case.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef('2') FROM sensors LIMIT 1",
+                "expected/kf_str.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(note) FROM sensors LIMIT 1",
+                "expected/kf_note.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors WHERE id = 1",
+                "expected/kf_one.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors WHERE id > 100",
+                "expected/kf_none.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors LIMIT 0",
+                "expected/kf_lim0.tsv",
+            ),
+            (
+                "SELECT typeof(pg_catalog.pg_get_partkeydef(1)) FROM sensors LIMIT 1",
+                "expected/kf_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let result = execute(&days, "SELECT pg_catalog.pg_get_partkeydef(1) FROM days").unwrap();
+        let expected = std::fs::read_to_string(days.join("expected/kf_days.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let errors = [
+            (
+                "SELECT pg_catalog.pg_get_partkeydef() FROM sensors",
+                "function `pg_catalog.pg_get_partkeydef` requires arguments: pg_catalog.pg_get_partkeydef(INT)",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(1, 2) FROM sensors",
+                "wrong number of arguments for function `pg_catalog.pg_get_partkeydef`; expected: 1, provided: 2",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(id) FROM sensors",
+                "argument type mismatch for function `pg_catalog.pg_get_partkeydef` at #1 expected: INT, actual: LONG",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(ok) FROM sensors",
+                "argument type mismatch for function `pg_catalog.pg_get_partkeydef` at #1 expected: INT, actual: BOOLEAN",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(1.5) FROM sensors",
+                "argument type mismatch for function `pg_catalog.pg_get_partkeydef` at #1 expected: INT, actual: DOUBLE",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(missing) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in errors {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]
