@@ -24,15 +24,15 @@ Tests que pasaron:
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
 | qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
-| qdb-sql | 247 ok, incluido `jn_matches_captured_exec` |
+| qdb-sql | 248 ok, incluido `jl_matches_captured_exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
-captured-oracle: 3176 queries match tests/fixtures/h1/expected
+captured-oracle: 3177 queries match tests/fixtures/h1/expected
 captured-oracle: 376 queries match tests/fixtures/h2/expected
-live-reference: 3552 queries matched row counts against http://127.0.0.1:19011/exec
+live-reference: 3553 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
 Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
@@ -51,4 +51,4 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 
 ## Próxima tarea
 
-Ampliar el `JOIN` a una clave con varias coincidencias y comprobarlo contra `/exec`. `SELECT a.location, b.id FROM sensors a JOIN sensors b ON a.location = b.location` devuelve las columnas `location` e `id`, seis filas: `madrid`/`NULL`, `madrid`/`1`, `NULL`/`2`, `madrid`/`NULL`, `madrid`/`1` y `東京`/`-1`. `NULL` casa con `NULL`. No abrir WAL en ese paso.
+Añadir el `JOIN` entre `sensors` y `days` y comprobarlo contra `/exec`. `SELECT a.id, b.id FROM sensors a JOIN days b ON a.location = b.location` devuelve las columnas `id` e `id_2`, seis filas: `1`/`3`, `1`/`1`, `2`/`2`, `NULL`/`3`, `NULL`/`1` y `-1`/`NULL`. `SELECT a.id, b.id FROM sensors a JOIN days b ON a.id = b.id` devuelve `1`/`1`, `2`/`2` y `NULL`/`NULL`. `SELECT a.id, b.note FROM sensors a JOIN days b ON a.id = b.id` devuelve `1`/`alpha`, `2`/`NULL` y `NULL`/`東京`. No abrir WAL en ese paso.

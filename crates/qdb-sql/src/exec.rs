@@ -70,25 +70,50 @@ fn equi_join_table(left: &Table, data_dir: &Path, join: &EquiJoin) -> Result<Tab
         .column_index(&join.right_column)
         .ok_or_else(|| Error::new(format!("Invalid column: {}", join.right_column)))?;
     let left_tag = left.meta.columns[left_index].tag;
+    let right_tag = right.meta.columns[right_index].tag;
+    let mut chains: Vec<(usize, Vec<usize>)> = Vec::new();
+    for row in 0..right.row_count() {
+        let key = &right.columns[right_index][row];
+        let mut found = None;
+        for (index, (head, _)) in chains.iter().enumerate() {
+            if sql_cmp(
+                &right.columns[right_index][*head],
+                right_tag,
+                CmpOp::Eq,
+                key,
+            )? {
+                found = Some(index);
+                break;
+            }
+        }
+        if let Some(index) = found {
+            chains[index].1.insert(0, row);
+        } else {
+            chains.push((row, vec![row]));
+        }
+    }
     let mut columns = Vec::with_capacity(left.columns.len() + right.columns.len());
     for _ in 0..left.columns.len() + right.columns.len() {
         columns.push(Vec::new());
     }
     for left_row in 0..left.row_count() {
-        for right_row in 0..right.row_count() {
-            if !sql_cmp(
-                &left.columns[left_index][left_row],
-                left_tag,
-                CmpOp::Eq,
-                &right.columns[right_index][right_row],
-            )? {
-                continue;
+        let key = &left.columns[left_index][left_row];
+        let mut matched = None;
+        for (index, (head, _)) in chains.iter().enumerate() {
+            if sql_cmp(key, left_tag, CmpOp::Eq, &right.columns[right_index][*head])? {
+                matched = Some(index);
+                break;
             }
-            for (index, column) in left.columns.iter().enumerate() {
-                columns[index].push(column[left_row].clone());
+        }
+        let Some(index) = matched else {
+            continue;
+        };
+        for right_row in &chains[index].1 {
+            for (column_index, column) in left.columns.iter().enumerate() {
+                columns[column_index].push(column[left_row].clone());
             }
-            for (index, column) in right.columns.iter().enumerate() {
-                columns[left.columns.len() + index].push(column[right_row].clone());
+            for (column_index, column) in right.columns.iter().enumerate() {
+                columns[left.columns.len() + column_index].push(column[*right_row].clone());
             }
         }
     }
@@ -41729,6 +41754,18 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn jl_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let result = execute(
+            &sensors,
+            "SELECT a.location, b.id FROM sensors a JOIN sensors b ON a.location = b.location",
+        )
+        .unwrap();
+        let expected = std::fs::read_to_string(sensors.join("expected/jl_loc.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
     }
 
     #[test]
