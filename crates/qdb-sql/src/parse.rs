@@ -323,6 +323,7 @@ pub enum Proj {
     WithinRadius(WithinRadiusExpr),
     WithinBox(WithinBoxExpr),
     MakeGeohash(MakeGeohashExpr),
+    ToUuid(ToUuidExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -854,12 +855,20 @@ pub struct MakeGeohashExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `to_uuid(lo, hi)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToUuidExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `typeof(value)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeofExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
     pub geohash: Option<MakeGeohashExpr>,
+    pub uuid: Option<ToUuidExpr>,
 }
 
 /// `not(value)`. Extra arguments are ignored; the last one is negated.
@@ -1451,6 +1460,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_within_box()?.label
             } else if parser.starts_make_geohash_call() {
                 parser.parse_make_geohash()?.label
+            } else if parser.starts_to_uuid_call() {
+                parser.parse_to_uuid()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
             } else if parser.starts_least_call() {
@@ -1621,6 +1632,7 @@ enum SelectPiece {
     WithinRadius(WithinRadiusExpr),
     WithinBox(WithinBoxExpr),
     MakeGeohash(MakeGeohashExpr),
+    ToUuid(ToUuidExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1927,6 +1939,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::WithinBox(self.parse_within_box()?));
             } else if self.starts_make_geohash_call() {
                 pieces.push(SelectPiece::MakeGeohash(self.parse_make_geohash()?));
+            } else if self.starts_to_uuid_call() {
+                pieces.push(SelectPiece::ToUuid(self.parse_to_uuid()?));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else if self.starts_least_call() {
@@ -2116,6 +2130,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::WithinRadius(_)
                     | SelectPiece::WithinBox(_)
                     | SelectPiece::MakeGeohash(_)
+                    | SelectPiece::ToUuid(_)
                     | SelectPiece::Greatest(_)
                     | SelectPiece::Least(_)
             )
@@ -2244,6 +2259,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::WithinRadius(expr) => items.push(Proj::WithinRadius(expr)),
                     SelectPiece::WithinBox(expr) => items.push(Proj::WithinBox(expr)),
                     SelectPiece::MakeGeohash(expr) => items.push(Proj::MakeGeohash(expr)),
+                    SelectPiece::ToUuid(expr) => items.push(Proj::ToUuid(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
@@ -2392,6 +2408,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::WithinRadius(_)
                 | SelectPiece::WithinBox(_)
                 | SelectPiece::MakeGeohash(_)
+                | SelectPiece::ToUuid(_)
                 | SelectPiece::Greatest(_)
                 | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
@@ -2728,6 +2745,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(MakeGeohashExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_to_uuid_call(&self) -> bool {
+        self.starts_named_call("to_uuid")
+    }
+
+    fn parse_to_uuid(&mut self) -> Result<ToUuidExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `to_uuid` requires arguments: to_uuid(LONG, LONG)".to_string(),
+            ));
+        }
+        Ok(ToUuidExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
@@ -3888,6 +3923,25 @@ impl<'a> Parser<'a> {
                 label: format!("{name}({})", inner.label),
                 args: Vec::new(),
                 geohash: Some(inner),
+                uuid: None,
+            });
+        }
+        if self.argument_is_to_uuid() {
+            self.skip();
+            self.eat(b'(');
+            self.skip();
+            let inner = self.parse_to_uuid()?;
+            self.skip();
+            if !self.eat(b')') {
+                return Err(Error::new(
+                    "unsupported: expected ')' after typeof".to_string(),
+                ));
+            }
+            return Ok(TypeofExpr {
+                label: format!("{name}({})", inner.label),
+                args: Vec::new(),
+                geohash: None,
+                uuid: Some(inner),
             });
         }
         let (labels, args) = self.parse_call_args(&name, true)?;
@@ -3898,7 +3952,18 @@ impl<'a> Parser<'a> {
             label: format!("{name}({})", labels.join(", ")),
             args,
             geohash: None,
+            uuid: None,
         })
+    }
+
+    fn argument_is_to_uuid(&mut self) -> bool {
+        let saved = self.pos;
+        self.skip();
+        let open = self.eat(b'(');
+        self.skip();
+        let nested = open && self.starts_to_uuid_call();
+        self.pos = saved;
+        nested
     }
 
     fn argument_is_make_geohash(&mut self) -> bool {

@@ -15,9 +15,9 @@ use crate::parse::{
     SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
     SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
     SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr,
-    ToDateExpr, ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd,
-    TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr,
-    WmidExpr, YearExpr,
+    ToDateExpr, ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr,
+    TrimEnd, TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr,
+    WithinRadiusExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -324,6 +324,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::WithinRadius { label, .. }
             | ResolvedProj::WithinBox { label, .. }
             | ResolvedProj::MakeGeohash { label, .. }
+            | ResolvedProj::ToUuid { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -868,6 +869,11 @@ enum ResolvedProj {
         lat: GeoSide,
         bits: i32,
     },
+    ToUuid {
+        label: String,
+        lo: UuidHalf,
+        hi: UuidHalf,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -1061,6 +1067,7 @@ impl ResolvedProj {
             | Self::WithinRadius { label, .. }
             | Self::WithinBox { label, .. }
             | Self::MakeGeohash { label, .. }
+            | Self::ToUuid { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1168,6 +1175,7 @@ impl ResolvedProj {
             Self::WithinRadius { .. } => qdb_types::TAG_BOOLEAN,
             Self::WithinBox { .. } => qdb_types::TAG_BOOLEAN,
             Self::MakeGeohash { .. } => qdb_types::TAG_STRING,
+            Self::ToUuid { .. } => qdb_types::TAG_STRING,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -1176,6 +1184,11 @@ impl ResolvedProj {
 enum GeoSide {
     Null,
     Number(f64),
+    Column { index: usize, tag: i32 },
+}
+
+enum UuidHalf {
+    Value(i64),
     Column { index: usize, tag: i32 },
 }
 
@@ -1315,6 +1328,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::WithinRadius(expr) => resolve_within_radius(table, expr),
         Proj::WithinBox(expr) => resolve_within_box(table, expr),
         Proj::MakeGeohash(expr) => resolve_make_geohash(table, expr),
+        Proj::ToUuid(expr) => resolve_to_uuid(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -2181,6 +2195,153 @@ fn format_geohash(hash: u64, bits: i32) -> String {
             .map(|index| if (hash >> index) & 1 == 1 { '1' } else { '0' })
             .collect()
     }
+}
+
+fn resolve_to_uuid(table: &Table, expr: &ToUuidExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `to_uuid`; expected: 2, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let mut names = Vec::with_capacity(2);
+    for arg in &expr.args {
+        names.push(timestamp_floor_arg_type(table, arg)?);
+    }
+    if !to_uuid_long_type(names[0]) || !to_uuid_long_type(names[1]) {
+        let actual = if names[0] != "LONG" {
+            names[0]
+        } else {
+            names[1]
+        };
+        return Err(Error::new(format!(
+            "expression type mismatch, expected: LONG, actual: {actual}"
+        )));
+    }
+    Ok(ResolvedProj::ToUuid {
+        label: expr.label.clone(),
+        lo: to_uuid_half(table, &expr.args[0])?,
+        hi: to_uuid_half(table, &expr.args[1])?,
+    })
+}
+
+fn to_uuid_long_type(name: &str) -> bool {
+    matches!(
+        name,
+        "NULL"
+            | "BYTE"
+            | "SHORT"
+            | "CHAR"
+            | "INT"
+            | "LONG"
+            | "DATE"
+            | "TIMESTAMP"
+            | "STRING"
+            | "VARCHAR"
+    )
+}
+
+fn to_uuid_half(table: &Table, arg: &ConcatArg) -> Result<UuidHalf, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok(UuidHalf::Value(i64::MIN)),
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(UuidHalf::Value(*number)),
+        ConcatArg::Literal(Scalar::Byte(number)) => Ok(UuidHalf::Value(i64::from(*number))),
+        ConcatArg::Literal(Scalar::Short(number)) => Ok(UuidHalf::Value(i64::from(*number))),
+        ConcatArg::Literal(Scalar::Int(number)) => Ok(UuidHalf::Value(i64::from(*number))),
+        ConcatArg::Literal(Scalar::Text(text)) => {
+            let kind = if text.chars().count() == 1 {
+                "CHAR"
+            } else {
+                "STRING"
+            };
+            Ok(UuidHalf::Value(parse_uuid_long(text, kind)?))
+        }
+        ConcatArg::Literal(Scalar::Char(unit)) => {
+            let ch = char::from_u32(u32::from(*unit)).unwrap_or('\u{0}');
+            Ok(UuidHalf::Value(parse_uuid_long(&ch.to_string(), "CHAR")?))
+        }
+        ConcatArg::Literal(Scalar::Date(number) | Scalar::Timestamp(number)) => {
+            Ok(UuidHalf::Value(*number))
+        }
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            Ok(UuidHalf::Column {
+                index,
+                tag: table.meta.columns[index].tag,
+            })
+        }
+        _ => Err(Error::new(
+            "expression type mismatch, expected: LONG, actual: DOUBLE".to_string(),
+        )),
+    }
+}
+
+fn parse_uuid_long(text: &str, kind: &str) -> Result<i64, Error> {
+    text.parse::<i64>().map_err(|_| {
+        if kind == "CHAR" {
+            Error::new(format!("inconvertible value: {text} [CHAR -> LONG]"))
+        } else {
+            Error::new(format!("inconvertible value: `{text}` [{kind} -> LONG]"))
+        }
+    })
+}
+
+fn to_uuid_scalar(
+    table: &Table,
+    row: usize,
+    lo: &UuidHalf,
+    hi: &UuidHalf,
+) -> Result<Scalar, Error> {
+    let lo = read_uuid_half(table, row, lo)?;
+    let hi = read_uuid_half(table, row, hi)?;
+    if lo == i64::MIN && hi == i64::MIN {
+        Ok(Scalar::Null)
+    } else {
+        Ok(Scalar::Text(format_uuid(lo, hi)))
+    }
+}
+
+fn read_uuid_half(table: &Table, row: usize, half: &UuidHalf) -> Result<i64, Error> {
+    match half {
+        UuidHalf::Value(number) => Ok(*number),
+        UuidHalf::Column { index, tag } => match &table.columns[*index][row] {
+            Scalar::Null => Ok(i64::MIN),
+            Scalar::Byte(number) => Ok(i64::from(*number)),
+            Scalar::Short(number) => Ok(i64::from(*number)),
+            Scalar::Int(number) => Ok(i64::from(*number)),
+            Scalar::Long(number) | Scalar::Date(number) | Scalar::Timestamp(number) => Ok(*number),
+            Scalar::Text(text) => {
+                let kind = if *tag == qdb_types::TAG_VARCHAR {
+                    "VARCHAR"
+                } else {
+                    "STRING"
+                };
+                parse_uuid_long(text, kind)
+            }
+            Scalar::Char(unit) => {
+                let ch = char::from_u32(u32::from(*unit)).unwrap_or('\u{0}');
+                parse_uuid_long(&ch.to_string(), "CHAR")
+            }
+            _ => Err(Error::new(
+                "expression type mismatch, expected: LONG, actual: DOUBLE".to_string(),
+            )),
+        },
+    }
+}
+
+fn format_uuid(lo: i64, hi: i64) -> String {
+    let hi = hi as u64;
+    let lo = lo as u64;
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        (hi >> 32) as u32,
+        (hi >> 16) as u16,
+        hi as u16,
+        (lo >> 48) as u16,
+        lo & 0x0000_ffff_ffff_ffff
+    )
 }
 
 fn geo_within_scalar(table: &Table, row: usize, args: &[GeoSide; 5]) -> Result<Scalar, Error> {
@@ -3509,6 +3670,14 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
         return Ok(ResolvedProj::Typeof {
             label: expr.label.clone(),
             name: geohash_type_name(bits),
+            result_tag: qdb_types::TAG_STRING,
+        });
+    }
+    if let Some(inner) = &expr.uuid {
+        resolve_to_uuid(table, inner)?;
+        return Ok(ResolvedProj::Typeof {
+            label: expr.label.clone(),
+            name: "UUID".to_string(),
             result_tag: qdb_types::TAG_STRING,
         });
     }
@@ -9012,6 +9181,7 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         ResolvedProj::MakeGeohash { lon, lat, bits, .. } => {
             make_geohash_scalar(table, row, lon, lat, *bits)
         }
+        ResolvedProj::ToUuid { lo, hi, .. } => to_uuid_scalar(table, row, lo, hi),
         _ => Ok(eval_resolved(table, row, item)),
     }
 }
@@ -9147,6 +9317,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::WithinRadius { .. } => Scalar::Boolean(false),
         ResolvedProj::WithinBox { .. } => Scalar::Boolean(false),
         ResolvedProj::MakeGeohash { .. } => Scalar::Null,
+        ResolvedProj::ToUuid { .. } => Scalar::Null,
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -40372,6 +40543,127 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn uu_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                "SELECT to_uuid(1, 2) FROM sensors LIMIT 1",
+                "expected/uu_12.tsv",
+            ),
+            (
+                "SELECT to_uuid(0, 0) FROM sensors LIMIT 1",
+                "expected/uu_00.tsv",
+            ),
+            (
+                "SELECT to_uuid(-1, -1) FROM sensors LIMIT 1",
+                "expected/uu_neg.tsv",
+            ),
+            (
+                "SELECT to_uuid(null, 1) FROM sensors LIMIT 1",
+                "expected/uu_nlo.tsv",
+            ),
+            (
+                "SELECT to_uuid(1, null) FROM sensors LIMIT 1",
+                "expected/uu_nhi.tsv",
+            ),
+            (
+                "SELECT to_uuid(null, null) FROM sensors LIMIT 1",
+                "expected/uu_nn.tsv",
+            ),
+            (
+                "SELECT TO_UUID(1, 2) FROM sensors LIMIT 1",
+                "expected/uu_case.tsv",
+            ),
+            ("SELECT to_uuid(id, 0) FROM sensors", "expected/uu_id0.tsv"),
+            ("SELECT to_uuid(id, id) FROM sensors", "expected/uu_id.tsv"),
+            (
+                "SELECT to_uuid(flags, id) FROM sensors",
+                "expected/uu_fl.tsv",
+            ),
+            (
+                "SELECT to_uuid('1', '2') FROM sensors LIMIT 1",
+                "expected/uu_str.tsv",
+            ),
+            (
+                "SELECT to_uuid(1, 2) FROM sensors WHERE id = 1",
+                "expected/uu_one.tsv",
+            ),
+            (
+                "SELECT to_uuid(1, 2) FROM sensors WHERE id > 100",
+                "expected/uu_none.tsv",
+            ),
+            (
+                "SELECT to_uuid(1, 2) FROM sensors LIMIT 0",
+                "expected/uu_lim0.tsv",
+            ),
+            (
+                "SELECT to_uuid(256, 1) FROM sensors LIMIT 1",
+                "expected/uu_256.tsv",
+            ),
+            (
+                "SELECT to_uuid(-2, 3) FROM sensors LIMIT 1",
+                "expected/uu_m2.tsv",
+            ),
+            ("SELECT to_uuid(b, code) FROM sensors", "expected/uu_bc.tsv"),
+            (
+                "SELECT to_uuid(ts, 0) FROM sensors LIMIT 1",
+                "expected/uu_ts.tsv",
+            ),
+            (
+                "SELECT typeof(to_uuid(1, 2)) FROM sensors LIMIT 1",
+                "expected/uu_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let result = execute(&days, "SELECT to_uuid(1, 2) FROM days").unwrap();
+        let expected = std::fs::read_to_string(days.join("expected/uu_days.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let mismatches = [
+            (
+                "SELECT to_uuid() FROM sensors",
+                "function `to_uuid` requires arguments: to_uuid(LONG, LONG)",
+            ),
+            (
+                "SELECT to_uuid(1) FROM sensors",
+                "wrong number of arguments for function `to_uuid`; expected: 2, provided: 1",
+            ),
+            (
+                "SELECT to_uuid(1, 2, 3) FROM sensors",
+                "wrong number of arguments for function `to_uuid`; expected: 2, provided: 3",
+            ),
+            (
+                "SELECT to_uuid(note, 1) FROM sensors",
+                "inconvertible value: `alpha` [STRING -> LONG]",
+            ),
+            (
+                "SELECT to_uuid(ch, 1) FROM sensors",
+                "inconvertible value: A [CHAR -> LONG]",
+            ),
+            (
+                "SELECT to_uuid(ok, 1) FROM sensors",
+                "expression type mismatch, expected: LONG, actual: BOOLEAN",
+            ),
+            (
+                "SELECT to_uuid(1.5, 2) FROM sensors",
+                "expression type mismatch, expected: LONG, actual: DOUBLE",
+            ),
+            (
+                "SELECT to_uuid(missing, 1) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

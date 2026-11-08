@@ -3053,7 +3053,26 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   mg_out "SELECT make_geohash(200.0, reading, 5) FROM sensors" \
   mg_lat "SELECT make_geohash(reading, 100, 5) FROM sensors" \
   mg_neg0 "SELECT make_geohash(-0.0, 0, 5) FROM sensors LIMIT 1" \
-  mg_type "SELECT typeof(make_geohash(2.0, 41.0, 20)) FROM sensors LIMIT 1"
+  mg_type "SELECT typeof(make_geohash(2.0, 41.0, 20)) FROM sensors LIMIT 1" \
+  uu_12 "SELECT to_uuid(1, 2) FROM sensors LIMIT 1" \
+  uu_00 "SELECT to_uuid(0, 0) FROM sensors LIMIT 1" \
+  uu_neg "SELECT to_uuid(-1, -1) FROM sensors LIMIT 1" \
+  uu_nlo "SELECT to_uuid(null, 1) FROM sensors LIMIT 1" \
+  uu_nhi "SELECT to_uuid(1, null) FROM sensors LIMIT 1" \
+  uu_nn "SELECT to_uuid(null, null) FROM sensors LIMIT 1" \
+  uu_case "SELECT TO_UUID(1, 2) FROM sensors LIMIT 1" \
+  uu_id0 "SELECT to_uuid(id, 0) FROM sensors" \
+  uu_id "SELECT to_uuid(id, id) FROM sensors" \
+  uu_fl "SELECT to_uuid(flags, id) FROM sensors" \
+  uu_str "SELECT to_uuid('1', '2') FROM sensors LIMIT 1" \
+  uu_one "SELECT to_uuid(1, 2) FROM sensors WHERE id = 1" \
+  uu_none "SELECT to_uuid(1, 2) FROM sensors WHERE id > 100" \
+  uu_lim0 "SELECT to_uuid(1, 2) FROM sensors LIMIT 0" \
+  uu_256 "SELECT to_uuid(256, 1) FROM sensors LIMIT 1" \
+  uu_m2 "SELECT to_uuid(-2, 3) FROM sensors LIMIT 1" \
+  uu_bc "SELECT to_uuid(b, code) FROM sensors" \
+  uu_ts "SELECT to_uuid(ts, 0) FROM sensors LIMIT 1" \
+  uu_type "SELECT typeof(to_uuid(1, 2)) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3419,7 +3438,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   gw_days "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM days" \
   wn_days "SELECT within_radius(0, 0, 3, 4, 5) FROM days" \
   wb_days "SELECT within_box(0, 0, -1, -1, 1, 1) FROM days" \
-  mg_days "SELECT make_geohash(2.0, 41.0, 20) FROM days"
+  mg_days "SELECT make_geohash(2.0, 41.0, 20) FROM days" \
+  uu_days "SELECT to_uuid(1, 2) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6420,6 +6440,25 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT make_geohash(reading, 100, 5) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT make_geohash(-0.0, 0, 5) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT typeof(make_geohash(2.0, 41.0, 20)) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(1, 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(0, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(-1, -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(null, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(1, null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(null, null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT TO_UUID(1, 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(id, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(id, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(flags, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid('1', '2') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(1, 2) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(1, 2) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(1, 2) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(256, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(-2, 3) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(b, code) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(ts, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(to_uuid(1, 2)) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6784,6 +6823,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT within_radius(0, 0, 3, 4, 5) FROM days"),
     (os.environ["DIFF_H2"], "SELECT within_box(0, 0, -1, -1, 1, 1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT make_geohash(2.0, 41.0, 20) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT to_uuid(1, 2) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `to_uuid()`
+
+`to_uuid` junta dos mitades `LONG` en un UUID en minúsculas. `to_uuid(1, 2)` es `00000000-0000-0002-0000-000000000001` y `to_uuid(-1, -1)` es `ffffffff-ffff-ffff-ffff-ffffffffffff`. Un nulo ocupa esa mitad con el centinela `LONG`; los dos nulos devuelven `NULL`. El tipo de `typeof` es `UUID`. Sin argumentos publica `to_uuid(LONG, LONG)`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `make_geohash()`
 
 `make_geohash` convierte longitud, latitud y una precisión de 1 a 60 bits en un geohash. Si la precisión es múltiplo de cinco el texto es base32 y el tipo es `GEOHASH(Nc)`; si no, es una cadena de bits y el tipo es `GEOHASH(Nb)`. Una coordenada nula entra en el hash. Una coordenada fuera de rango, cuando viene de una columna, devuelve NULL. Sin argumentos publica `make_geohash(DOUBLE, DOUBLE, INT constant)`. Se contrastó con `/exec` en `sensors` y `days`.

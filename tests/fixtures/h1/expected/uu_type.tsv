@@ -1,0 +1,2 @@
+typeof(to_uuid(1, 2))
+UUID
