@@ -2965,7 +2965,22 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   nm_none "SELECT netmask('192.168.1.1/24') FROM sensors WHERE id > 100" \
   nm_lim0 "SELECT netmask('192.168.1.1/24') FROM sensors LIMIT 0" \
   nm_note "SELECT netmask(note) FROM sensors" \
-  nm_loc "SELECT netmask(location) FROM sensors"
+  nm_loc "SELECT netmask(location) FROM sensors" \
+  gd_zero "SELECT geo_distance_meters(0, 0, 0, 0) FROM sensors LIMIT 1" \
+  gd_one "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors LIMIT 1" \
+  gd_mad "SELECT geo_distance_meters(41.0, 2.0, 40.0, -3.0) FROM sensors LIMIT 1" \
+  gd_case "SELECT GEO_DISTANCE_METERS(0, 0, 0, 1) FROM sensors LIMIT 1" \
+  gd_id1 "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors WHERE id = 1" \
+  gd_none "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors WHERE id > 100" \
+  gd_lim0 "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors LIMIT 0" \
+  gd_read "SELECT geo_distance_meters(reading, reading, reading, reading) FROM sensors" \
+  gd_id "SELECT geo_distance_meters(id, id, id, id) FROM sensors" \
+  gd_n1 "SELECT geo_distance_meters(null, 0, 0, 0) FROM sensors LIMIT 1" \
+  gd_n2 "SELECT geo_distance_meters(0, null, 0, 0) FROM sensors LIMIT 1" \
+  gd_score "SELECT geo_distance_meters(0, score, 0, 1) FROM sensors LIMIT 1" \
+  gd_flags "SELECT geo_distance_meters(0, 0, 0, flags) FROM sensors LIMIT 1" \
+  gd_byte "SELECT geo_distance_meters(0, b, 0, 1) FROM sensors LIMIT 1" \
+  gd_sc2 "SELECT geo_distance_meters(score, 0, score, 1) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3326,7 +3341,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   pk_days "SELECT pg_get_partkeydef(1) FROM days" \
   gx_days "SELECT pg_get_expr(note, 1) FROM days" \
   nm_days "SELECT netmask('192.168.1.1/24') FROM days" \
-  nm_dnote "SELECT netmask(note) FROM days"
+  nm_dnote "SELECT netmask(note) FROM days" \
+  gd_days "SELECT geo_distance_meters(0, 0, 0, 1) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6239,6 +6255,21 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1/24') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT netmask(note) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT netmask(location) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, 0, 0, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(41.0, 2.0, 40.0, -3.0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT GEO_DISTANCE_METERS(0, 0, 0, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(reading, reading, reading, reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(id, id, id, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(null, 0, 0, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, null, 0, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, score, 0, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, 0, 0, flags) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, b, 0, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(score, 0, score, 1) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6598,6 +6629,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT pg_get_expr(note, 1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT netmask('192.168.1.1/24') FROM days"),
     (os.environ["DIFF_H2"], "SELECT netmask(note) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT geo_distance_meters(0, 0, 0, 1) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `geo_distance_meters()`
+
+`geo_distance_meters` devuelve la distancia en metros con la proyección equirectangular de QuestDB. `111_320` metros por grado de latitud, y la longitud se escala con el coseno de la latitud de origen cuando los dos primeros argumentos son constantes. Si el origen es una columna, el coseno usa la latitud media. `(0, 0, 0, 0)` es `0.0` y `(0, 0, 0, 1)` es `111320.0`. `(41.0, 2.0, 40.0, -3.0)` encabeza `-(3.0)` y devuelve `434571.148912159`. Un nulo en cualquier argumento devuelve `NULL`. Una latitud fuera de `-90..=90` se rechaza con `latitude must be between -90 and 90`. Sin argumentos publica la firma de cuatro `DOUBLE`. Otra aridad dice `expected: 4`. Un texto que no es número se rechaza con `inconvertible value`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `netmask()`
 
 `netmask` devuelve la máscara `IPv4` de un prefijo CIDR. Sin barra el resultado es `255.255.255.255`. `/24` es `255.255.255.0`, `/8` es `255.0.0.0`, `/16` es `255.255.0.0`, `/1` es `128.0.0.0`, `/7` es `254.0.0.0` y `/31` es `255.255.255.254`. El prefijo `0`, un prefijo fuera de `1..=32`, un texto inválido o un nulo devuelven `NULL`. Un espacio delante de la dirección se ignora; un espacio detrás del prefijo anula el resultado. `netmask(note)` y `netmask(location)` devuelven `255.255.255.255`, `NULL`, `255.255.255.255` y `255.255.255.255`. Sin argumentos exige argumentos y no publica firma. Un tipo que no es texto se rechaza con `there is no matching function `netmask``. Se contrastó con `/exec` en `sensors` y `days`.

@@ -5,18 +5,18 @@ use crate::parse::{
     CosExpr, CotExpr, CurrentCatalogExpr, CurrentDatabaseExpr, CurrentSchemaExpr,
     CurrentSettingExpr, CurrentUserExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
     DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr,
-    ExtractExpr, Filter, FloorExpr, FormatTypeExpr, GlobExpr, GreatestExpr, GroupedSelect,
-    HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr,
-    LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr,
-    MonthExpr, NanosExpr, NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr, PgGetExprExpr,
-    PgGetPartKeyDefExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
-    RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
-    RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr,
-    SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
-    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
-    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
-    VersionExpr, WeekOfYearExpr, WmidExpr, YearExpr,
+    ExtractExpr, Filter, FloorExpr, FormatTypeExpr, GeoDistanceExpr, GlobExpr, GreatestExpr,
+    GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr,
+    LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr,
+    MinuteExpr, MonthExpr, NanosExpr, NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr,
+    PgGetExprExpr, PgGetPartKeyDefExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query,
+    QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
+    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr,
+    SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr,
+    SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
+    TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr,
+    ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr,
+    UpperExpr, VersionExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -318,6 +318,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::PgGetPartKeyDef { label, .. }
             | ResolvedProj::PgGetExpr { label, .. }
             | ResolvedProj::Netmask { label, .. }
+            | ResolvedProj::GeoDistance { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -840,6 +841,10 @@ enum ResolvedProj {
         label: String,
         arg: ResolvedArg,
     },
+    GeoDistance {
+        label: String,
+        args: [GeoSide; 4],
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -1028,6 +1033,7 @@ impl ResolvedProj {
             | Self::PgGetPartKeyDef { label, .. }
             | Self::PgGetExpr { label, .. }
             | Self::Netmask { label, .. }
+            | Self::GeoDistance { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1130,9 +1136,16 @@ impl ResolvedProj {
             Self::Bar { .. } => qdb_types::TAG_VARCHAR,
             Self::TimestampSequence { .. } => qdb_types::TAG_TIMESTAMP,
             Self::Netmask { .. } => qdb_types::TAG_IPV4,
+            Self::GeoDistance { .. } => qdb_types::TAG_DOUBLE,
             _ => qdb_types::TAG_STRING,
         }
     }
+}
+
+enum GeoSide {
+    Null,
+    Number(f64),
+    Column { index: usize, tag: i32 },
 }
 
 enum ResolvedArg {
@@ -1266,6 +1279,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::PgGetPartKeyDef(expr) => resolve_pg_get_partkeydef(table, expr),
         Proj::PgGetExpr(expr) => resolve_pg_get_expr(table, expr),
         Proj::Netmask(expr) => resolve_netmask(table, expr),
+        Proj::GeoDistance(expr) => resolve_geo_distance(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1723,6 +1737,181 @@ fn resolve_netmask(table: &Table, expr: &NetmaskExpr) -> Result<ResolvedProj, Er
         label: expr.label.clone(),
         arg: resolve_concat_arg(table, &expr.args[0])?,
     })
+}
+
+fn resolve_geo_distance(table: &Table, expr: &GeoDistanceExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 4 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `geo_distance_meters`; expected: 4, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let mut names = Vec::with_capacity(4);
+    for arg in &expr.args {
+        names.push(timestamp_floor_arg_type(table, arg)?);
+    }
+    if names.iter().any(|name| !geo_double_type(name)) {
+        let mut message = String::from("argument type mismatch for function `geo_distance_meters`");
+        for (index, name) in names.iter().enumerate() {
+            if *name != "DOUBLE" {
+                message.push_str(&format!(
+                    " at #{} expected: DOUBLE, actual: {name}",
+                    index + 1
+                ));
+            }
+        }
+        return Err(Error::new(message));
+    }
+    let mut sides = [GeoSide::Null, GeoSide::Null, GeoSide::Null, GeoSide::Null];
+    for (index, arg) in expr.args.iter().enumerate() {
+        sides[index] = geo_side(table, arg)?;
+    }
+    Ok(ResolvedProj::GeoDistance {
+        label: expr.label.clone(),
+        args: sides,
+    })
+}
+
+fn geo_double_type(name: &str) -> bool {
+    matches!(
+        name,
+        "BYTE"
+            | "SHORT"
+            | "CHAR"
+            | "INT"
+            | "LONG"
+            | "DATE"
+            | "TIMESTAMP"
+            | "FLOAT"
+            | "DOUBLE"
+            | "STRING"
+            | "VARCHAR"
+            | "NULL"
+    )
+}
+
+fn geo_side(table: &Table, arg: &ConcatArg) -> Result<GeoSide, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok(GeoSide::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(GeoSide::Number(*number as f64)),
+        ConcatArg::Literal(Scalar::Double(number)) => Ok(GeoSide::Number(*number)),
+        ConcatArg::Literal(Scalar::Text(text)) => match parse_questdb_f64(text) {
+            Some(number) => Ok(GeoSide::Number(number)),
+            None => Err(Error::new(format!(
+                "inconvertible value: `{text}` [STRING -> DOUBLE]"
+            ))),
+        },
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            Ok(GeoSide::Column {
+                index,
+                tag: table.meta.columns[index].tag,
+            })
+        }
+        _ => Err(Error::new(
+            "argument type mismatch for function `geo_distance_meters`",
+        )),
+    }
+}
+
+fn geo_distance_scalar(table: &Table, row: usize, args: &[GeoSide; 4]) -> Result<Scalar, Error> {
+    let mut values = [0.0; 4];
+    for (index, side) in args.iter().enumerate() {
+        match geo_number(table, row, side)? {
+            Some(value) => values[index] = value,
+            None => return Ok(Scalar::Null),
+        }
+    }
+    geo_range(values[0], true)?;
+    geo_range(values[1], false)?;
+    geo_range(values[2], true)?;
+    geo_range(values[3], false)?;
+    let (lat1, lon1, lat2, lon2) = (values[0], values[1], values[2], values[3]);
+    let meters_per_deg_lon = if geo_fixed(&args[0]) && geo_fixed(&args[1]) {
+        111_320.0 * lat1.to_radians().cos()
+    } else {
+        111_320.0 * ((lat1 + lat2) * 0.5).to_radians().cos()
+    };
+    let dx = (lon2 - lon1) * meters_per_deg_lon;
+    let dy = (lat2 - lat1) * 111_320.0;
+    Ok(Scalar::Double((dx * dx + dy * dy).sqrt()))
+}
+
+fn geo_fixed(side: &GeoSide) -> bool {
+    !matches!(side, GeoSide::Column { .. })
+}
+
+fn geo_range(value: f64, latitude: bool) -> Result<(), Error> {
+    let (low, high, name) = if latitude {
+        (-90.0, 90.0, "latitude")
+    } else {
+        (-180.0, 180.0, "longitude")
+    };
+    if (low..=high).contains(&value) {
+        Ok(())
+    } else {
+        Err(Error::new(format!(
+            "{name} must be between {low} and {high} [value={}]",
+            java_f64(value)
+        )))
+    }
+}
+
+fn java_f64(value: f64) -> String {
+    let abs = value.abs();
+    if abs != 0.0 && !(1e-3..1e7).contains(&abs) {
+        format!("{value:e}").replace('e', "E")
+    } else {
+        let text = format!("{value}");
+        if text.contains(['.', 'e', 'E']) {
+            text.replace('e', "E")
+        } else {
+            format!("{text}.0")
+        }
+    }
+}
+
+fn geo_number(table: &Table, row: usize, side: &GeoSide) -> Result<Option<f64>, Error> {
+    match side {
+        GeoSide::Null => Ok(None),
+        GeoSide::Number(number) => Ok(if number.is_nan() { None } else { Some(*number) }),
+        GeoSide::Column { index, tag } => match &table.columns[*index][row] {
+            Scalar::Null => Ok(None),
+            Scalar::Byte(number) => Ok(Some(f64::from(*number))),
+            Scalar::Short(number) => Ok(Some(f64::from(*number))),
+            Scalar::Int(number) => Ok(Some(f64::from(*number))),
+            Scalar::Long(number) => Ok(Some(*number as f64)),
+            Scalar::Float(number) => Ok(if number.is_nan() {
+                None
+            } else {
+                Some(f64::from(*number))
+            }),
+            Scalar::Double(number) => Ok(if number.is_nan() { None } else { Some(*number) }),
+            Scalar::Date(number) | Scalar::Timestamp(number) => Ok(Some(*number as f64)),
+            Scalar::Text(text) => {
+                let kind = if *tag == qdb_types::TAG_VARCHAR {
+                    "VARCHAR"
+                } else {
+                    "STRING"
+                };
+                match parse_questdb_f64(text) {
+                    Some(number) => Ok(Some(number)),
+                    None => Err(Error::new(format!(
+                        "inconvertible value: `{text}` [{kind} -> DOUBLE]"
+                    ))),
+                }
+            }
+            Scalar::Char(unit) => Err(Error::new(format!(
+                "inconvertible value: {} [CHAR -> DOUBLE]",
+                char::from_u32(u32::from(*unit)).unwrap_or('\u{0}')
+            ))),
+            Scalar::Boolean(_) => Err(Error::new(
+                "argument type mismatch for function `geo_distance_meters`",
+            )),
+        },
+    }
 }
 
 fn ipv4_netmask(text: &str) -> Option<String> {
@@ -8371,6 +8560,7 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
             width,
             ..
         } => bar_value(table, row, value, min, max, width),
+        ResolvedProj::GeoDistance { args, .. } => geo_distance_scalar(table, row, args),
         _ => Ok(eval_resolved(table, row, item)),
     }
 }
@@ -8501,6 +8691,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             },
             None => Scalar::Null,
         },
+        ResolvedProj::GeoDistance { .. } => Scalar::Null,
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39726,6 +39917,133 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn gd_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT geo_distance_meters(0, 0, 0, 0) FROM sensors LIMIT 1",
+                "expected/gd_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors LIMIT 1",
+                "expected/gd_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(41.0, 2.0, 40.0, -3.0) FROM sensors LIMIT 1",
+                "expected/gd_mad.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT GEO_DISTANCE_METERS(0, 0, 0, 1) FROM sensors LIMIT 1",
+                "expected/gd_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors WHERE id = 1",
+                "expected/gd_id1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors WHERE id > 100",
+                "expected/gd_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors LIMIT 0",
+                "expected/gd_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(reading, reading, reading, reading) FROM sensors",
+                "expected/gd_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(id, id, id, id) FROM sensors",
+                "expected/gd_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(null, 0, 0, 0) FROM sensors LIMIT 1",
+                "expected/gd_n1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(0, null, 0, 0) FROM sensors LIMIT 1",
+                "expected/gd_n2.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(0, score, 0, 1) FROM sensors LIMIT 1",
+                "expected/gd_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(0, 0, 0, flags) FROM sensors LIMIT 1",
+                "expected/gd_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(0, b, 0, 1) FROM sensors LIMIT 1",
+                "expected/gd_byte.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_distance_meters(score, 0, score, 1) FROM sensors",
+                "expected/gd_sc2.tsv",
+            ),
+            (
+                &days,
+                "SELECT geo_distance_meters(0, 0, 0, 1) FROM days",
+                "expected/gd_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let mismatches = [
+            (
+                "SELECT geo_distance_meters() FROM sensors",
+                "function `geo_distance_meters` requires arguments: geo_distance_meters(DOUBLE, DOUBLE, DOUBLE, DOUBLE)",
+            ),
+            (
+                "SELECT geo_distance_meters(0, 0, 1) FROM sensors",
+                "wrong number of arguments for function `geo_distance_meters`; expected: 4, provided: 3",
+            ),
+            (
+                "SELECT geo_distance_meters(0, 0, 0, 1, 1) FROM sensors",
+                "wrong number of arguments for function `geo_distance_meters`; expected: 4, provided: 5",
+            ),
+            (
+                "SELECT geo_distance_meters(note, 0, 0, 1) FROM sensors",
+                "inconvertible value: `alpha` [STRING -> DOUBLE]",
+            ),
+            (
+                "SELECT geo_distance_meters(ok, 0, 0, 1) FROM sensors",
+                "argument type mismatch for function `geo_distance_meters` at #1 expected: DOUBLE, actual: BOOLEAN at #2 expected: DOUBLE, actual: INT at #3 expected: DOUBLE, actual: INT at #4 expected: DOUBLE, actual: INT",
+            ),
+            (
+                "SELECT geo_distance_meters(ts, 0, 0, 1) FROM sensors",
+                "latitude must be between -90 and 90 [value=1.577934245E15]",
+            ),
+            (
+                "SELECT geo_distance_meters(missing, 0, 0, 1) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

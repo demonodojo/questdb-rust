@@ -318,6 +318,7 @@ pub enum Proj {
     PgGetPartKeyDef(PgGetPartKeyDefExpr),
     PgGetExpr(PgGetExprExpr),
     Netmask(NetmaskExpr),
+    GeoDistance(GeoDistanceExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1141,6 +1142,13 @@ pub struct NetmaskExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `geo_distance_meters(lat1, lon1, lat2, lon2)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeoDistanceExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `greatest(number, ...)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreatestExpr {
@@ -1400,6 +1408,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_pg_get_expr()?.label
             } else if parser.starts_netmask_call() {
                 parser.parse_netmask()?.label
+            } else if parser.starts_geo_distance_call() {
+                parser.parse_geo_distance()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
             } else if parser.starts_least_call() {
@@ -1565,6 +1575,7 @@ enum SelectPiece {
     PgGetPartKeyDef(PgGetPartKeyDefExpr),
     PgGetExpr(PgGetExprExpr),
     Netmask(NetmaskExpr),
+    GeoDistance(GeoDistanceExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1861,6 +1872,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::PgGetExpr(self.parse_pg_get_expr()?));
             } else if self.starts_netmask_call() {
                 pieces.push(SelectPiece::Netmask(self.parse_netmask()?));
+            } else if self.starts_geo_distance_call() {
+                pieces.push(SelectPiece::GeoDistance(self.parse_geo_distance()?));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else if self.starts_least_call() {
@@ -2045,6 +2058,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::PgGetPartKeyDef(_)
                     | SelectPiece::PgGetExpr(_)
                     | SelectPiece::Netmask(_)
+                    | SelectPiece::GeoDistance(_)
                     | SelectPiece::Greatest(_)
                     | SelectPiece::Least(_)
             )
@@ -2168,6 +2182,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::PgGetPartKeyDef(expr) => items.push(Proj::PgGetPartKeyDef(expr)),
                     SelectPiece::PgGetExpr(expr) => items.push(Proj::PgGetExpr(expr)),
                     SelectPiece::Netmask(expr) => items.push(Proj::Netmask(expr)),
+                    SelectPiece::GeoDistance(expr) => items.push(Proj::GeoDistance(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
@@ -2311,6 +2326,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::PgGetPartKeyDef(_)
                 | SelectPiece::PgGetExpr(_)
                 | SelectPiece::Netmask(_)
+                | SelectPiece::GeoDistance(_)
                 | SelectPiece::Greatest(_)
                 | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
@@ -2557,6 +2573,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(NetmaskExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_geo_distance_call(&self) -> bool {
+        self.starts_named_call("geo_distance_meters")
+    }
+
+    fn parse_geo_distance(&mut self) -> Result<GeoDistanceExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `geo_distance_meters` requires arguments: geo_distance_meters(DOUBLE, DOUBLE, DOUBLE, DOUBLE)".to_string(),
+            ));
+        }
+        Ok(GeoDistanceExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
