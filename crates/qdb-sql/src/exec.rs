@@ -16,7 +16,7 @@ use crate::parse::{
     SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
     TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr,
     ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr,
-    UpperExpr, VersionExpr, WeekOfYearExpr, WithinRadiusExpr, WmidExpr, YearExpr,
+    UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -321,6 +321,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::GeoDistance { label, .. }
             | ResolvedProj::GeoWithin { label, .. }
             | ResolvedProj::WithinRadius { label, .. }
+            | ResolvedProj::WithinBox { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -855,6 +856,10 @@ enum ResolvedProj {
         label: String,
         args: [GeoSide; 5],
     },
+    WithinBox {
+        label: String,
+        args: [GeoSide; 6],
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -1046,6 +1051,7 @@ impl ResolvedProj {
             | Self::GeoDistance { label, .. }
             | Self::GeoWithin { label, .. }
             | Self::WithinRadius { label, .. }
+            | Self::WithinBox { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1151,6 +1157,7 @@ impl ResolvedProj {
             Self::GeoDistance { .. } => qdb_types::TAG_DOUBLE,
             Self::GeoWithin { .. } => qdb_types::TAG_BOOLEAN,
             Self::WithinRadius { .. } => qdb_types::TAG_BOOLEAN,
+            Self::WithinBox { .. } => qdb_types::TAG_BOOLEAN,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -1296,6 +1303,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::GeoDistance(expr) => resolve_geo_distance(table, expr),
         Proj::GeoWithin(expr) => resolve_geo_within(table, expr),
         Proj::WithinRadius(expr) => resolve_within_radius(table, expr),
+        Proj::WithinBox(expr) => resolve_within_box(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1886,6 +1894,62 @@ fn within_radius_scalar(table: &Table, row: usize, args: &[GeoSide; 5]) -> Resul
     let dx = x - center_x;
     let dy = y - center_y;
     Ok(Scalar::Boolean(radius * radius >= dx * dx + dy * dy))
+}
+
+fn resolve_within_box(table: &Table, expr: &WithinBoxExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 6 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `within_box`; expected: 6, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let mut names = Vec::with_capacity(6);
+    for arg in &expr.args {
+        names.push(timestamp_floor_arg_type(table, arg)?);
+    }
+    if names.iter().any(|name| !geo_double_type(name)) {
+        let mut message = String::from("argument type mismatch for function `within_box`");
+        for (index, name) in names.iter().enumerate() {
+            if *name != "DOUBLE" {
+                message.push_str(&format!(
+                    " at #{} expected: DOUBLE, actual: {name}",
+                    index + 1
+                ));
+            }
+        }
+        return Err(Error::new(message));
+    }
+    let mut sides = [
+        GeoSide::Null,
+        GeoSide::Null,
+        GeoSide::Null,
+        GeoSide::Null,
+        GeoSide::Null,
+        GeoSide::Null,
+    ];
+    for (index, arg) in expr.args.iter().enumerate() {
+        sides[index] = geo_side(table, arg)?;
+    }
+    Ok(ResolvedProj::WithinBox {
+        label: expr.label.clone(),
+        args: sides,
+    })
+}
+
+fn within_box_scalar(table: &Table, row: usize, args: &[GeoSide; 6]) -> Result<Scalar, Error> {
+    let mut values = [0.0; 6];
+    for (index, side) in args.iter().enumerate() {
+        match geo_number(table, row, side)? {
+            Some(value) => values[index] = value,
+            None => return Ok(Scalar::Boolean(false)),
+        }
+    }
+    let (x, y, min_x, min_y, max_x, max_y) = (
+        values[0], values[1], values[2], values[3], values[4], values[5],
+    );
+    Ok(Scalar::Boolean(
+        x >= min_x && x <= max_x && y >= min_y && y <= max_y,
+    ))
 }
 
 fn geo_within_scalar(table: &Table, row: usize, args: &[GeoSide; 5]) -> Result<Scalar, Error> {
@@ -8702,6 +8766,7 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         ResolvedProj::GeoDistance { args, .. } => geo_distance_scalar(table, row, args),
         ResolvedProj::GeoWithin { args, .. } => geo_within_scalar(table, row, args),
         ResolvedProj::WithinRadius { args, .. } => within_radius_scalar(table, row, args),
+        ResolvedProj::WithinBox { args, .. } => within_box_scalar(table, row, args),
         _ => Ok(eval_resolved(table, row, item)),
     }
 }
@@ -8835,6 +8900,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::GeoDistance { .. } => Scalar::Null,
         ResolvedProj::GeoWithin { .. } => Scalar::Boolean(false),
         ResolvedProj::WithinRadius { .. } => Scalar::Boolean(false),
+        ResolvedProj::WithinBox { .. } => Scalar::Boolean(false),
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -40060,6 +40126,114 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn wb_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT within_box(0, 0, -1, -1, 1, 1) FROM sensors LIMIT 1",
+                "expected/wb_in.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT within_box(2, 0, -1, -1, 1, 1) FROM sensors LIMIT 1",
+                "expected/wb_out.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT within_box(1, 1, -1, -1, 1, 1) FROM sensors LIMIT 1",
+                "expected/wb_edge.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT within_box(0, 0, 0, 0, 0, 0) FROM sensors LIMIT 1",
+                "expected/wb_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT within_box(null, 0, -1, -1, 1, 1) FROM sensors LIMIT 1",
+                "expected/wb_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT within_box(reading, reading, -1, -1, 1, 1) FROM sensors",
+                "expected/wb_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT WITHIN_BOX(0, 0, -1, -1, 1, 1) FROM sensors LIMIT 1",
+                "expected/wb_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT within_box(0, 0, -1, -1, 1, 1) FROM sensors WHERE id = 1",
+                "expected/wb_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT within_box(0, 0, -1, -1, 1, 1) FROM sensors WHERE id > 100",
+                "expected/wb_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT within_box(0, 0, -1, -1, 1, 1) FROM sensors LIMIT 0",
+                "expected/wb_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT within_box(0, score, -1, -2, 1, 2) FROM sensors",
+                "expected/wb_score.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT within_box(id, id, 0, 0, 1, 1) FROM sensors",
+                "expected/wb_id.tsv",
+            ),
+            (
+                &days,
+                "SELECT within_box(0, 0, -1, -1, 1, 1) FROM days",
+                "expected/wb_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let mismatches = [
+            (
+                "SELECT within_box() FROM sensors",
+                "function `within_box` requires arguments: within_box(DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE)",
+            ),
+            (
+                "SELECT within_box(0, 0, -1, -1, 1) FROM sensors",
+                "wrong number of arguments for function `within_box`; expected: 6, provided: 5",
+            ),
+            (
+                "SELECT within_box(0, 0, -1, -1, 1, 1, 1) FROM sensors",
+                "wrong number of arguments for function `within_box`; expected: 6, provided: 7",
+            ),
+            (
+                "SELECT within_box(note, 0, -1, -1, 1, 1) FROM sensors",
+                "inconvertible value: `alpha` [STRING -> DOUBLE]",
+            ),
+            (
+                "SELECT within_box(ok, 0, -1, -1, 1, 1) FROM sensors",
+                "argument type mismatch for function `within_box` at #1 expected: DOUBLE, actual: BOOLEAN at #2 expected: DOUBLE, actual: INT at #3 expected: DOUBLE, actual: INT at #4 expected: DOUBLE, actual: INT at #5 expected: DOUBLE, actual: INT at #6 expected: DOUBLE, actual: INT",
+            ),
+            (
+                "SELECT within_box(missing, 0, -1, -1, 1, 1) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

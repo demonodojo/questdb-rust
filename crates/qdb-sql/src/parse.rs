@@ -321,6 +321,7 @@ pub enum Proj {
     GeoDistance(GeoDistanceExpr),
     GeoWithin(GeoWithinExpr),
     WithinRadius(WithinRadiusExpr),
+    WithinBox(WithinBoxExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1165,6 +1166,13 @@ pub struct WithinRadiusExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `within_box(x, y, min_x, min_y, max_x, max_y)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WithinBoxExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `greatest(number, ...)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreatestExpr {
@@ -1430,6 +1438,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_geo_within()?.label
             } else if parser.starts_within_radius_call() {
                 parser.parse_within_radius()?.label
+            } else if parser.starts_within_box_call() {
+                parser.parse_within_box()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
             } else if parser.starts_least_call() {
@@ -1598,6 +1608,7 @@ enum SelectPiece {
     GeoDistance(GeoDistanceExpr),
     GeoWithin(GeoWithinExpr),
     WithinRadius(WithinRadiusExpr),
+    WithinBox(WithinBoxExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1900,6 +1911,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::GeoWithin(self.parse_geo_within()?));
             } else if self.starts_within_radius_call() {
                 pieces.push(SelectPiece::WithinRadius(self.parse_within_radius()?));
+            } else if self.starts_within_box_call() {
+                pieces.push(SelectPiece::WithinBox(self.parse_within_box()?));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else if self.starts_least_call() {
@@ -2087,6 +2100,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::GeoDistance(_)
                     | SelectPiece::GeoWithin(_)
                     | SelectPiece::WithinRadius(_)
+                    | SelectPiece::WithinBox(_)
                     | SelectPiece::Greatest(_)
                     | SelectPiece::Least(_)
             )
@@ -2213,6 +2227,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::GeoDistance(expr) => items.push(Proj::GeoDistance(expr)),
                     SelectPiece::GeoWithin(expr) => items.push(Proj::GeoWithin(expr)),
                     SelectPiece::WithinRadius(expr) => items.push(Proj::WithinRadius(expr)),
+                    SelectPiece::WithinBox(expr) => items.push(Proj::WithinBox(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
@@ -2359,6 +2374,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::GeoDistance(_)
                 | SelectPiece::GeoWithin(_)
                 | SelectPiece::WithinRadius(_)
+                | SelectPiece::WithinBox(_)
                 | SelectPiece::Greatest(_)
                 | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
@@ -2659,6 +2675,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(WithinRadiusExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_within_box_call(&self) -> bool {
+        self.starts_named_call("within_box")
+    }
+
+    fn parse_within_box(&mut self) -> Result<WithinBoxExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `within_box` requires arguments: within_box(DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE)".to_string(),
+            ));
+        }
+        Ok(WithinBoxExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

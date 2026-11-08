@@ -1,0 +1,5 @@
+within_box(id, id, 0, 0, 1, 1)
+true
+false
+false
+false
