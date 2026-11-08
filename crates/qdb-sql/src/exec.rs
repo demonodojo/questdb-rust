@@ -2,13 +2,13 @@ use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AddExpr, AggFunc,
     AggregateExpr, AggregateExtra, AndExpr, AndRight, ArithOp, AsinExpr, Atan2Expr, AtanExpr,
     BarExpr, BetweenExpr, BitNotExpr, BoolOp, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg,
-    CosExpr, CotExpr, CurrentDatabaseExpr, CurrentSchemaExpr, CurrentUserExpr, DateAddExpr,
-    DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr,
-    DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr,
-    GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr,
-    LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr,
-    MinuteExpr, MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr,
-    Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
+    CosExpr, CotExpr, CurrentCatalogExpr, CurrentDatabaseExpr, CurrentSchemaExpr, CurrentUserExpr,
+    DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr,
+    DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr,
+    GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr,
+    LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr,
+    MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PiExpr,
+    PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
     RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr,
     SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr,
     SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
@@ -307,6 +307,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::CurrentDatabase { label, .. }
             | ResolvedProj::CurrentUser { label, .. }
             | ResolvedProj::SessionUser { label, .. }
+            | ResolvedProj::CurrentCatalog { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -799,6 +800,9 @@ enum ResolvedProj {
     SessionUser {
         label: String,
     },
+    CurrentCatalog {
+        label: String,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -978,6 +982,7 @@ impl ResolvedProj {
             | Self::CurrentDatabase { label, .. }
             | Self::CurrentUser { label, .. }
             | Self::SessionUser { label, .. }
+            | Self::CurrentCatalog { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1053,7 +1058,8 @@ impl ResolvedProj {
             Self::CurrentSchema { .. }
             | Self::CurrentDatabase { .. }
             | Self::CurrentUser { .. }
-            | Self::SessionUser { .. } => qdb_types::TAG_STRING,
+            | Self::SessionUser { .. }
+            | Self::CurrentCatalog { .. } => qdb_types::TAG_STRING,
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
             | Self::Add { result_tag, .. }
@@ -1200,6 +1206,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::CurrentDatabase(expr) => resolve_current_database(expr),
         Proj::CurrentUser(expr) => resolve_current_user(expr),
         Proj::SessionUser(expr) => resolve_session_user(expr),
+        Proj::CurrentCatalog(expr) => resolve_current_catalog(expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1516,6 +1523,18 @@ fn least_i64(table: &Table, row: usize, arg: &GreatestArg) -> Option<i64> {
             _ => None,
         },
     }
+}
+
+fn resolve_current_catalog(expr: &CurrentCatalogExpr) -> Result<ResolvedProj, Error> {
+    if !expr.args.is_empty() {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `current_catalog`; expected: 0, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::CurrentCatalog {
+        label: expr.label.clone(),
+    })
 }
 
 fn resolve_session_user(expr: &SessionUserExpr) -> Result<ResolvedProj, Error> {
@@ -8157,6 +8176,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::CurrentDatabase { .. } => Scalar::Text("qdb".to_string()),
         ResolvedProj::CurrentUser { .. } => Scalar::Text("admin".to_string()),
         ResolvedProj::SessionUser { .. } => Scalar::Text("admin".to_string()),
+        ResolvedProj::CurrentCatalog { .. } => Scalar::Text("qdb".to_string()),
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39378,6 +39398,65 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn cg_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT current_catalog() FROM sensors",
+                "expected/cg_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT CURRENT_CATALOG() FROM sensors",
+                "expected/cg_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_catalog() FROM sensors WHERE id = 1",
+                "expected/cg_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_catalog() FROM sensors WHERE id > 100",
+                "expected/cg_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_catalog() FROM sensors LIMIT 0",
+                "expected/cg_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT current_catalog() FROM days",
+                "expected/cg_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT current_catalog(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `current_catalog`; expected: 0, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT current_catalog(1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `current_catalog`; expected: 0, provided: 1"
+            ),
             "{}",
             err.message
         );

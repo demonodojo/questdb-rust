@@ -309,6 +309,7 @@ pub enum Proj {
     CurrentDatabase(CurrentDatabaseExpr),
     CurrentUser(CurrentUserExpr),
     SessionUser(SessionUserExpr),
+    CurrentCatalog(CurrentCatalogExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1069,6 +1070,13 @@ pub struct SessionUserExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `current_catalog()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CurrentCatalogExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `greatest(number, ...)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreatestExpr {
@@ -1310,6 +1318,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_current_user()?.label
             } else if parser.starts_session_user_call() {
                 parser.parse_session_user()?.label
+            } else if parser.starts_current_catalog_call() {
+                parser.parse_current_catalog()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
             } else if parser.starts_least_call() {
@@ -1466,6 +1476,7 @@ enum SelectPiece {
     CurrentDatabase(CurrentDatabaseExpr),
     CurrentUser(CurrentUserExpr),
     SessionUser(SessionUserExpr),
+    CurrentCatalog(CurrentCatalogExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1742,6 +1753,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::CurrentUser(self.parse_current_user()?));
             } else if self.starts_session_user_call() {
                 pieces.push(SelectPiece::SessionUser(self.parse_session_user()?));
+            } else if self.starts_current_catalog_call() {
+                pieces.push(SelectPiece::CurrentCatalog(self.parse_current_catalog()?));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else if self.starts_least_call() {
@@ -1917,6 +1930,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::CurrentDatabase(_)
                     | SelectPiece::CurrentUser(_)
                     | SelectPiece::SessionUser(_)
+                    | SelectPiece::CurrentCatalog(_)
                     | SelectPiece::Greatest(_)
                     | SelectPiece::Least(_)
             )
@@ -2031,6 +2045,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::CurrentDatabase(expr) => items.push(Proj::CurrentDatabase(expr)),
                     SelectPiece::CurrentUser(expr) => items.push(Proj::CurrentUser(expr)),
                     SelectPiece::SessionUser(expr) => items.push(Proj::SessionUser(expr)),
+                    SelectPiece::CurrentCatalog(expr) => items.push(Proj::CurrentCatalog(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
@@ -2165,6 +2180,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::CurrentDatabase(_)
                 | SelectPiece::CurrentUser(_)
                 | SelectPiece::SessionUser(_)
+                | SelectPiece::CurrentCatalog(_)
                 | SelectPiece::Greatest(_)
                 | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
@@ -2298,6 +2314,19 @@ impl<'a> Parser<'a> {
         let name = self.ident_spelling()?;
         let (labels, args) = self.parse_call_args(&name, true)?;
         Ok(SessionUserExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_current_catalog_call(&self) -> bool {
+        self.starts_named_call("current_catalog")
+    }
+
+    fn parse_current_catalog(&mut self) -> Result<CurrentCatalogExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        Ok(CurrentCatalogExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
