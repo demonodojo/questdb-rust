@@ -1,0 +1,2 @@
+json_extract('{"héllo":"東京"}', '$.héllo')
+東京

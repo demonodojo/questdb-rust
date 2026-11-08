@@ -1,0 +1,5 @@
+json_extract('{"a":1}', '$.a', 1)
+false
+false
+false
+false

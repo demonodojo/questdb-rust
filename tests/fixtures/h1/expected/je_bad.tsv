@@ -1,0 +1,2 @@
+json_extract('not json', '$.a')
+

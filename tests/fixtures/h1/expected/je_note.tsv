@@ -1,0 +1,5 @@
+json_extract(note, '$.a')
+NULL
+NULL
+NULL
+NULL

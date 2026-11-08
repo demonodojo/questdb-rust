@@ -324,6 +324,7 @@ pub enum Proj {
     WithinBox(WithinBoxExpr),
     MakeGeohash(MakeGeohashExpr),
     ToUuid(ToUuidExpr),
+    JsonExtract(JsonExtractExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -862,6 +863,13 @@ pub struct ToUuidExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `json_extract(doc, path)` and the typed `json_extract(doc, path, type)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonExtractExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `typeof(value)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeofExpr {
@@ -869,6 +877,7 @@ pub struct TypeofExpr {
     pub args: Vec<ConcatArg>,
     pub geohash: Option<MakeGeohashExpr>,
     pub uuid: Option<ToUuidExpr>,
+    pub json: Option<JsonExtractExpr>,
 }
 
 /// `not(value)`. Extra arguments are ignored; the last one is negated.
@@ -1462,6 +1471,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_make_geohash()?.label
             } else if parser.starts_to_uuid_call() {
                 parser.parse_to_uuid()?.label
+            } else if parser.starts_json_extract_call() {
+                parser.parse_json_extract()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
             } else if parser.starts_least_call() {
@@ -1633,6 +1644,7 @@ enum SelectPiece {
     WithinBox(WithinBoxExpr),
     MakeGeohash(MakeGeohashExpr),
     ToUuid(ToUuidExpr),
+    JsonExtract(JsonExtractExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1941,6 +1953,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::MakeGeohash(self.parse_make_geohash()?));
             } else if self.starts_to_uuid_call() {
                 pieces.push(SelectPiece::ToUuid(self.parse_to_uuid()?));
+            } else if self.starts_json_extract_call() {
+                pieces.push(SelectPiece::JsonExtract(self.parse_json_extract()?));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else if self.starts_least_call() {
@@ -2131,6 +2145,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::WithinBox(_)
                     | SelectPiece::MakeGeohash(_)
                     | SelectPiece::ToUuid(_)
+                    | SelectPiece::JsonExtract(_)
                     | SelectPiece::Greatest(_)
                     | SelectPiece::Least(_)
             )
@@ -2260,6 +2275,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::WithinBox(expr) => items.push(Proj::WithinBox(expr)),
                     SelectPiece::MakeGeohash(expr) => items.push(Proj::MakeGeohash(expr)),
                     SelectPiece::ToUuid(expr) => items.push(Proj::ToUuid(expr)),
+                    SelectPiece::JsonExtract(expr) => items.push(Proj::JsonExtract(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
@@ -2409,6 +2425,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::WithinBox(_)
                 | SelectPiece::MakeGeohash(_)
                 | SelectPiece::ToUuid(_)
+                | SelectPiece::JsonExtract(_)
                 | SelectPiece::Greatest(_)
                 | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
@@ -2763,6 +2780,24 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(ToUuidExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_json_extract_call(&self) -> bool {
+        self.starts_named_call("json_extract")
+    }
+
+    fn parse_json_extract(&mut self) -> Result<JsonExtractExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `json_extract` requires arguments".to_string(),
+            ));
+        }
+        Ok(JsonExtractExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })
@@ -3924,6 +3959,7 @@ impl<'a> Parser<'a> {
                 args: Vec::new(),
                 geohash: Some(inner),
                 uuid: None,
+                json: None,
             });
         }
         if self.argument_is_to_uuid() {
@@ -3942,6 +3978,26 @@ impl<'a> Parser<'a> {
                 args: Vec::new(),
                 geohash: None,
                 uuid: Some(inner),
+                json: None,
+            });
+        }
+        if self.argument_is_json_extract() {
+            self.skip();
+            self.eat(b'(');
+            self.skip();
+            let inner = self.parse_json_extract()?;
+            self.skip();
+            if !self.eat(b')') {
+                return Err(Error::new(
+                    "unsupported: expected ')' after typeof".to_string(),
+                ));
+            }
+            return Ok(TypeofExpr {
+                label: format!("{name}({})", inner.label),
+                args: Vec::new(),
+                geohash: None,
+                uuid: None,
+                json: Some(inner),
             });
         }
         let (labels, args) = self.parse_call_args(&name, true)?;
@@ -3953,7 +4009,18 @@ impl<'a> Parser<'a> {
             args,
             geohash: None,
             uuid: None,
+            json: None,
         })
+    }
+
+    fn argument_is_json_extract(&mut self) -> bool {
+        let saved = self.pos;
+        self.skip();
+        let open = self.eat(b'(');
+        self.skip();
+        let nested = open && self.starts_json_extract_call();
+        self.pos = saved;
+        nested
     }
 
     fn argument_is_to_uuid(&mut self) -> bool {

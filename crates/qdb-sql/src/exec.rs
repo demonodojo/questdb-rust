@@ -7,17 +7,17 @@ use crate::parse::{
     DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr,
     ExtractExpr, Filter, FloorExpr, FormatTypeExpr, GeoDistanceExpr, GeoWithinExpr, GlobExpr,
     GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr,
-    LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, MakeGeohashExpr, Md5Expr,
-    MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NetmaskExpr,
-    NotExpr, NullIfExpr, PadExpr, PgGetExprExpr, PgGetPartKeyDefExpr, PgIsInRecoveryExpr, PiExpr,
-    PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr,
-    RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
-    SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
-    SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
-    SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr,
-    ToDateExpr, ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr,
-    TrimEnd, TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr,
-    WithinRadiusExpr, WmidExpr, YearExpr,
+    JsonExtractExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, MakeGeohashExpr,
+    Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr,
+    NetmaskExpr, NotExpr, NullIfExpr, PadExpr, PgGetExprExpr, PgGetPartKeyDefExpr,
+    PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
+    RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
+    SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
+    SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
+    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
+    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr, TrimEnd, TrimExpr, TypeofExpr,
+    UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -325,6 +325,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::WithinBox { label, .. }
             | ResolvedProj::MakeGeohash { label, .. }
             | ResolvedProj::ToUuid { label, .. }
+            | ResolvedProj::JsonExtract { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -874,6 +875,12 @@ enum ResolvedProj {
         lo: UuidHalf,
         hi: UuidHalf,
     },
+    JsonExtract {
+        label: String,
+        doc: ResolvedArg,
+        path: Option<String>,
+        boolean: bool,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -1068,6 +1075,7 @@ impl ResolvedProj {
             | Self::WithinBox { label, .. }
             | Self::MakeGeohash { label, .. }
             | Self::ToUuid { label, .. }
+            | Self::JsonExtract { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1176,6 +1184,13 @@ impl ResolvedProj {
             Self::WithinBox { .. } => qdb_types::TAG_BOOLEAN,
             Self::MakeGeohash { .. } => qdb_types::TAG_STRING,
             Self::ToUuid { .. } => qdb_types::TAG_STRING,
+            Self::JsonExtract { boolean, .. } => {
+                if *boolean {
+                    qdb_types::TAG_BOOLEAN
+                } else {
+                    qdb_types::TAG_VARCHAR
+                }
+            }
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -1329,6 +1344,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::WithinBox(expr) => resolve_within_box(table, expr),
         Proj::MakeGeohash(expr) => resolve_make_geohash(table, expr),
         Proj::ToUuid(expr) => resolve_to_uuid(table, expr),
+        Proj::JsonExtract(expr) => resolve_json_extract(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -2342,6 +2358,406 @@ fn format_uuid(lo: i64, hi: i64) -> String {
         (lo >> 48) as u16,
         lo & 0x0000_ffff_ffff_ffff
     )
+}
+
+fn resolve_json_extract(table: &Table, expr: &JsonExtractExpr) -> Result<ResolvedProj, Error> {
+    let types = expr
+        .args
+        .iter()
+        .map(|arg| timestamp_floor_arg_type(table, arg))
+        .collect::<Result<Vec<_>, _>>()?;
+    if types.len() != 2 && types.len() != 3 {
+        return Err(json_extract_mismatch(&types));
+    }
+    if !json_text_type(types[0]) || !json_text_type(types[1]) {
+        return Err(json_extract_mismatch(&types));
+    }
+    let boolean = if types.len() == 3 {
+        if types[2] != "INT" {
+            return Err(json_extract_mismatch(&types));
+        }
+        let code = json_type_code(&expr.args[2])?;
+        if code != i64::from(qdb_types::TAG_BOOLEAN) {
+            return Err(Error::new(
+                "please use json_extract(json,path)::type semantic".to_string(),
+            ));
+        }
+        true
+    } else {
+        false
+    };
+    let path = json_constant_path(&expr.args[1])?;
+    Ok(ResolvedProj::JsonExtract {
+        label: expr.label.clone(),
+        doc: json_doc_arg(table, &expr.args[0])?,
+        path,
+        boolean,
+    })
+}
+
+fn json_extract_mismatch(types: &[&str]) -> Error {
+    Error::new(format!(
+        "there is no matching function `json_extract` with the argument types: ({})",
+        types.join(", ")
+    ))
+}
+
+fn json_text_type(name: &str) -> bool {
+    matches!(name, "NULL" | "STRING" | "CHAR" | "VARCHAR" | "SYMBOL")
+}
+
+fn json_type_code(arg: &ConcatArg) -> Result<i64, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(*number),
+        ConcatArg::Literal(Scalar::Int(number)) => Ok(i64::from(*number)),
+        ConcatArg::Literal(Scalar::Short(number)) => Ok(i64::from(*number)),
+        ConcatArg::Literal(Scalar::Byte(number)) => Ok(i64::from(*number)),
+        _ => Err(Error::new(
+            "please use json_extract(json,path)::type semantic".to_string(),
+        )),
+    }
+}
+
+fn json_constant_path(arg: &ConcatArg) -> Result<Option<String>, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok(None),
+        ConcatArg::Literal(Scalar::Text(text)) => Ok(Some(text.clone())),
+        ConcatArg::Literal(Scalar::Char(unit)) => Ok(Some(json_char(*unit))),
+        _ => Err(Error::new("constant or bind variable expected".to_string())),
+    }
+}
+
+fn json_char(unit: u16) -> String {
+    char::from_u32(u32::from(unit))
+        .map(|unit| unit.to_string())
+        .unwrap_or_default()
+}
+
+fn json_doc_arg(table: &Table, arg: &ConcatArg) -> Result<ResolvedArg, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => Ok(ResolvedArg::Null),
+        ConcatArg::Literal(Scalar::Text(text)) => Ok(ResolvedArg::Text(text.clone())),
+        ConcatArg::Literal(Scalar::Char(unit)) => Ok(ResolvedArg::Text(json_char(*unit))),
+        ConcatArg::Column(name) => {
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            Ok(ResolvedArg::Column {
+                index,
+                tag: table.meta.columns[index].tag,
+            })
+        }
+        _ => Err(Error::new(
+            "there is no matching function `json_extract` with the argument types: (DOUBLE, STRING)"
+                .to_string(),
+        )),
+    }
+}
+
+fn json_extract_scalar(
+    table: &Table,
+    row: usize,
+    doc: &ResolvedArg,
+    path: Option<&str>,
+    boolean: bool,
+) -> Scalar {
+    let Some(path) = path else {
+        return if boolean {
+            Scalar::Boolean(false)
+        } else {
+            Scalar::Null
+        };
+    };
+    let Some(text) = text_of(table, row, doc) else {
+        return if boolean {
+            Scalar::Boolean(false)
+        } else {
+            Scalar::Null
+        };
+    };
+    let extracted = extract_json_varchar(&text, path);
+    if boolean {
+        Scalar::Boolean(extracted.as_deref() == Some("true"))
+    } else {
+        match extracted {
+            Some(text) => Scalar::Text(text),
+            None => Scalar::Null,
+        }
+    }
+}
+
+fn extract_json_varchar(doc: &str, path: &str) -> Option<String> {
+    let doc = doc.trim();
+    if doc.is_empty() {
+        return None;
+    }
+    if doc.as_bytes()[0] == b'n' {
+        return Some(String::new());
+    }
+    let mut parser = JsonCursor { src: doc, i: 0 };
+    let value = parser.parse_value()?;
+    if value.is_scalar() {
+        return Some(value.text());
+    }
+    let steps = json_path_steps(path)?;
+    value.walk(&steps).map(JVal::text)
+}
+
+fn json_path_steps(path: &str) -> Option<Vec<JsonStep>> {
+    let rest = path.strip_prefix('$').unwrap_or(path);
+    if rest.len() == path.len() && !path.is_empty() {
+        return None;
+    }
+    let bytes = rest.as_bytes();
+    let mut steps = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'.' {
+            i += 1;
+            let start = i;
+            if i >= bytes.len() {
+                return None;
+            }
+            while i < bytes.len() && bytes[i] != b'.' && bytes[i] != b'[' {
+                i += 1;
+            }
+            if i == start {
+                return None;
+            }
+            steps.push(JsonStep::Key(rest[start..i].to_string()));
+        } else if bytes[i] == b'[' {
+            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i == start || i >= bytes.len() || bytes[i] != b']' {
+                return None;
+            }
+            let index = rest[start..i].parse().ok()?;
+            i += 1;
+            steps.push(JsonStep::Index(index));
+        } else {
+            return None;
+        }
+    }
+    Some(steps)
+}
+
+enum JsonStep {
+    Key(String),
+    Index(usize),
+}
+
+enum JVal<'a> {
+    Null,
+    Text(String),
+    Raw(&'a str),
+    Object {
+        raw: &'a str,
+        fields: Vec<(String, JVal<'a>)>,
+    },
+    Array {
+        raw: &'a str,
+        items: Vec<JVal<'a>>,
+    },
+}
+
+impl<'a> JVal<'a> {
+    fn is_scalar(&self) -> bool {
+        matches!(self, Self::Null | Self::Text(_) | Self::Raw(_))
+    }
+
+    fn text(&self) -> String {
+        match self {
+            Self::Null => String::new(),
+            Self::Text(text) => text.clone(),
+            Self::Raw(text) => (*text).to_string(),
+            Self::Object { raw, .. } | Self::Array { raw, .. } => (*raw).to_string(),
+        }
+    }
+
+    fn walk(&self, steps: &[JsonStep]) -> Option<&Self> {
+        let mut current = self;
+        for step in steps {
+            current = match (current, step) {
+                (Self::Object { fields, .. }, JsonStep::Key(key)) => fields
+                    .iter()
+                    .find(|(name, _)| name == key)
+                    .map(|(_, value)| value)?,
+                (Self::Array { items, .. }, JsonStep::Index(index)) => items.get(*index)?,
+                _ => return None,
+            };
+        }
+        Some(current)
+    }
+}
+
+struct JsonCursor<'a> {
+    src: &'a str,
+    i: usize,
+}
+
+impl<'a> JsonCursor<'a> {
+    fn parse_value(&mut self) -> Option<JVal<'a>> {
+        self.skip_ws();
+        let start = self.i;
+        match self.peek()? {
+            '{' => self.parse_object(start),
+            '[' => self.parse_array(start),
+            '"' => Some(JVal::Text(self.parse_string()?)),
+            'n' => {
+                self.consume_literal("null")?;
+                Some(JVal::Null)
+            }
+            't' => {
+                self.consume_literal("true")?;
+                Some(JVal::Raw(&self.src[start..self.i]))
+            }
+            'f' => {
+                self.consume_literal("false")?;
+                Some(JVal::Raw(&self.src[start..self.i]))
+            }
+            '-' | '0'..='9' => {
+                self.consume_number();
+                Some(JVal::Raw(&self.src[start..self.i]))
+            }
+            _ => None,
+        }
+    }
+
+    fn parse_object(&mut self, start: usize) -> Option<JVal<'a>> {
+        self.bump()?;
+        let mut fields = Vec::new();
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('}') {
+                self.bump()?;
+                break;
+            }
+            let key = self.parse_string()?;
+            self.skip_ws();
+            if self.bump()? != ':' {
+                return None;
+            }
+            fields.push((key, self.parse_value()?));
+            self.skip_ws();
+            match self.peek() {
+                Some(',') => {
+                    self.bump()?;
+                }
+                Some('}') => {
+                    self.bump()?;
+                    break;
+                }
+                _ => return None,
+            }
+        }
+        Some(JVal::Object {
+            raw: &self.src[start..self.i],
+            fields,
+        })
+    }
+
+    fn parse_array(&mut self, start: usize) -> Option<JVal<'a>> {
+        self.bump()?;
+        let mut items = Vec::new();
+        loop {
+            self.skip_ws();
+            if self.peek() == Some(']') {
+                self.bump()?;
+                break;
+            }
+            items.push(self.parse_value()?);
+            self.skip_ws();
+            match self.peek() {
+                Some(',') => {
+                    self.bump()?;
+                }
+                Some(']') => {
+                    self.bump()?;
+                    break;
+                }
+                _ => return None,
+            }
+        }
+        Some(JVal::Array {
+            raw: &self.src[start..self.i],
+            items,
+        })
+    }
+
+    fn parse_string(&mut self) -> Option<String> {
+        if self.bump()? != '"' {
+            return None;
+        }
+        let mut text = String::new();
+        loop {
+            match self.bump()? {
+                '"' => return Some(text),
+                '\\' => match self.bump()? {
+                    escaped @ ('"' | '\\' | '/') => text.push(escaped),
+                    'b' => text.push('\u{0008}'),
+                    'f' => text.push('\u{000c}'),
+                    'n' => text.push('\n'),
+                    'r' => text.push('\r'),
+                    't' => text.push('\t'),
+                    'u' => {
+                        let mut hex = String::new();
+                        for _ in 0..4 {
+                            hex.push(self.bump()?);
+                        }
+                        let code = u32::from_str_radix(&hex, 16).ok()?;
+                        text.push(char::from_u32(code)?);
+                    }
+                    _ => return None,
+                },
+                ch => text.push(ch),
+            }
+        }
+    }
+
+    fn consume_literal(&mut self, literal: &str) -> Option<()> {
+        if self.src[self.i..].starts_with(literal) {
+            self.i += literal.len();
+            Some(())
+        } else {
+            None
+        }
+    }
+
+    fn consume_number(&mut self) {
+        if self.peek() == Some('-') {
+            self.bump();
+        }
+        while let Some(ch) = self.peek() {
+            if ch.is_ascii_digit() || matches!(ch, '.' | 'e' | 'E' | '+' | '-') {
+                self.bump();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn skip_ws(&mut self) {
+        while let Some(ch) = self.peek() {
+            if ch.is_ascii_whitespace() {
+                self.bump();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.src[self.i..].chars().next()
+    }
+
+    fn bump(&mut self) -> Option<char> {
+        let ch = self.peek()?;
+        self.i += ch.len_utf8();
+        Some(ch)
+    }
 }
 
 fn geo_within_scalar(table: &Table, row: usize, args: &[GeoSide; 5]) -> Result<Scalar, Error> {
@@ -3678,6 +4094,19 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
         return Ok(ResolvedProj::Typeof {
             label: expr.label.clone(),
             name: "UUID".to_string(),
+            result_tag: qdb_types::TAG_STRING,
+        });
+    }
+    if let Some(inner) = &expr.json {
+        let resolved = resolve_json_extract(table, inner)?;
+        let name = if matches!(resolved, ResolvedProj::JsonExtract { boolean: true, .. }) {
+            "BOOLEAN"
+        } else {
+            "VARCHAR"
+        };
+        return Ok(ResolvedProj::Typeof {
+            label: expr.label.clone(),
+            name: name.to_string(),
             result_tag: qdb_types::TAG_STRING,
         });
     }
@@ -9318,6 +9747,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::WithinBox { .. } => Scalar::Boolean(false),
         ResolvedProj::MakeGeohash { .. } => Scalar::Null,
         ResolvedProj::ToUuid { .. } => Scalar::Null,
+        ResolvedProj::JsonExtract {
+            doc, path, boolean, ..
+        } => json_extract_scalar(table, row, doc, path.as_deref(), *boolean),
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -40543,6 +40975,132 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn je_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors LIMIT 1",
+                "expected/je_a1.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"a\":\"beta\"}', '$.a') FROM sensors LIMIT 1",
+                "expected/je_beta.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"a\":null}', '$.a') FROM sensors LIMIT 1",
+                "expected/je_null.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"a\":true}', '$.a') FROM sensors LIMIT 1",
+                "expected/je_true.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"n\":-2}', '$.n') FROM sensors LIMIT 1",
+                "expected/je_neg.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"a\":{\"b\":3}}', '$.a.b') FROM sensors LIMIT 1",
+                "expected/je_nest.tsv",
+            ),
+            (
+                "SELECT json_extract('[10,20]', '$[1]') FROM sensors LIMIT 1",
+                "expected/je_arr.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"a\":1}', '$.missing') FROM sensors LIMIT 1",
+                "expected/je_miss.tsv",
+            ),
+            (
+                "SELECT json_extract(null, '$.a') FROM sensors LIMIT 1",
+                "expected/je_ndoc.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"a\":1}', null) FROM sensors LIMIT 1",
+                "expected/je_npath.tsv",
+            ),
+            (
+                "SELECT JSON_EXTRACT('{\"a\":1}', '$.a') FROM sensors LIMIT 1",
+                "expected/je_case.tsv",
+            ),
+            (
+                "SELECT json_extract(note, '$.a') FROM sensors",
+                "expected/je_note.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors WHERE id = 1",
+                "expected/je_one.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors WHERE id > 100",
+                "expected/je_none.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors LIMIT 0",
+                "expected/je_lim0.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"a\":1.5}', '$.a') FROM sensors LIMIT 1",
+                "expected/je_num.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"héllo\":\"東京\"}', '$.héllo') FROM sensors LIMIT 1",
+                "expected/je_uni.tsv",
+            ),
+            (
+                "SELECT json_extract('', '$.a') FROM sensors LIMIT 1",
+                "expected/je_empty.tsv",
+            ),
+            (
+                "SELECT json_extract('not json', '$.a') FROM sensors LIMIT 1",
+                "expected/je_bad.tsv",
+            ),
+            (
+                "SELECT json_extract(tag, '$') FROM sensors LIMIT 1",
+                "expected/je_tag.tsv",
+            ),
+            (
+                "SELECT typeof(json_extract('{\"a\":1}', '$.a')) FROM sensors LIMIT 1",
+                "expected/je_type.tsv",
+            ),
+            (
+                "SELECT json_extract('{\"a\":1}', '$.a', 1) FROM sensors",
+                "expected/je_bool.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let result = execute(&days, "SELECT json_extract('{\"a\":1}', '$.a') FROM days").unwrap();
+        let expected = std::fs::read_to_string(days.join("expected/je_days.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let mismatches = [
+            (
+                "SELECT json_extract() FROM sensors",
+                "function `json_extract` requires arguments",
+            ),
+            (
+                "SELECT json_extract('{\"a\":1}') FROM sensors",
+                "there is no matching function `json_extract` with the argument types: (STRING)",
+            ),
+            (
+                "SELECT json_extract(ok, '$.a') FROM sensors",
+                "there is no matching function `json_extract` with the argument types: (BOOLEAN, STRING)",
+            ),
+            (
+                "SELECT json_extract(missing, '$.a') FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

@@ -3072,7 +3072,29 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   uu_m2 "SELECT to_uuid(-2, 3) FROM sensors LIMIT 1" \
   uu_bc "SELECT to_uuid(b, code) FROM sensors" \
   uu_ts "SELECT to_uuid(ts, 0) FROM sensors LIMIT 1" \
-  uu_type "SELECT typeof(to_uuid(1, 2)) FROM sensors LIMIT 1"
+  uu_type "SELECT typeof(to_uuid(1, 2)) FROM sensors LIMIT 1" \
+  je_a1 "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors LIMIT 1" \
+  je_beta "SELECT json_extract('{\"a\":\"beta\"}', '$.a') FROM sensors LIMIT 1" \
+  je_null "SELECT json_extract('{\"a\":null}', '$.a') FROM sensors LIMIT 1" \
+  je_true "SELECT json_extract('{\"a\":true}', '$.a') FROM sensors LIMIT 1" \
+  je_neg "SELECT json_extract('{\"n\":-2}', '$.n') FROM sensors LIMIT 1" \
+  je_nest "SELECT json_extract('{\"a\":{\"b\":3}}', '$.a.b') FROM sensors LIMIT 1" \
+  je_arr "SELECT json_extract('[10,20]', '\$[1]') FROM sensors LIMIT 1" \
+  je_miss "SELECT json_extract('{\"a\":1}', '$.missing') FROM sensors LIMIT 1" \
+  je_ndoc "SELECT json_extract(null, '$.a') FROM sensors LIMIT 1" \
+  je_npath "SELECT json_extract('{\"a\":1}', null) FROM sensors LIMIT 1" \
+  je_case "SELECT JSON_EXTRACT('{\"a\":1}', '$.a') FROM sensors LIMIT 1" \
+  je_note "SELECT json_extract(note, '$.a') FROM sensors" \
+  je_one "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors WHERE id = 1" \
+  je_none "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors WHERE id > 100" \
+  je_lim0 "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors LIMIT 0" \
+  je_num "SELECT json_extract('{\"a\":1.5}', '$.a') FROM sensors LIMIT 1" \
+  je_uni "SELECT json_extract('{\"héllo\":\"東京\"}', '$.héllo') FROM sensors LIMIT 1" \
+  je_empty "SELECT json_extract('', '$.a') FROM sensors LIMIT 1" \
+  je_bad "SELECT json_extract('not json', '$.a') FROM sensors LIMIT 1" \
+  je_tag "SELECT json_extract(tag, '$') FROM sensors LIMIT 1" \
+  je_type "SELECT typeof(json_extract('{\"a\":1}', '$.a')) FROM sensors LIMIT 1" \
+  je_bool "SELECT json_extract('{\"a\":1}', '$.a', 1) FROM sensors"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3439,7 +3461,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   wn_days "SELECT within_radius(0, 0, 3, 4, 5) FROM days" \
   wb_days "SELECT within_box(0, 0, -1, -1, 1, 1) FROM days" \
   mg_days "SELECT make_geohash(2.0, 41.0, 20) FROM days" \
-  uu_days "SELECT to_uuid(1, 2) FROM days"
+  uu_days "SELECT to_uuid(1, 2) FROM days" \
+  je_days "SELECT json_extract('{\"a\":1}', '$.a') FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6459,6 +6482,28 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_uuid(b, code) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT to_uuid(ts, 0) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT typeof(to_uuid(1, 2)) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":\"beta\"}', '$.a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":null}', '$.a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":true}', '$.a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"n\":-2}', '$.n') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":{\"b\":3}}', '$.a.b') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('[10,20]', '$[1]') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":1}', '$.missing') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract(null, '$.a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":1}', null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT JSON_EXTRACT('{\"a\":1}', '$.a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract(note, '$.a') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":1.5}', '$.a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"héllo\":\"東京\"}', '$.héllo') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('', '$.a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('not json', '$.a') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract(tag, '$') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT typeof(json_extract('{\"a\":1}', '$.a')) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":1}', '$.a', 1) FROM sensors"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6824,6 +6869,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT within_box(0, 0, -1, -1, 1, 1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT make_geohash(2.0, 41.0, 20) FROM days"),
     (os.environ["DIFF_H2"], "SELECT to_uuid(1, 2) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT json_extract('{\"a\":1}', '$.a') FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

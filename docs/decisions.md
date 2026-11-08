@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `json_extract()`
+
+`json_extract` de dos argumentos lee un documento JSON con una ruta `$`, `$.clave` o `$[índice]` y devuelve `VARCHAR`. Un escalar que empieza por `n` se trata como nulo JSON y la ruta no se consulta. Un nulo JSON es la cadena vacía; una clave ausente o un documento vacío es `NULL`. El tercer argumento `1` es la firma tipada y devuelve `BOOLEAN`. Sin argumentos publica `function `json_extract` requires arguments`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `to_uuid()`
 
 `to_uuid` junta dos mitades `LONG` en un UUID en minúsculas. `to_uuid(1, 2)` es `00000000-0000-0002-0000-000000000001` y `to_uuid(-1, -1)` es `ffffffff-ffff-ffff-ffff-ffffffffffff`. Un nulo ocupa esa mitad con el centinela `LONG`; los dos nulos devuelven `NULL`. El tipo de `typeof` es `UUID`. Sin argumentos publica `to_uuid(LONG, LONG)`. Se contrastó con `/exec` en `sensors` y `days`.
