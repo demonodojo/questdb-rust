@@ -2994,7 +2994,19 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   gw_read "SELECT geo_within_radius_latlon(reading, reading, reading, reading, 1) FROM sensors" \
   gw_null "SELECT geo_within_radius_latlon(null, 0, 0, 1, 1) FROM sensors LIMIT 1" \
   gw_hi "SELECT geo_within_radius_latlon(0, score, 0, 1, 30000) FROM sensors LIMIT 1" \
-  gw_lo "SELECT geo_within_radius_latlon(0, score, 0, 1, 20000) FROM sensors LIMIT 1"
+  gw_lo "SELECT geo_within_radius_latlon(0, score, 0, 1, 20000) FROM sensors LIMIT 1" \
+  wn_in "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors LIMIT 1" \
+  wn_out "SELECT within_radius(0, 0, 3, 4, 4) FROM sensors LIMIT 1" \
+  wn_zero "SELECT within_radius(0, 0, 0, 0, 0) FROM sensors LIMIT 1" \
+  wn_neg "SELECT within_radius(0, 0, 3, 4, -1) FROM sensors LIMIT 1" \
+  wn_null "SELECT within_radius(null, 0, 0, 0, 1) FROM sensors LIMIT 1" \
+  wn_read "SELECT within_radius(reading, reading, reading, reading, 1) FROM sensors" \
+  wn_id "SELECT within_radius(id, id, id, id, 0) FROM sensors" \
+  wn_case "SELECT WITHIN_RADIUS(0, 0, 3, 4, 5) FROM sensors LIMIT 1" \
+  wn_one "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors WHERE id = 1" \
+  wn_none "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors WHERE id > 100" \
+  wn_lim0 "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors LIMIT 0" \
+  wn_score "SELECT within_radius(0, score, 0, 1, 2) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3357,7 +3369,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   nm_days "SELECT netmask('192.168.1.1/24') FROM days" \
   nm_dnote "SELECT netmask(note) FROM days" \
   gd_days "SELECT geo_distance_meters(0, 0, 0, 1) FROM days" \
-  gw_days "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM days"
+  gw_days "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM days" \
+  wn_days "SELECT within_radius(0, 0, 3, 4, 5) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6299,6 +6312,18 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(null, 0, 0, 1, 1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, score, 0, 1, 30000) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, score, 0, 1, 20000) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 3, 4, 4) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 0, 0, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 3, 4, -1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(null, 0, 0, 0, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(reading, reading, reading, reading, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(id, id, id, id, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT WITHIN_RADIUS(0, 0, 3, 4, 5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(0, score, 0, 1, 2) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6660,6 +6685,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT netmask(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT geo_distance_meters(0, 0, 0, 1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT within_radius(0, 0, 3, 4, 5) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

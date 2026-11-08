@@ -1,0 +1,5 @@
+within_radius(reading, reading, reading, reading, 1)
+true
+false
+true
+true

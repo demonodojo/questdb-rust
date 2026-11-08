@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `within_radius()`
+
+`within_radius` dice si un punto cartesiano está dentro del radio respecto del centro, borde incluido. `(0, 0)` y el centro `(3, 4)` caben en radio `5` y no en radio `4`. El mismo punto con radio `0` es `true`. Un radio negativo o un argumento nulo devuelve `false`. Sin argumentos publica la firma de cinco `DOUBLE`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `geo_within_radius_latlon()`
 
 `geo_within_radius_latlon` dice si un punto está dentro del radio en metros respecto del centro. El radio incluye el borde: la distancia `111320` con radio `111320` es `true` y con radio `100000` es `false`. Un argumento nulo o un radio negativo devuelve `false`. El centro `(40, -3)` y el punto `(41, 2)` caben en `500000` metros y no en `400000`. Sin argumentos publica la firma de cinco `DOUBLE`. Una latitud fuera de rango se rechaza igual que `geo_distance_meters`. Se contrastó con `/exec` en `sensors` y `days`.
