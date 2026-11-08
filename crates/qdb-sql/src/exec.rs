@@ -3359,8 +3359,13 @@ fn resolve_current_user(expr: &CurrentUserExpr) -> Result<ResolvedProj, Error> {
 
 fn resolve_current_database(expr: &CurrentDatabaseExpr) -> Result<ResolvedProj, Error> {
     if !expr.args.is_empty() {
+        let name = if expr.label.to_ascii_lowercase().contains("pg_catalog.") {
+            "pg_catalog.current_database"
+        } else {
+            "current_database"
+        };
         return Err(Error::new(format!(
-            "wrong number of arguments for function `current_database`; expected: 0, provided: {}",
+            "wrong number of arguments for function `{name}`; expected: 0, provided: {}",
             expr.args.len()
         )));
     }
@@ -41343,6 +41348,58 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn qb_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                "SELECT pg_catalog.current_database() FROM sensors",
+                "expected/qb_all.tsv",
+            ),
+            (
+                "SELECT pg_catalog.CURRENT_DATABASE() FROM sensors LIMIT 1",
+                "expected/qb_case.tsv",
+            ),
+            (
+                "SELECT pg_catalog.current_database() FROM sensors WHERE id = 1",
+                "expected/qb_one.tsv",
+            ),
+            (
+                "SELECT pg_catalog.current_database() FROM sensors WHERE id > 100",
+                "expected/qb_none.tsv",
+            ),
+            (
+                "SELECT pg_catalog.current_database() FROM sensors LIMIT 0",
+                "expected/qb_lim0.tsv",
+            ),
+            (
+                "SELECT typeof(pg_catalog.current_database()) FROM sensors LIMIT 1",
+                "expected/qb_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let result = execute(&days, "SELECT pg_catalog.current_database() FROM days").unwrap();
+        let expected = std::fs::read_to_string(days.join("expected/qb_days.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let err = execute(
+            &sensors,
+            "SELECT pg_catalog.current_database(1) FROM sensors",
+        )
+        .unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `pg_catalog.current_database`; expected: 0, provided: 1"
+            ),
             "{}",
             err.message
         );

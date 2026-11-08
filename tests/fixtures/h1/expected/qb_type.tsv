@@ -1,0 +1,2 @@
+typeof(pg_catalog.current_database())
+STRING
