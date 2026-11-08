@@ -3122,7 +3122,18 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ub_one "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors WHERE id = 1" \
   ub_none "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors WHERE id > 100" \
   ub_lim0 "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors LIMIT 0" \
-  ub_type "SELECT typeof(pg_catalog.pg_get_userbyid(1)) FROM sensors LIMIT 1"
+  ub_type "SELECT typeof(pg_catalog.pg_get_userbyid(1)) FROM sensors LIMIT 1" \
+  tv_all "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors" \
+  tv_zero "SELECT pg_catalog.pg_table_is_visible(0) FROM sensors LIMIT 1" \
+  tv_null "SELECT pg_catalog.pg_table_is_visible(null) FROM sensors LIMIT 1" \
+  tv_neg "SELECT pg_catalog.pg_table_is_visible(-1) FROM sensors LIMIT 1" \
+  tv_case "SELECT pg_catalog.PG_TABLE_IS_VISIBLE(1) FROM sensors LIMIT 1" \
+  tv_str "SELECT pg_catalog.pg_table_is_visible('2') FROM sensors LIMIT 1" \
+  tv_note "SELECT pg_catalog.pg_table_is_visible(note) FROM sensors LIMIT 1" \
+  tv_one "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors WHERE id = 1" \
+  tv_none "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors WHERE id > 100" \
+  tv_lim0 "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors LIMIT 0" \
+  tv_type "SELECT typeof(pg_catalog.pg_table_is_visible(1)) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3493,7 +3504,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   je_days "SELECT json_extract('{\"a\":1}', '$.a') FROM days" \
   th_days "SELECT to_char(from_base64('YWI=')) FROM days" \
   pv_days "SELECT pg_catalog.version() FROM days" \
-  ub_days "SELECT pg_catalog.pg_get_userbyid(1) FROM days"
+  ub_days "SELECT pg_catalog.pg_get_userbyid(1) FROM days" \
+  tv_days "SELECT pg_catalog.pg_table_is_visible(1) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6563,6 +6575,17 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.pg_get_userbyid(1)) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(null) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(-1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.PG_TABLE_IS_VISIBLE(1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible('2') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(note) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.pg_table_is_visible(1)) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6932,6 +6955,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT to_char(from_base64('YWI=')) FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_catalog.version() FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_catalog.pg_get_userbyid(1) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT pg_catalog.pg_table_is_visible(1) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

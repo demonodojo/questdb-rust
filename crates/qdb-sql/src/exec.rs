@@ -10,14 +10,15 @@ use crate::parse::{
     IsLeapYearExpr, JsonExtractExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr,
     MakeGeohashExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr,
     NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr, PgGetExprExpr, PgGetPartKeyDefExpr,
-    PgGetUserByIdExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
-    RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
-    RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr,
-    SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
-    TimestampFloorExpr, TimestampSequenceExpr, ToCharExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
-    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr, TrimEnd, TrimExpr, TypeofExpr,
-    UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr, WmidExpr, YearExpr,
+    PgGetUserByIdExpr, PgIsInRecoveryExpr, PgTableIsVisibleExpr, PiExpr, PowerExpr, Proj, Query,
+    QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
+    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr,
+    SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr,
+    SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
+    TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToCharExpr, ToDateExpr,
+    ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr, TrimEnd,
+    TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr,
+    WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -318,6 +319,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::CurrentSetting { label, .. }
             | ResolvedProj::PgGetPartKeyDef { label, .. }
             | ResolvedProj::PgGetUserById { label, .. }
+            | ResolvedProj::PgTableIsVisible { label, .. }
             | ResolvedProj::PgGetExpr { label, .. }
             | ResolvedProj::Netmask { label, .. }
             | ResolvedProj::GeoDistance { label, .. }
@@ -846,6 +848,9 @@ enum ResolvedProj {
     PgGetUserById {
         label: String,
     },
+    PgTableIsVisible {
+        label: String,
+    },
     PgGetExpr {
         label: String,
     },
@@ -1077,6 +1082,7 @@ impl ResolvedProj {
             | Self::CurrentSetting { label, .. }
             | Self::PgGetPartKeyDef { label, .. }
             | Self::PgGetUserById { label, .. }
+            | Self::PgTableIsVisible { label, .. }
             | Self::PgGetExpr { label, .. }
             | Self::Netmask { label, .. }
             | Self::GeoDistance { label, .. }
@@ -1121,7 +1127,9 @@ impl ResolvedProj {
             Self::DateTrunc { .. } | Self::TimestampFloor { .. } | Self::TimestampCeil { .. } => {
                 qdb_types::TAG_TIMESTAMP
             }
-            Self::IsLeapYear { .. } | Self::PgIsInRecovery { .. } => qdb_types::TAG_BOOLEAN,
+            Self::IsLeapYear { .. }
+            | Self::PgIsInRecovery { .. }
+            | Self::PgTableIsVisible { .. } => qdb_types::TAG_BOOLEAN,
             Self::DaysInMonth { .. } => qdb_types::TAG_INT,
             Self::ToStr { .. } => qdb_types::TAG_STRING,
             Self::IsEndOfMonth { .. }
@@ -1350,6 +1358,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::CurrentSetting(expr) => resolve_current_setting(table, expr),
         Proj::PgGetPartKeyDef(expr) => resolve_pg_get_partkeydef(table, expr),
         Proj::PgGetUserById(expr) => resolve_pg_get_userbyid(table, expr),
+        Proj::PgTableIsVisible(expr) => resolve_pg_table_is_visible(table, expr),
         Proj::PgGetExpr(expr) => resolve_pg_get_expr(table, expr),
         Proj::Netmask(expr) => resolve_netmask(table, expr),
         Proj::GeoDistance(expr) => resolve_geo_distance(table, expr),
@@ -1744,6 +1753,46 @@ fn resolve_current_setting(
     Ok(ResolvedProj::CurrentSetting {
         label: expr.label.clone(),
         value,
+    })
+}
+
+fn resolve_pg_table_is_visible(
+    table: &Table,
+    expr: &PgTableIsVisibleExpr,
+) -> Result<ResolvedProj, Error> {
+    let reported = if expr.qualified {
+        "pg_catalog.pg_table_is_visible"
+    } else {
+        "pg_table_is_visible"
+    };
+    if !expr.qualified {
+        let types = if expr.args.is_empty() {
+            String::new()
+        } else {
+            timestamp_floor_types(table, &expr.args)?
+        };
+        let listed = types.replace(", ", ",");
+        return Err(Error::new(format!(
+            "unknown function name: {reported}({listed})"
+        )));
+    }
+    if expr.args.len() != 1 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `{reported}`; expected: 1, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let actual = timestamp_floor_arg_type(table, &expr.args[0])?;
+    if !matches!(
+        actual,
+        "INT" | "BYTE" | "SHORT" | "CHAR" | "STRING" | "SYMBOL" | "VARCHAR" | "NULL"
+    ) {
+        return Err(Error::new(format!(
+            "argument type mismatch for function `{reported}` at #1 expected: INT, actual: {actual}"
+        )));
+    }
+    Ok(ResolvedProj::PgTableIsVisible {
+        label: expr.label.clone(),
     })
 }
 
@@ -4319,6 +4368,23 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
         return Ok(ResolvedProj::Typeof {
             label: expr.label.clone(),
             name: name.to_string(),
+            result_tag: qdb_types::TAG_STRING,
+        });
+    }
+    if expr
+        .label
+        .to_ascii_lowercase()
+        .contains("pg_table_is_visible(")
+    {
+        let inner = PgTableIsVisibleExpr {
+            label: String::new(),
+            args: expr.args.clone(),
+            qualified: expr.label.to_ascii_lowercase().contains("pg_catalog."),
+        };
+        resolve_pg_table_is_visible(table, &inner)?;
+        return Ok(ResolvedProj::Typeof {
+            label: expr.label.clone(),
+            name: "BOOLEAN".to_string(),
             result_tag: qdb_types::TAG_STRING,
         });
     }
@@ -9969,6 +10035,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::CurrentSetting { value, .. } => Scalar::Text(value.clone()),
         ResolvedProj::PgGetPartKeyDef { .. } | ResolvedProj::PgGetExpr { .. } => Scalar::Null,
         ResolvedProj::PgGetUserById { .. } => Scalar::Text("public".to_string()),
+        ResolvedProj::PgTableIsVisible { .. } => Scalar::Boolean(true),
         ResolvedProj::Netmask { arg, .. } => match text_of(table, row, arg) {
             Some(text) => match ipv4_netmask(&text) {
                 Some(mask) => Scalar::Text(mask),
@@ -41211,6 +41278,100 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn tv_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors",
+                "expected/tv_all.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(0) FROM sensors LIMIT 1",
+                "expected/tv_zero.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(null) FROM sensors LIMIT 1",
+                "expected/tv_null.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(-1) FROM sensors LIMIT 1",
+                "expected/tv_neg.tsv",
+            ),
+            (
+                "SELECT pg_catalog.PG_TABLE_IS_VISIBLE(1) FROM sensors LIMIT 1",
+                "expected/tv_case.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible('2') FROM sensors LIMIT 1",
+                "expected/tv_str.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(note) FROM sensors LIMIT 1",
+                "expected/tv_note.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors WHERE id = 1",
+                "expected/tv_one.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors WHERE id > 100",
+                "expected/tv_none.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors LIMIT 0",
+                "expected/tv_lim0.tsv",
+            ),
+            (
+                "SELECT typeof(pg_catalog.pg_table_is_visible(1)) FROM sensors LIMIT 1",
+                "expected/tv_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let result = execute(&days, "SELECT pg_catalog.pg_table_is_visible(1) FROM days").unwrap();
+        let expected = std::fs::read_to_string(days.join("expected/tv_days.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+        let messages = [
+            (
+                "SELECT pg_table_is_visible(1) FROM sensors",
+                "unknown function name: pg_table_is_visible(INT)",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible() FROM sensors",
+                "function `pg_catalog.pg_table_is_visible` requires arguments: pg_catalog.pg_table_is_visible(INT)",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(1, 2) FROM sensors",
+                "wrong number of arguments for function `pg_catalog.pg_table_is_visible`; expected: 1, provided: 2",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(id) FROM sensors",
+                "argument type mismatch for function `pg_catalog.pg_table_is_visible` at #1 expected: INT, actual: LONG",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(ok) FROM sensors",
+                "argument type mismatch for function `pg_catalog.pg_table_is_visible` at #1 expected: INT, actual: BOOLEAN",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(1.5) FROM sensors",
+                "argument type mismatch for function `pg_catalog.pg_table_is_visible` at #1 expected: INT, actual: DOUBLE",
+            ),
+            (
+                "SELECT pg_catalog.pg_table_is_visible(missing) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, message) in messages {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(message), "{}: {}", sql, err.message);
+        }
     }
 
     #[test]

@@ -317,6 +317,7 @@ pub enum Proj {
     CurrentSetting(CurrentSettingExpr),
     PgGetPartKeyDef(PgGetPartKeyDefExpr),
     PgGetUserById(PgGetUserByIdExpr),
+    PgTableIsVisible(PgTableIsVisibleExpr),
     PgGetExpr(PgGetExprExpr),
     Netmask(NetmaskExpr),
     GeoDistance(GeoDistanceExpr),
@@ -1184,6 +1185,14 @@ pub struct PgGetUserByIdExpr {
     pub qualified: bool,
 }
 
+/// `pg_catalog.pg_table_is_visible(oid)` returns the fixed boolean `true`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PgTableIsVisibleExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+    pub qualified: bool,
+}
+
 /// `pg_get_expr(expr, relation [, pretty])`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgGetExprExpr {
@@ -1483,6 +1492,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_pg_get_partkeydef()?.label
             } else if parser.starts_pg_get_userbyid_call() {
                 parser.parse_pg_get_userbyid()?.label
+            } else if parser.starts_pg_table_is_visible_call() {
+                parser.parse_pg_table_is_visible()?.label
             } else if parser.starts_pg_get_expr_call() {
                 parser.parse_pg_get_expr()?.label
             } else if parser.starts_netmask_call() {
@@ -1669,6 +1680,7 @@ enum SelectPiece {
     CurrentSetting(CurrentSettingExpr),
     PgGetPartKeyDef(PgGetPartKeyDefExpr),
     PgGetUserById(PgGetUserByIdExpr),
+    PgTableIsVisible(PgTableIsVisibleExpr),
     PgGetExpr(PgGetExprExpr),
     Netmask(NetmaskExpr),
     GeoDistance(GeoDistanceExpr),
@@ -1988,6 +2000,10 @@ impl<'a> Parser<'a> {
                 ));
             } else if self.starts_pg_get_userbyid_call() {
                 pieces.push(SelectPiece::PgGetUserById(self.parse_pg_get_userbyid()?));
+            } else if self.starts_pg_table_is_visible_call() {
+                pieces.push(SelectPiece::PgTableIsVisible(
+                    self.parse_pg_table_is_visible()?,
+                ));
             } else if self.starts_pg_get_expr_call() {
                 pieces.push(SelectPiece::PgGetExpr(self.parse_pg_get_expr()?));
             } else if self.starts_netmask_call() {
@@ -2194,6 +2210,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::CurrentSetting(_)
                     | SelectPiece::PgGetPartKeyDef(_)
                     | SelectPiece::PgGetUserById(_)
+                    | SelectPiece::PgTableIsVisible(_)
                     | SelectPiece::PgGetExpr(_)
                     | SelectPiece::Netmask(_)
                     | SelectPiece::GeoDistance(_)
@@ -2326,6 +2343,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::CurrentSetting(expr) => items.push(Proj::CurrentSetting(expr)),
                     SelectPiece::PgGetPartKeyDef(expr) => items.push(Proj::PgGetPartKeyDef(expr)),
                     SelectPiece::PgGetUserById(expr) => items.push(Proj::PgGetUserById(expr)),
+                    SelectPiece::PgTableIsVisible(expr) => items.push(Proj::PgTableIsVisible(expr)),
                     SelectPiece::PgGetExpr(expr) => items.push(Proj::PgGetExpr(expr)),
                     SelectPiece::Netmask(expr) => items.push(Proj::Netmask(expr)),
                     SelectPiece::GeoDistance(expr) => items.push(Proj::GeoDistance(expr)),
@@ -2478,6 +2496,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::CurrentSetting(_)
                 | SelectPiece::PgGetPartKeyDef(_)
                 | SelectPiece::PgGetUserById(_)
+                | SelectPiece::PgTableIsVisible(_)
                 | SelectPiece::PgGetExpr(_)
                 | SelectPiece::Netmask(_)
                 | SelectPiece::GeoDistance(_)
@@ -2758,6 +2777,35 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(PgGetUserByIdExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+            qualified,
+        })
+    }
+
+    fn starts_pg_table_is_visible_call(&self) -> bool {
+        self.starts_qualified_call("pg_catalog", "pg_table_is_visible")
+            || self.starts_named_call("pg_table_is_visible")
+    }
+
+    fn parse_pg_table_is_visible(&mut self) -> Result<PgTableIsVisibleExpr, Error> {
+        let first = self.ident_spelling()?;
+        self.skip();
+        let (qualified, name) = if self.eat(b'.') {
+            self.skip();
+            let second = self.ident_spelling()?;
+            (true, format!("{first}.{second}"))
+        } else {
+            (false, first)
+        };
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if qualified && args.is_empty() {
+            return Err(Error::new(
+                "function `pg_catalog.pg_table_is_visible` requires arguments: pg_catalog.pg_table_is_visible(INT)"
+                    .to_string(),
+            ));
+        }
+        Ok(PgTableIsVisibleExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
             qualified,
@@ -4240,6 +4288,26 @@ impl<'a> Parser<'a> {
                 to_char: None,
             });
         }
+        if self.argument_is_pg_table_is_visible() {
+            self.skip();
+            self.eat(b'(');
+            self.skip();
+            let inner = self.parse_pg_table_is_visible()?;
+            self.skip();
+            if !self.eat(b')') {
+                return Err(Error::new(
+                    "unsupported: expected ')' after typeof".to_string(),
+                ));
+            }
+            return Ok(TypeofExpr {
+                label: format!("{name}({})", inner.label),
+                args: inner.args,
+                geohash: None,
+                uuid: None,
+                json: None,
+                to_char: None,
+            });
+        }
         if self.argument_is_pg_get_userbyid() {
             self.skip();
             self.eat(b'(');
@@ -4292,6 +4360,16 @@ impl<'a> Parser<'a> {
             json: None,
             to_char: None,
         })
+    }
+
+    fn argument_is_pg_table_is_visible(&mut self) -> bool {
+        let saved = self.pos;
+        self.skip();
+        let open = self.eat(b'(');
+        self.skip();
+        let nested = open && self.starts_pg_table_is_visible_call();
+        self.pos = saved;
+        nested
     }
 
     fn argument_is_pg_get_userbyid(&mut self) -> bool {
