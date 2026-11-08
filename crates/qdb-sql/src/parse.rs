@@ -88,6 +88,7 @@ pub enum AggFunc {
     SkewnessSamp,
     KurtosisPop,
     KurtosisSamp,
+    Kurtosis,
     Sparkline,
     Mode,
     ApproxMedian,
@@ -4885,6 +4886,7 @@ impl<'a> Parser<'a> {
                 | "skewness_pop"
                 | "skewness_samp"
                 | "kurtosis_pop"
+                | "kurtosis"
                 | "kurtosis_samp"
                 | "sparkline"
                 | "mode"
@@ -4969,6 +4971,7 @@ impl<'a> Parser<'a> {
             "skewness_pop" => AggFunc::SkewnessPop,
             "skewness_samp" => AggFunc::SkewnessSamp,
             "kurtosis_pop" => AggFunc::KurtosisPop,
+            "kurtosis" => AggFunc::Kurtosis,
             "kurtosis_samp" => AggFunc::KurtosisSamp,
             "sparkline" => AggFunc::Sparkline,
             "mode" => AggFunc::Mode,
@@ -5029,6 +5032,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::SkewnessSamp
                 | AggFunc::KurtosisPop
                 | AggFunc::KurtosisSamp
+                | AggFunc::Kurtosis
                 | AggFunc::BoolAnd
                 | AggFunc::BoolOr
         ) && self.peek() != Some(b')')
@@ -5552,6 +5556,7 @@ impl<'a> Parser<'a> {
                 | AggFunc::SkewnessSamp
                 | AggFunc::KurtosisPop
                 | AggFunc::KurtosisSamp
+                | AggFunc::Kurtosis
         ) && column.is_none()
         {
             let fname = name.to_ascii_lowercase();

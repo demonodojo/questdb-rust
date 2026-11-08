@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `kurtosis()`
+
+`kurtosis` devuelve la misma curtosis excesiva muestral que `kurtosis_samp`, como `DOUBLE`. Con menos de cuatro valores finitos, o si todos son iguales, el resultado es `NULL`. `kurtosis(b)` es `3.9926202441231036`, `kurtosis(code)` es `3.9999992882590982` y `kurtosis(ts)` es `-1.2000000000000024`. `flags`, `reading`, `score`, `id` y `day` salen `NULL`. Los grupos por `location` salen `NULL`. `KURTOSIS` conserva las mayúsculas del encabezado. Un booleano o un símbolo no encajan. Un texto que no es número se rechaza en la fila. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `kurtosis_samp()`
 
 `kurtosis_samp` devuelve la curtosis excesiva muestral como `DOUBLE`. Con menos de cuatro valores finitos, o si todos son iguales, el resultado es `NULL`. `kurtosis_samp(b)` es `3.9926202441231036`, `kurtosis_samp(code)` es `3.9999992882590982` y `kurtosis_samp(ts)` es `-1.2000000000000024`. `flags`, `reading`, `score`, `id` y `day` salen `NULL`. Los grupos por `location` salen `NULL`. `KURTOSIS_SAMP` conserva las mayúsculas del encabezado. Un booleano o un símbolo no encajan. Un texto que no es número se rechaza en la fila. Se contrastó con `/exec` en `sensors` y `days`.
