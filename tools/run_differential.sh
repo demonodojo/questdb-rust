@@ -3258,7 +3258,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   gy_loc "SELECT location, count() FROM sensors AS s GROUP BY s.location ORDER BY location" \
   gy_qual "SELECT s.location, count() FROM sensors AS s GROUP BY s.location ORDER BY s.location" \
   qn_note "SELECT length(s.note) FROM sensors AS s" \
-  lw_note "SELECT lower(s.note) FROM sensors AS s"
+  lw_note "SELECT lower(s.note) FROM sensors AS s" \
+  up_loc "SELECT upper(s.location) FROM sensors AS s"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -6842,6 +6843,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT s.location, count() FROM sensors AS s GROUP BY s.location ORDER BY s.location"),
     (os.environ["DIFF_H1"], "SELECT length(s.note) FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT lower(s.note) FROM sensors AS s"),
+    (os.environ["DIFF_H1"], "SELECT upper(s.location) FROM sensors AS s"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),

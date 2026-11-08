@@ -24,15 +24,15 @@ Tests que pasaron:
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
 | qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
-| qdb-sql | 259 ok, incluido `lw_matches_captured_exec` |
+| qdb-sql | 260 ok, incluido `up_matches_captured_exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
-captured-oracle: 3199 queries match tests/fixtures/h1/expected
+captured-oracle: 3200 queries match tests/fixtures/h1/expected
 captured-oracle: 376 queries match tests/fixtures/h2/expected
-live-reference: 3575 queries matched row counts against http://127.0.0.1:19011/exec
+live-reference: 3576 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
 Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
@@ -51,4 +51,4 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 
 ## Próxima tarea
 
-Añadir `upper` de una columna cualificada y comprobarlo contra `/exec`. `SELECT upper(s.location) FROM sensors AS s` devuelve la columna `upper(s.location)`, cuatro filas: `MADRID`, `NULL`, `MADRID` y `東京`. No abrir WAL en ese paso.
+Añadir `concat` de columnas cualificadas y comprobarlo contra `/exec`. `SELECT concat(s.note, s.location) FROM sensors AS s` devuelve la columna `concat(s.note, s.location)`, cuatro filas: `alphamadrid`, cadena vacía, `madrid` y `βeta東京`. No abrir WAL en ese paso.
