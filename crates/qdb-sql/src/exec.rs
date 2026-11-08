@@ -5,12 +5,12 @@ use crate::parse::{
     CosExpr, CotExpr, CurrentCatalogExpr, CurrentDatabaseExpr, CurrentSchemaExpr,
     CurrentSettingExpr, CurrentUserExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
     DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr,
-    ExtractExpr, Filter, FloorExpr, FormatTypeExpr, GeoDistanceExpr, GlobExpr, GreatestExpr,
-    GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr,
-    LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr,
-    MinuteExpr, MonthExpr, NanosExpr, NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr,
-    PgGetExprExpr, PgGetPartKeyDefExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query,
-    QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
+    ExtractExpr, Filter, FloorExpr, FormatTypeExpr, GeoDistanceExpr, GeoWithinExpr, GlobExpr,
+    GreatestExpr, GroupedSelect, HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr,
+    LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr,
+    MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NetmaskExpr, NotExpr, NullIfExpr,
+    PadExpr, PgGetExprExpr, PgGetPartKeyDefExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj,
+    Query, QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
     RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr,
     SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr,
     SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr,
@@ -319,6 +319,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::PgGetExpr { label, .. }
             | ResolvedProj::Netmask { label, .. }
             | ResolvedProj::GeoDistance { label, .. }
+            | ResolvedProj::GeoWithin { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -845,6 +846,10 @@ enum ResolvedProj {
         label: String,
         args: [GeoSide; 4],
     },
+    GeoWithin {
+        label: String,
+        args: [GeoSide; 5],
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -1034,6 +1039,7 @@ impl ResolvedProj {
             | Self::PgGetExpr { label, .. }
             | Self::Netmask { label, .. }
             | Self::GeoDistance { label, .. }
+            | Self::GeoWithin { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1137,6 +1143,7 @@ impl ResolvedProj {
             Self::TimestampSequence { .. } => qdb_types::TAG_TIMESTAMP,
             Self::Netmask { .. } => qdb_types::TAG_IPV4,
             Self::GeoDistance { .. } => qdb_types::TAG_DOUBLE,
+            Self::GeoWithin { .. } => qdb_types::TAG_BOOLEAN,
             _ => qdb_types::TAG_STRING,
         }
     }
@@ -1280,6 +1287,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::PgGetExpr(expr) => resolve_pg_get_expr(table, expr),
         Proj::Netmask(expr) => resolve_netmask(table, expr),
         Proj::GeoDistance(expr) => resolve_geo_distance(table, expr),
+        Proj::GeoWithin(expr) => resolve_geo_within(table, expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1770,6 +1778,69 @@ fn resolve_geo_distance(table: &Table, expr: &GeoDistanceExpr) -> Result<Resolve
         label: expr.label.clone(),
         args: sides,
     })
+}
+
+fn resolve_geo_within(table: &Table, expr: &GeoWithinExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 5 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `geo_within_radius_latlon`; expected: 5, provided: {}",
+            expr.args.len()
+        )));
+    }
+    let mut names = Vec::with_capacity(5);
+    for arg in &expr.args {
+        names.push(timestamp_floor_arg_type(table, arg)?);
+    }
+    if names.iter().any(|name| !geo_double_type(name)) {
+        let mut message =
+            String::from("argument type mismatch for function `geo_within_radius_latlon`");
+        for (index, name) in names.iter().enumerate() {
+            if *name != "DOUBLE" {
+                message.push_str(&format!(
+                    " at #{} expected: DOUBLE, actual: {name}",
+                    index + 1
+                ));
+            }
+        }
+        return Err(Error::new(message));
+    }
+    let mut sides = [
+        GeoSide::Null,
+        GeoSide::Null,
+        GeoSide::Null,
+        GeoSide::Null,
+        GeoSide::Null,
+    ];
+    for (index, arg) in expr.args.iter().enumerate() {
+        sides[index] = geo_side(table, arg)?;
+    }
+    Ok(ResolvedProj::GeoWithin {
+        label: expr.label.clone(),
+        args: sides,
+    })
+}
+
+fn geo_within_scalar(table: &Table, row: usize, args: &[GeoSide; 5]) -> Result<Scalar, Error> {
+    let radius = match geo_number(table, row, &args[4])? {
+        Some(value) if value >= 0.0 => value,
+        _ => return Ok(Scalar::Boolean(false)),
+    };
+    let mut values = [0.0; 4];
+    for index in 0..4 {
+        match geo_number(table, row, &args[index])? {
+            Some(value) => values[index] = value,
+            None => return Ok(Scalar::Boolean(false)),
+        }
+    }
+    geo_range(values[2], true)?;
+    geo_range(values[3], false)?;
+    geo_range(values[0], true)?;
+    geo_range(values[1], false)?;
+    let (lat, lon, center_lat, center_lon) = (values[0], values[1], values[2], values[3]);
+    let meters_per_deg_lon = 111_320.0 * center_lat.to_radians().cos();
+    let dx = (lon - center_lon) * meters_per_deg_lon;
+    let dy = (lat - center_lat) * 111_320.0;
+    Ok(Scalar::Boolean(radius * radius >= dx * dx + dy * dy))
 }
 
 fn geo_double_type(name: &str) -> bool {
@@ -8561,6 +8632,7 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
             ..
         } => bar_value(table, row, value, min, max, width),
         ResolvedProj::GeoDistance { args, .. } => geo_distance_scalar(table, row, args),
+        ResolvedProj::GeoWithin { args, .. } => geo_within_scalar(table, row, args),
         _ => Ok(eval_resolved(table, row, item)),
     }
 }
@@ -8692,6 +8764,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             None => Scalar::Null,
         },
         ResolvedProj::GeoDistance { .. } => Scalar::Null,
+        ResolvedProj::GeoWithin { .. } => Scalar::Boolean(false),
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39917,6 +39990,128 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn gw_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors LIMIT 1",
+                "expected/gw_in.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(0, 0, 0, 1, 100000) FROM sensors LIMIT 1",
+                "expected/gw_out.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(0, 0, 0, 1, 111320) FROM sensors LIMIT 1",
+                "expected/gw_eq.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(0, 0, 0, 0, 0) FROM sensors LIMIT 1",
+                "expected/gw_zero.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(41.0, 2.0, 40.0, -3.0, 500000) FROM sensors LIMIT 1",
+                "expected/gw_mad.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(41.0, 2.0, 40.0, -3.0, 400000) FROM sensors LIMIT 1",
+                "expected/gw_far.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT GEO_WITHIN_RADIUS_LATLON(0, 0, 0, 1, 200000) FROM sensors LIMIT 1",
+                "expected/gw_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors WHERE id = 1",
+                "expected/gw_id1.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors WHERE id > 100",
+                "expected/gw_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors LIMIT 0",
+                "expected/gw_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(reading, reading, reading, reading, 1) FROM sensors",
+                "expected/gw_read.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(null, 0, 0, 1, 1) FROM sensors LIMIT 1",
+                "expected/gw_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(0, score, 0, 1, 30000) FROM sensors LIMIT 1",
+                "expected/gw_hi.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(0, score, 0, 1, 20000) FROM sensors LIMIT 1",
+                "expected/gw_lo.tsv",
+            ),
+            (
+                &days,
+                "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM days",
+                "expected/gw_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let mismatches = [
+            (
+                "SELECT geo_within_radius_latlon() FROM sensors",
+                "function `geo_within_radius_latlon` requires arguments: geo_within_radius_latlon(DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE)",
+            ),
+            (
+                "SELECT geo_within_radius_latlon(0, 0, 0, 1) FROM sensors",
+                "wrong number of arguments for function `geo_within_radius_latlon`; expected: 5, provided: 4",
+            ),
+            (
+                "SELECT geo_within_radius_latlon(0, 0, 0, 1, 1, 1) FROM sensors",
+                "wrong number of arguments for function `geo_within_radius_latlon`; expected: 5, provided: 6",
+            ),
+            (
+                "SELECT geo_within_radius_latlon(note, 0, 0, 1, 1) FROM sensors",
+                "inconvertible value: `alpha` [STRING -> DOUBLE]",
+            ),
+            (
+                "SELECT geo_within_radius_latlon(ok, 0, 0, 1, 1) FROM sensors",
+                "argument type mismatch for function `geo_within_radius_latlon` at #1 expected: DOUBLE, actual: BOOLEAN at #2 expected: DOUBLE, actual: INT at #3 expected: DOUBLE, actual: INT at #4 expected: DOUBLE, actual: INT at #5 expected: DOUBLE, actual: INT",
+            ),
+            (
+                "SELECT geo_within_radius_latlon(ts, 0, 0, 1, 1) FROM sensors",
+                "latitude must be between -90 and 90 [value=1.577934245E15]",
+            ),
+            (
+                "SELECT geo_within_radius_latlon(missing, 0, 0, 1, 1) FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

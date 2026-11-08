@@ -2980,7 +2980,21 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   gd_score "SELECT geo_distance_meters(0, score, 0, 1) FROM sensors LIMIT 1" \
   gd_flags "SELECT geo_distance_meters(0, 0, 0, flags) FROM sensors LIMIT 1" \
   gd_byte "SELECT geo_distance_meters(0, b, 0, 1) FROM sensors LIMIT 1" \
-  gd_sc2 "SELECT geo_distance_meters(score, 0, score, 1) FROM sensors"
+  gd_sc2 "SELECT geo_distance_meters(score, 0, score, 1) FROM sensors" \
+  gw_in "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors LIMIT 1" \
+  gw_out "SELECT geo_within_radius_latlon(0, 0, 0, 1, 100000) FROM sensors LIMIT 1" \
+  gw_eq "SELECT geo_within_radius_latlon(0, 0, 0, 1, 111320) FROM sensors LIMIT 1" \
+  gw_zero "SELECT geo_within_radius_latlon(0, 0, 0, 0, 0) FROM sensors LIMIT 1" \
+  gw_mad "SELECT geo_within_radius_latlon(41.0, 2.0, 40.0, -3.0, 500000) FROM sensors LIMIT 1" \
+  gw_far "SELECT geo_within_radius_latlon(41.0, 2.0, 40.0, -3.0, 400000) FROM sensors LIMIT 1" \
+  gw_case "SELECT GEO_WITHIN_RADIUS_LATLON(0, 0, 0, 1, 200000) FROM sensors LIMIT 1" \
+  gw_id1 "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors WHERE id = 1" \
+  gw_none "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors WHERE id > 100" \
+  gw_lim0 "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors LIMIT 0" \
+  gw_read "SELECT geo_within_radius_latlon(reading, reading, reading, reading, 1) FROM sensors" \
+  gw_null "SELECT geo_within_radius_latlon(null, 0, 0, 1, 1) FROM sensors LIMIT 1" \
+  gw_hi "SELECT geo_within_radius_latlon(0, score, 0, 1, 30000) FROM sensors LIMIT 1" \
+  gw_lo "SELECT geo_within_radius_latlon(0, score, 0, 1, 20000) FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3342,7 +3356,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   gx_days "SELECT pg_get_expr(note, 1) FROM days" \
   nm_days "SELECT netmask('192.168.1.1/24') FROM days" \
   nm_dnote "SELECT netmask(note) FROM days" \
-  gd_days "SELECT geo_distance_meters(0, 0, 0, 1) FROM days"
+  gd_days "SELECT geo_distance_meters(0, 0, 0, 1) FROM days" \
+  gw_days "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6270,6 +6285,20 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, 0, 0, flags) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, b, 0, 1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT geo_distance_meters(score, 0, score, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 100000) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 111320) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, 0, 0, 0, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(41.0, 2.0, 40.0, -3.0, 500000) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(41.0, 2.0, 40.0, -3.0, 400000) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT GEO_WITHIN_RADIUS_LATLON(0, 0, 0, 1, 200000) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(reading, reading, reading, reading, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(null, 0, 0, 1, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, score, 0, 1, 30000) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, score, 0, 1, 20000) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6630,6 +6659,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT netmask('192.168.1.1/24') FROM days"),
     (os.environ["DIFF_H2"], "SELECT netmask(note) FROM days"),
     (os.environ["DIFF_H2"], "SELECT geo_distance_meters(0, 0, 0, 1) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
