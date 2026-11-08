@@ -223,6 +223,7 @@ pub enum Proj {
     Substr(SubstrExpr),
     Trim(TrimExpr),
     Replace(ReplaceExpr),
+    RegexpReplace(RegexpReplaceExpr),
     StartsWith(StartsWithExpr),
     Glob(GlobExpr),
     Ilike(IlikeExpr),
@@ -370,6 +371,13 @@ pub struct TrimExpr {
 /// `replace(value, old, new)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplaceExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `regexp_replace(value, pattern, replacement)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegexpReplaceExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -1182,6 +1190,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_trim()?.label
             } else if parser.starts_replace_call() {
                 parser.parse_replace()?.label
+            } else if parser.starts_regexp_replace_call() {
+                parser.parse_regexp_replace()?.label
             } else if parser.starts_starts_with_call() {
                 parser.parse_starts_with()?.label
             } else if parser.starts_glob_call() {
@@ -1420,6 +1430,7 @@ enum SelectPiece {
     Substr(SubstrExpr),
     Trim(TrimExpr),
     Replace(ReplaceExpr),
+    RegexpReplace(RegexpReplaceExpr),
     StartsWith(StartsWithExpr),
     Glob(GlobExpr),
     Ilike(IlikeExpr),
@@ -1620,6 +1631,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Trim(self.parse_trim()?));
             } else if self.starts_replace_call() {
                 pieces.push(SelectPiece::Replace(self.parse_replace()?));
+            } else if self.starts_regexp_replace_call() {
+                pieces.push(SelectPiece::RegexpReplace(self.parse_regexp_replace()?));
             } else if self.starts_starts_with_call() {
                 pieces.push(SelectPiece::StartsWith(self.parse_starts_with()?));
             } else if self.starts_glob_call() {
@@ -1883,6 +1896,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Substr(_)
                     | SelectPiece::Trim(_)
                     | SelectPiece::Replace(_)
+                    | SelectPiece::RegexpReplace(_)
                     | SelectPiece::StartsWith(_)
                     | SelectPiece::Glob(_)
                     | SelectPiece::Ilike(_)
@@ -1997,6 +2011,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Substr(expr) => items.push(Proj::Substr(expr)),
                     SelectPiece::Trim(expr) => items.push(Proj::Trim(expr)),
                     SelectPiece::Replace(expr) => items.push(Proj::Replace(expr)),
+                    SelectPiece::RegexpReplace(expr) => items.push(Proj::RegexpReplace(expr)),
                     SelectPiece::StartsWith(expr) => items.push(Proj::StartsWith(expr)),
                     SelectPiece::Glob(expr) => items.push(Proj::Glob(expr)),
                     SelectPiece::Ilike(expr) => items.push(Proj::Ilike(expr)),
@@ -2139,6 +2154,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Substr(_)
                 | SelectPiece::Trim(_)
                 | SelectPiece::Replace(_)
+                | SelectPiece::RegexpReplace(_)
                 | SelectPiece::StartsWith(_)
                 | SelectPiece::Glob(_)
                 | SelectPiece::Ilike(_)
@@ -4970,6 +4986,24 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(ReplaceExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_regexp_replace_call(&self) -> bool {
+        self.starts_named_call("regexp_replace")
+    }
+
+    fn parse_regexp_replace(&mut self) -> Result<RegexpReplaceExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(
+                "function `regexp_replace` requires arguments".to_string(),
+            ));
+        }
+        Ok(RegexpReplaceExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

@@ -1,0 +1,5 @@
+regexp_replace(note, null, 'b')
+NULL
+NULL
+NULL
+NULL

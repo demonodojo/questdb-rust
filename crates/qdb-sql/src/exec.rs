@@ -9,12 +9,13 @@ use crate::parse::{
     IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr,
     MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NotExpr,
     NullIfExpr, PadExpr, PgIsInRecoveryExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr,
-    RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr,
-    SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr,
-    SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr,
-    SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr,
-    ToDateExpr, ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd,
-    TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr, WmidExpr, YearExpr,
+    RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
+    RoundUpExpr, SecondExpr, SelectList, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr,
+    SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
+    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
+    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
+    VersionExpr, WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -221,6 +222,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Substr { label, .. }
             | ResolvedProj::Trim { label, .. }
             | ResolvedProj::Replace { label, .. }
+            | ResolvedProj::RegexpReplace { label, .. }
             | ResolvedProj::StartsWith { label, .. }
             | ResolvedProj::Glob { label, .. }
             | ResolvedProj::Ilike { label, .. }
@@ -390,6 +392,10 @@ enum ResolvedProj {
         end: TrimEnd,
     },
     Replace {
+        label: String,
+        mode: ReplaceMode,
+    },
+    RegexpReplace {
         label: String,
         mode: ReplaceMode,
     },
@@ -908,6 +914,7 @@ impl ResolvedProj {
             | Self::Substr { label, .. }
             | Self::Trim { label, .. }
             | Self::Replace { label, .. }
+            | Self::RegexpReplace { label, .. }
             | Self::StartsWith { label, .. }
             | Self::Glob { label, .. }
             | Self::Ilike { label, .. }
@@ -1137,6 +1144,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Substr(expr) => resolve_substr(table, expr),
         Proj::Trim(expr) => resolve_trim(table, expr),
         Proj::Replace(expr) => resolve_replace(table, expr),
+        Proj::RegexpReplace(expr) => resolve_regexp_replace(table, expr),
         Proj::StartsWith(expr) => resolve_starts_with(table, expr),
         Proj::Glob(expr) => resolve_glob(table, expr),
         Proj::Ilike(expr) => resolve_ilike(table, expr),
@@ -7561,6 +7569,33 @@ fn resolve_replace(table: &Table, expr: &ReplaceExpr) -> Result<ResolvedProj, Er
     })
 }
 
+fn resolve_regexp_replace(table: &Table, expr: &RegexpReplaceExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 3 || expr.args.iter().any(|arg| !replace_text_ok(table, arg)) {
+        return Err(text_type_error(table, "regexp_replace", &expr.args));
+    }
+    let mode = if matches!(expr.args[2], ConcatArg::Literal(Scalar::Null))
+        || matches!(expr.args[1], ConcatArg::Literal(Scalar::Null))
+    {
+        ReplaceMode::Null
+    } else if matches!(&expr.args[1], ConcatArg::Literal(Scalar::Text(text)) if text.is_empty()) {
+        ReplaceMode::Value(resolve_concat_arg(table, &expr.args[0])?)
+    } else if matches!(expr.args[0], ConcatArg::Literal(Scalar::Null)) {
+        ReplaceMode::Null
+    } else if matches!(&expr.args[0], ConcatArg::Literal(Scalar::Text(text)) if text.is_empty()) {
+        ReplaceMode::Empty
+    } else {
+        ReplaceMode::Run {
+            value: resolve_concat_arg(table, &expr.args[0])?,
+            old: resolve_concat_arg(table, &expr.args[1])?,
+            new: resolve_concat_arg(table, &expr.args[2])?,
+        }
+    };
+    Ok(ResolvedProj::RegexpReplace {
+        label: expr.label.clone(),
+        mode,
+    })
+}
+
 fn replace_text_ok(table: &Table, arg: &ConcatArg) -> bool {
     match arg {
         ConcatArg::Literal(Scalar::Text(_)) | ConcatArg::Literal(Scalar::Null) => true,
@@ -8608,7 +8643,8 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             };
             Scalar::Boolean(matched)
         }
-        ResolvedProj::Replace { mode, .. } => match mode {
+        ResolvedProj::Replace { mode, .. } | ResolvedProj::RegexpReplace { mode, .. } => match mode
+        {
             ReplaceMode::Null => Scalar::Null,
             ReplaceMode::Empty => Scalar::Text(String::new()),
             ReplaceMode::Value(arg) => match text_of(table, row, arg) {
@@ -39473,6 +39509,95 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn rr_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT regexp_replace(note, 'a', 'b') FROM sensors",
+                "expected/rr_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT REGEXP_REPLACE(note, 'a', 'b') FROM sensors",
+                "expected/rr_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regexp_replace(note, 'a', 'b') FROM sensors WHERE id = 1",
+                "expected/rr_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regexp_replace(note, 'a', 'b') FROM sensors WHERE id > 100",
+                "expected/rr_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regexp_replace(note, 'a', 'b') FROM sensors LIMIT 0",
+                "expected/rr_lim0.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regexp_replace(null, 'a', 'b') FROM sensors LIMIT 1",
+                "expected/rr_null.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regexp_replace(note, null, 'b') FROM sensors",
+                "expected/rr_pat.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regexp_replace(note, 'a', null) FROM sensors",
+                "expected/rr_rep.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regexp_replace('alpha', 'a', 'b') FROM sensors LIMIT 1",
+                "expected/rr_lit.tsv",
+            ),
+            (
+                &days,
+                "SELECT regexp_replace(note, 'a', 'b') FROM days",
+                "expected/rr_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let mismatches = [
+            (
+                "SELECT regexp_replace() FROM sensors",
+                "function `regexp_replace` requires arguments",
+            ),
+            (
+                "SELECT regexp_replace(note, 'a') FROM sensors",
+                "there is no matching function `regexp_replace` with the argument types: (STRING, CHAR)",
+            ),
+            (
+                "SELECT regexp_replace(id, 'a', 'b') FROM sensors",
+                "there is no matching function `regexp_replace` with the argument types: (LONG, CHAR, CHAR)",
+            ),
+            (
+                "SELECT regexp_replace(note, 1, 'b') FROM sensors",
+                "there is no matching function `regexp_replace` with the argument types: (STRING, INT, CHAR)",
+            ),
+            (
+                "SELECT regexp_replace(missing, 'a', 'b') FROM sensors",
+                "Invalid column: missing",
+            ),
+        ];
+        for (sql, expected) in mismatches {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
     }
 
     #[test]

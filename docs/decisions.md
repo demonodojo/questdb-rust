@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `regexp_replace()`
+
+`regexp_replace` sustituye cada aparición literal del patrón. El tipo es `STRING`. `regexp_replace(note, 'a', 'b')` devuelve `blphb`, `NULL`, una cadena vacía y `βetb`. `REGEXP_REPLACE` conserva las mayúsculas. En `days` devuelve `blphb`, `NULL`, `betb` y `東京`. Un valor, un patrón o un reemplazo nulos dejan `NULL`. `regexp_replace('alpha', 'a', 'b')` devuelve `blphb`. Sin argumentos exige argumentos y no publica firma. Dos argumentos, un `LONG` o un patrón entero se rechazan con `there is no matching function `regexp_replace``. Una columna ausente es `Invalid column: missing`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `format_type()`
 
 `format_type` devuelve `NULL` de tipo `STRING` cuando los dos argumentos se aceptan. Acepta enteros de 32 bits, byte, short, char, texto, símbolo, varchar y nulos. Rechaza long, double, boolean, timestamp, date y float con `expression type mismatch, expected: INT`. `format_type(20, 0)` son cuatro `NULL`. `FORMAT_TYPE` conserva las mayúsculas. `format_type(1114, -1)` encabeza `format_type(1114, -(1))`. Sin argumentos exige `format_type(INT, INT)`. Un argumento dice `expected: 2, provided: 1` y tres dicen `provided: 3`. Se contrastó con `/exec` en `sensors` y `days`.

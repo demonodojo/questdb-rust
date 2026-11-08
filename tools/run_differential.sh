@@ -2887,7 +2887,16 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ft_ztag "SELECT format_type(0, tag) FROM sensors LIMIT 1" \
   ft_null "SELECT format_type(null, null) FROM sensors LIMIT 1" \
   ft_none "SELECT format_type(20, 0) FROM sensors WHERE id > 100" \
-  ft_lim0 "SELECT format_type(20, 0) FROM sensors LIMIT 0"
+  ft_lim0 "SELECT format_type(20, 0) FROM sensors LIMIT 0" \
+  rr_note "SELECT regexp_replace(note, 'a', 'b') FROM sensors" \
+  rr_case "SELECT REGEXP_REPLACE(note, 'a', 'b') FROM sensors" \
+  rr_one "SELECT regexp_replace(note, 'a', 'b') FROM sensors WHERE id = 1" \
+  rr_none "SELECT regexp_replace(note, 'a', 'b') FROM sensors WHERE id > 100" \
+  rr_lim0 "SELECT regexp_replace(note, 'a', 'b') FROM sensors LIMIT 0" \
+  rr_null "SELECT regexp_replace(null, 'a', 'b') FROM sensors LIMIT 1" \
+  rr_pat "SELECT regexp_replace(note, null, 'b') FROM sensors" \
+  rr_rep "SELECT regexp_replace(note, 'a', null) FROM sensors" \
+  rr_lit "SELECT regexp_replace('alpha', 'a', 'b') FROM sensors LIMIT 1"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3242,7 +3251,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   cg_days "SELECT current_catalog() FROM days" \
   vn_days "SELECT version() FROM days" \
   pr_days "SELECT pg_is_in_recovery() FROM days" \
-  ft_days "SELECT format_type(1, 1) FROM days"
+  ft_days "SELECT format_type(1, 1) FROM days" \
+  rr_days "SELECT regexp_replace(note, 'a', 'b') FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -6077,6 +6087,15 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT format_type(null, null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT format_type(20, 0) FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT format_type(20, 0) FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT regexp_replace(note, 'a', 'b') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT REGEXP_REPLACE(note, 'a', 'b') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regexp_replace(note, 'a', 'b') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT regexp_replace(note, 'a', 'b') FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT regexp_replace(note, 'a', 'b') FROM sensors LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT regexp_replace(null, 'a', 'b') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT regexp_replace(note, null, 'b') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regexp_replace(note, 'a', null) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regexp_replace('alpha', 'a', 'b') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6430,6 +6449,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT version() FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_is_in_recovery() FROM days"),
     (os.environ["DIFF_H2"], "SELECT format_type(1, 1) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT regexp_replace(note, 'a', 'b') FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

@@ -1,0 +1,2 @@
+regexp_replace(null, 'a', 'b')
+NULL

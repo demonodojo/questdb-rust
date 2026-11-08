@@ -1,0 +1,2 @@
+regexp_replace(note, 'a', 'b')
+blphb
