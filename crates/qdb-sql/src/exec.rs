@@ -41858,6 +41858,14 @@ mod tests {
     }
 
     #[test]
+    fn lx_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let result = execute(&sensors, "SELECT left(s.note, 1) FROM sensors AS s").unwrap();
+        let expected = std::fs::read_to_string(sensors.join("expected/lx_note.tsv")).unwrap();
+        assert_eq!(render_tsv(&result), expected);
+    }
+
+    #[test]
     fn cq_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let result = execute(
