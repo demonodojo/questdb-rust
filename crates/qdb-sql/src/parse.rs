@@ -31,8 +31,8 @@ pub struct Query {
     pub long_sequence: Option<i64>,
     /// `FROM generate_series(start, end[, step])`.
     pub generate_series: Option<GenerateSeries>,
-    /// One `JOIN` of the same shape as `a JOIN b ON a.col = b.col`.
-    pub join: Option<EquiJoin>,
+    /// `JOIN` clauses, in order, each of the shape `a JOIN b ON a.col = b.col`.
+    pub join: Vec<EquiJoin>,
 }
 
 /// Equijoin parsed from `alias JOIN table alias ON left = right`.
@@ -1356,7 +1356,14 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         (parser.ident()?, None, None)
     };
     parser.skip();
-    let join = parser.parse_equi_join()?;
+    let mut join = Vec::new();
+    loop {
+        parser.skip();
+        match parser.parse_equi_join()? {
+            Some(next) => join.push(next),
+            None => break,
+        }
+    }
     parser.skip();
     let mut filter = None;
     let mut order_by = Vec::new();
@@ -2194,11 +2201,7 @@ impl<'a> Parser<'a> {
             left_alias: left_alias.unwrap_or_default(),
             right_table,
             right_alias,
-            left_column: left_name
-                .rsplit('.')
-                .next()
-                .unwrap_or(&left_name)
-                .to_string(),
+            left_column: left_name,
             right_column: right_name
                 .rsplit('.')
                 .next()

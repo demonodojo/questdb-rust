@@ -24,15 +24,15 @@ Tests que pasaron:
 | qdb-types | 3 ok |
 | qdb-platform | 1 ok |
 | qdb-storage | 4 ok, incluido `reads_original_sensors_fixture` y `reads_two_day_partitions_including_name_txn_suffix` |
-| qdb-sql | 253 ok, incluido `cj_matches_captured_exec` |
+| qdb-sql | 254 ok, incluido `jj_matches_captured_exec` |
 | qdb-server | 2 ok (`query_fixture`) |
 
 `tools/run_differential.sh`:
 
 ```text
-captured-oracle: 3188 queries match tests/fixtures/h1/expected
+captured-oracle: 3190 queries match tests/fixtures/h1/expected
 captured-oracle: 376 queries match tests/fixtures/h2/expected
-live-reference: 3564 queries matched row counts against http://127.0.0.1:19011/exec
+live-reference: 3566 queries matched row counts against http://127.0.0.1:19011/exec
 ```
 
 Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /exec`, antes de copiar los directorios. El TSV de `sensors` incluye `NULL`, cadena vacía, `-0.0`, `héllo` y `東京`. El de `days` incluye el símbolo `東京` compartido entre los dos días y el `NULL` de `id`.
@@ -51,4 +51,4 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 
 ## Próxima tarea
 
-Añadir un segundo `JOIN` y comprobarlo contra `/exec`. `SELECT a.id, b.id, c.id FROM sensors a JOIN days b ON a.id = b.id JOIN sensors c ON a.id = c.id` devuelve las columnas `id`, `id_2` e `id_3`, tres filas: `1`/`1`/`1`, `2`/`2`/`2` y `NULL`/`NULL`/`NULL`. `SELECT a.id, b.note, c.id FROM sensors a JOIN days b ON a.id = b.id JOIN sensors c ON a.id = c.id` devuelve las columnas `id`, `note` e `id_2`, tres filas: `1`/`alpha`/`1`, `2`/`NULL`/`2` y `NULL`/`東京`/`NULL`. No abrir WAL en ese paso.
+Añadir `ORDER BY` de una columna cualificada y comprobarlo contra `/exec`. `SELECT a.id, b.id FROM sensors a JOIN days b ON a.id = b.id ORDER BY a.id` devuelve las columnas `id` e `id_2`, tres filas: `NULL`/`NULL`, `1`/`1` y `2`/`2`. `SELECT a.id, b.note FROM sensors a JOIN days b ON a.id = b.id ORDER BY b.note` devuelve las columnas `id` y `note`, tres filas: `2`/`NULL`, `1`/`alpha` y `NULL`/`東京`. No abrir WAL en ese paso.

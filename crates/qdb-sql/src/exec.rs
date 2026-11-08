@@ -46,13 +46,37 @@ pub fn execute(data_dir: &Path, sql: &str) -> Result<QueryResult, Error> {
         return execute_on(&table, &query);
     }
     let table = open_table(data_dir, &query.table)?;
-    if let Some(join) = &query.join {
-        let joined = equi_join_table(&table, data_dir, join)?;
-        let mut result = execute_on(&joined, &query)?;
+    if !query.join.is_empty() {
+        let mut current = table;
+        for join in &query.join {
+            current = equi_join_table(&current, data_dir, join)?;
+        }
+        let mut result = execute_on(&current, &query)?;
         result.columns = disambiguate_join_names(result.columns);
         return Ok(result);
     }
     execute_on(&table, &query)
+}
+
+fn qualified_join_name(alias: &str, name: &str) -> String {
+    if name.contains('.') {
+        name.to_string()
+    } else {
+        format!("{alias}.{}", name.to_ascii_lowercase())
+    }
+}
+
+fn join_column_index(table: &Table, name: &str) -> Result<usize, Error> {
+    if let Some(index) = table.column_index(name) {
+        return Ok(index);
+    }
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    if bare != name {
+        if let Some(index) = table.column_index(bare) {
+            return Ok(index);
+        }
+    }
+    Err(Error::new(format!("Invalid column: {name}")))
 }
 
 fn cross_join_table(left: &Table, right: &Table, join: &EquiJoin) -> Result<Table, Error> {
@@ -74,7 +98,7 @@ fn cross_join_table(left: &Table, right: &Table, join: &EquiJoin) -> Result<Tabl
     let mut meta_columns = Vec::with_capacity(columns.len());
     for column in &left.meta.columns {
         meta_columns.push(ColumnMeta {
-            name: format!("{}.{}", join.left_alias, column.name.to_ascii_lowercase()),
+            name: qualified_join_name(&join.left_alias, &column.name),
             raw_type: column.raw_type,
             tag: column.tag,
             symbol_index: column.symbol_index,
@@ -115,19 +139,11 @@ fn cross_join_table(left: &Table, right: &Table, join: &EquiJoin) -> Result<Tabl
 }
 
 fn equi_join_table(left: &Table, data_dir: &Path, join: &EquiJoin) -> Result<Table, Error> {
-    let owned;
-    let right = if join.right_table.eq_ignore_ascii_case(&left.name) {
-        left
-    } else {
-        owned = open_table(data_dir, &join.right_table)?;
-        &owned
-    };
+    let right = open_table(data_dir, &join.right_table)?;
     if join.cross {
-        return cross_join_table(left, right, join);
+        return cross_join_table(left, &right, join);
     }
-    let left_index = left
-        .column_index(&join.left_column)
-        .ok_or_else(|| Error::new(format!("Invalid column: {}", join.left_column)))?;
+    let left_index = join_column_index(left, &join.left_column)?;
     let right_index = right
         .column_index(&join.right_column)
         .ok_or_else(|| Error::new(format!("Invalid column: {}", join.right_column)))?;
@@ -205,7 +221,7 @@ fn equi_join_table(left: &Table, data_dir: &Path, join: &EquiJoin) -> Result<Tab
     let mut meta_columns = Vec::with_capacity(columns.len());
     for column in &left.meta.columns {
         meta_columns.push(ColumnMeta {
-            name: format!("{}.{}", join.left_alias, column.name.to_ascii_lowercase()),
+            name: qualified_join_name(&join.left_alias, &column.name),
             raw_type: column.raw_type,
             tag: column.tag,
             symbol_index: column.symbol_index,
@@ -41839,6 +41855,26 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn jj_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT a.id, b.id, c.id FROM sensors a JOIN days b ON a.id = b.id JOIN sensors c ON a.id = c.id",
+                "expected/jj_id.tsv",
+            ),
+            (
+                "SELECT a.id, b.note, c.id FROM sensors a JOIN days b ON a.id = b.id JOIN sensors c ON a.id = c.id",
+                "expected/jj_note.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
     }
 
     #[test]

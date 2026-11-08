@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — segundo `JOIN`
+
+Un segundo `JOIN` conserva los nombres cualificados del primero. `sensors` contra `days` y otra vez contra `sensors`, por `id`, devuelve `1`/`1`/`1`, `2`/`2`/`2` y `NULL`/`NULL`/`NULL`. La tercera copia de `id` se llama `id_3`. La nota del `id` nulo sigue siendo `東京`. Se contrastó con `/exec`.
+
 ## 2026-11-08 — `CROSS JOIN`
 
 `CROSS JOIN` empareja cada fila izquierda con cada fila derecha y no admite `ON`. `sensors` contra `days` repite los `id` `1`, `2`, `NULL` y `-1` con los `id` `1`, `2`, `3` y `NULL`. Una cláusula `ON` devuelve `Cross joins cannot have join clauses`. Se contrastó con `/exec`.
