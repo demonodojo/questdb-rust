@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — alias `AS`
+
+`AS` nombra la tabla. `sensors AS a JOIN days AS b` por `id` devuelve `1`/`1`, `2`/`2` y `NULL`/`NULL`. `WHERE s.id = 1` deja la fila `1`. `ORDER BY s.id` ordena `NULL`, `-1`, `1`, `2`. Se contrastó con `/exec`.
+
 ## 2026-11-08 — `ORDER BY` cualificado
 
 `ORDER BY a.id` sobre el `JOIN` de `sensors` y `days` ordena `NULL`, `1`, `2`. `ORDER BY b.note` ordena `NULL`, `alpha`, `東京`. Se contrastó con `/exec`.

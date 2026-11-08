@@ -41858,6 +41858,30 @@ mod tests {
     }
 
     #[test]
+    fn az_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT a.id, b.id FROM sensors AS a JOIN days AS b ON a.id = b.id",
+                "expected/az_join.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors AS s WHERE s.id = 1",
+                "expected/az_where.tsv",
+            ),
+            (
+                "SELECT id FROM sensors AS s ORDER BY s.id",
+                "expected/az_order.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
     fn oj_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let cases = [

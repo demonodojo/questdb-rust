@@ -3251,7 +3251,10 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   jj_id "SELECT a.id, b.id, c.id FROM sensors a JOIN days b ON a.id = b.id JOIN sensors c ON a.id = c.id" \
   jj_note "SELECT a.id, b.note, c.id FROM sensors a JOIN days b ON a.id = b.id JOIN sensors c ON a.id = c.id" \
   oj_id "SELECT a.id, b.id FROM sensors a JOIN days b ON a.id = b.id ORDER BY a.id" \
-  oj_note "SELECT a.id, b.note FROM sensors a JOIN days b ON a.id = b.id ORDER BY b.note"
+  oj_note "SELECT a.id, b.note FROM sensors a JOIN days b ON a.id = b.id ORDER BY b.note" \
+  az_join "SELECT a.id, b.id FROM sensors AS a JOIN days AS b ON a.id = b.id" \
+  az_where "SELECT s.id FROM sensors AS s WHERE s.id = 1" \
+  az_order "SELECT id FROM sensors AS s ORDER BY s.id"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -6828,6 +6831,9 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT a.id, b.note, c.id FROM sensors a JOIN days b ON a.id = b.id JOIN sensors c ON a.id = c.id"),
     (os.environ["DIFF_H1"], "SELECT a.id, b.id FROM sensors a JOIN days b ON a.id = b.id ORDER BY a.id"),
     (os.environ["DIFF_H1"], "SELECT a.id, b.note FROM sensors a JOIN days b ON a.id = b.id ORDER BY b.note"),
+    (os.environ["DIFF_H1"], "SELECT a.id, b.id FROM sensors AS a JOIN days AS b ON a.id = b.id"),
+    (os.environ["DIFF_H1"], "SELECT s.id FROM sensors AS s WHERE s.id = 1"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors AS s ORDER BY s.id"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),

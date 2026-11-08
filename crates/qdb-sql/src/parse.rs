@@ -1328,6 +1328,44 @@ pub struct Filter {
     pub literal: Scalar,
 }
 
+fn strip_table_alias(name: &str, alias: &str) -> String {
+    let prefix = format!("{alias}.");
+    if name.len() > prefix.len() && name[..prefix.len()].eq_ignore_ascii_case(&prefix) {
+        name[prefix.len()..].to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+fn strip_alias_refs(
+    columns: &mut SelectList,
+    filter: &mut Option<Filter>,
+    order_by: &mut [OrderBy],
+    alias: &str,
+) {
+    match columns {
+        SelectList::Projection(items) => {
+            for item in items {
+                if let Proj::Column(name) = item {
+                    *name = strip_table_alias(name, alias);
+                }
+            }
+        }
+        SelectList::Columns(names) => {
+            for name in names {
+                *name = strip_table_alias(name, alias);
+            }
+        }
+        SelectList::Star | SelectList::Aggregate(_) | SelectList::Grouped(_) => {}
+    }
+    if let Some(filter) = filter {
+        filter.column = strip_table_alias(&filter.column, alias);
+    }
+    for order in order_by.iter_mut() {
+        order.column = strip_table_alias(&order.column, alias);
+    }
+}
+
 pub fn parse_query(sql: &str) -> Result<Query, Error> {
     let mut parser = Parser {
         src: sql.as_bytes(),
@@ -1335,7 +1373,7 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
     };
     parser.skip();
     parser.expect_keyword("select")?;
-    let columns = parser.parse_select_list()?;
+    let mut columns = parser.parse_select_list()?;
     parser.expect_keyword("from")?;
     parser.skip();
     let (table, long_sequence, generate_series) = if parser.starts_named_call("long_sequence") {
@@ -1356,6 +1394,14 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         (parser.ident()?, None, None)
     };
     parser.skip();
+    if parser.eat_keyword("as") {
+        parser.skip();
+    }
+    let table_alias = if parser.clause_keyword_ahead() || !parser.ident_ahead() {
+        None
+    } else {
+        Some(parser.ident()?)
+    };
     let mut join = Vec::new();
     loop {
         parser.skip();
@@ -1656,6 +1702,13 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
             "unsupported: trailing input near `{}`",
             parser.rest()
         )));
+    }
+    if join.is_empty() {
+        if let Some(alias) = &table_alias {
+            strip_alias_refs(&mut columns, &mut filter, &mut order_by, alias);
+        }
+    } else if let Some(alias) = table_alias {
+        join[0].left_alias = alias;
     }
     Ok(Query {
         columns,
@@ -2140,12 +2193,6 @@ impl<'a> Parser<'a> {
 
     fn parse_equi_join(&mut self) -> Result<Option<EquiJoin>, Error> {
         self.skip();
-        let left_alias = if self.clause_keyword_ahead() || !self.ident_ahead() {
-            None
-        } else {
-            Some(self.ident()?)
-        };
-        self.skip();
         let left_outer = self.eat_keyword("left");
         let right_outer = if left_outer {
             false
@@ -2177,13 +2224,17 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         let right_table = self.ident()?;
+        self.skip();
+        if self.eat_keyword("as") {
+            self.skip();
+        }
         let right_alias = self.ident()?;
         if cross {
             if self.eat_keyword("on") {
                 return Err(Error::new("Cross joins cannot have join clauses"));
             }
             return Ok(Some(EquiJoin {
-                left_alias: left_alias.unwrap_or_default(),
+                left_alias: String::new(),
                 right_table,
                 right_alias,
                 left_column: String::new(),
@@ -2203,7 +2254,7 @@ impl<'a> Parser<'a> {
         }
         let right_name = self.qualified_ident()?;
         Ok(Some(EquiJoin {
-            left_alias: left_alias.unwrap_or_default(),
+            left_alias: String::new(),
             right_table,
             right_alias,
             left_column: left_name,
@@ -2221,6 +2272,7 @@ impl<'a> Parser<'a> {
     fn clause_keyword_ahead(&mut self) -> bool {
         [
             "where", "group", "order", "limit", "join", "inner", "left", "right", "full", "cross",
+            "as",
         ]
         .into_iter()
         .any(|word| {
