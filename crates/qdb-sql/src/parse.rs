@@ -254,6 +254,7 @@ pub enum Proj {
     Millis(MillisExpr),
     Micros(MicrosExpr),
     Nanos(NanosExpr),
+    ToUtc(ToUtcExpr),
     DayOfWeek(DayOfWeekExpr),
     WeekOfYear(WeekOfYearExpr),
     DateTrunc(DateTruncExpr),
@@ -583,6 +584,13 @@ pub struct MicrosExpr {
 /// `nanos(timestamp)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NanosExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
+/// `to_utc(timestamp, timezone)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToUtcExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
 }
@@ -1154,6 +1162,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_micros()?.label
             } else if parser.starts_nanos_call() {
                 parser.parse_nanos()?.label
+            } else if parser.starts_to_utc_call() {
+                parser.parse_to_utc()?.label
             } else if parser.starts_day_of_week_call() {
                 parser.parse_day_of_week()?.label
             } else if parser.starts_week_of_year_call() {
@@ -1341,6 +1351,7 @@ enum SelectPiece {
     Millis(MillisExpr),
     Micros(MicrosExpr),
     Nanos(NanosExpr),
+    ToUtc(ToUtcExpr),
     DayOfWeek(DayOfWeekExpr),
     WeekOfYear(WeekOfYearExpr),
     DateTrunc(DateTruncExpr),
@@ -1561,6 +1572,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Micros(self.parse_micros()?));
             } else if self.starts_nanos_call() {
                 pieces.push(SelectPiece::Nanos(self.parse_nanos()?));
+            } else if self.starts_to_utc_call() {
+                pieces.push(SelectPiece::ToUtc(self.parse_to_utc()?));
             } else if self.starts_day_of_week_call() {
                 pieces.push(SelectPiece::DayOfWeek(self.parse_day_of_week()?));
             } else if self.starts_week_of_year_call() {
@@ -1771,6 +1784,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Millis(_)
                     | SelectPiece::Micros(_)
                     | SelectPiece::Nanos(_)
+                    | SelectPiece::ToUtc(_)
                     | SelectPiece::DayOfWeek(_)
                     | SelectPiece::WeekOfYear(_)
                     | SelectPiece::DateTrunc(_)
@@ -1876,6 +1890,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Millis(expr) => items.push(Proj::Millis(expr)),
                     SelectPiece::Micros(expr) => items.push(Proj::Micros(expr)),
                     SelectPiece::Nanos(expr) => items.push(Proj::Nanos(expr)),
+                    SelectPiece::ToUtc(expr) => items.push(Proj::ToUtc(expr)),
                     SelectPiece::DayOfWeek(expr) => items.push(Proj::DayOfWeek(expr)),
                     SelectPiece::WeekOfYear(expr) => items.push(Proj::WeekOfYear(expr)),
                     SelectPiece::DateTrunc(expr) => items.push(Proj::DateTrunc(expr)),
@@ -2005,6 +2020,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Millis(_)
                 | SelectPiece::Micros(_)
                 | SelectPiece::Nanos(_)
+                | SelectPiece::ToUtc(_)
                 | SelectPiece::DayOfWeek(_)
                 | SelectPiece::WeekOfYear(_)
                 | SelectPiece::DateTrunc(_)
@@ -3855,6 +3871,25 @@ impl<'a> Parser<'a> {
 
     fn starts_nanos_call(&self) -> bool {
         self.starts_named_call("nanos")
+    }
+
+    fn starts_to_utc_call(&self) -> bool {
+        self.starts_named_call("to_utc")
+    }
+
+    fn parse_to_utc(&mut self) -> Result<ToUtcExpr, Error> {
+        let name = self.ident_spelling()?;
+        let fname = name.to_ascii_lowercase();
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        if args.is_empty() {
+            return Err(Error::new(format!(
+                "function `{fname}` requires arguments: {fname}(TIMESTAMP, STRING)"
+            )));
+        }
+        Ok(ToUtcExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
     }
 
     fn parse_nanos(&mut self) -> Result<NanosExpr, Error> {

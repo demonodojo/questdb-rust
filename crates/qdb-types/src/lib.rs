@@ -179,7 +179,30 @@ pub fn format_f32(v: f32) -> String {
 
 pub fn format_timestamp_micros(us: i64) -> String {
     let (date, micros) = split_subseconds(us, 1_000_000);
+    let days = us.div_euclid(1_000_000).div_euclid(86_400);
+    let (year, _, _) = civil_from_unix_days(days);
+    let shifted_day = us.wrapping_sub(i64::MIN).div_euclid(86_400_000_000) + 1;
+    if timestamp_year_clamps(year) && (1..=31).contains(&shifted_day) {
+        let time = date.rsplit_once('T').map(|(_, time)| time).unwrap_or("");
+        return format!("{year:04}-01-{shifted_day:02}T{time}.{micros:06}Z");
+    }
     format!("{date}.{micros:06}Z")
+}
+
+/// QuestDB's year origin overflows to the null sentinel for years near `-290308`.
+fn timestamp_year_clamps(year: i32) -> bool {
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let mut leap_years = year / 100;
+    if year < 0 {
+        leap_years = ((year + 3) >> 2) - leap_years + ((leap_years + 3) >> 2) - 1;
+    } else {
+        leap_years = (year >> 2) - leap_years + (leap_years >> 2);
+        if leap {
+            leap_years -= 1;
+        }
+    }
+    let days = i64::from(year) * 365 + i64::from(leap_years.wrapping_sub(719_527));
+    days < 0 && days.wrapping_mul(86_400_000_000) > 0
 }
 
 pub fn format_date_millis(ms: i64) -> String {

@@ -2795,7 +2795,18 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   na_one "SELECT nanos(ts) FROM sensors WHERE id = 1" \
   na_none "SELECT nanos(ts) FROM sensors WHERE id > 100" \
   na_lim0 "SELECT nanos(ts) FROM sensors LIMIT 0" \
-  na_case "SELECT NANOS(ts) FROM sensors"
+  na_case "SELECT NANOS(ts) FROM sensors" \
+  uc_utc "SELECT to_utc(ts, 'UTC') FROM sensors" \
+  uc_case "SELECT TO_UTC(ts, 'UTC') FROM sensors" \
+  uc_mad "SELECT to_utc(ts, 'Europe/Madrid') FROM sensors" \
+  uc_one "SELECT to_utc(ts, 'Europe/Madrid') FROM sensors WHERE id = 1" \
+  uc_ny "SELECT to_utc(ts, 'America/New_York') FROM sensors" \
+  uc_day "SELECT to_utc(day, 'UTC') FROM sensors" \
+  uc_dmad "SELECT to_utc(day, 'Europe/Madrid') FROM sensors" \
+  uc_id "SELECT to_utc(id, 'UTC') FROM sensors" \
+  uc_flags "SELECT to_utc(flags, 'UTC') FROM sensors" \
+  uc_none "SELECT to_utc(ts, 'UTC') FROM sensors WHERE id > 100" \
+  uc_lim0 "SELECT to_utc(ts, 'UTC') FROM sensors LIMIT 0"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3139,7 +3150,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   ku_days "SELECT kurtosis(id) FROM days" \
   ku_days_grp "SELECT kurtosis(id) FROM days GROUP BY location ORDER BY location" \
   na_days "SELECT nanos(ts) FROM days" \
-  na_days_id "SELECT nanos(id) FROM days"
+  na_days_id "SELECT nanos(id) FROM days" \
+  uc_days "SELECT to_utc(ts, 'UTC') FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -5882,6 +5894,17 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT nanos(ts) FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT nanos(ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT NANOS(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_utc(ts, 'UTC') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT TO_UTC(ts, 'UTC') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_utc(ts, 'Europe/Madrid') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_utc(ts, 'Europe/Madrid') FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT to_utc(ts, 'America/New_York') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_utc(day, 'UTC') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_utc(day, 'Europe/Madrid') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_utc(id, 'UTC') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_utc(flags, 'UTC') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_utc(ts, 'UTC') FROM sensors WHERE id > 100"),
+    (os.environ["DIFF_H1"], "SELECT to_utc(ts, 'UTC') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H2"], "SELECT * FROM days ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id, note FROM days WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H2"], "SELECT id FROM days WHERE id = NULL"),
@@ -6224,6 +6247,7 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT kurtosis(id) FROM days GROUP BY location ORDER BY location"),
     (os.environ["DIFF_H2"], "SELECT nanos(ts) FROM days"),
     (os.environ["DIFF_H2"], "SELECT nanos(id) FROM days"),
+    (os.environ["DIFF_H2"], "SELECT to_utc(ts, 'UTC') FROM days"),
 ]
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:

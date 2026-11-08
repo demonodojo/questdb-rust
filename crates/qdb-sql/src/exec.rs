@@ -12,7 +12,8 @@ use crate::parse::{
     Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr,
     SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr,
     TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToStrExpr,
-    ToTimestampExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr, YearExpr,
+    ToTimestampExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr,
+    YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -250,6 +251,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Millis { label, .. }
             | ResolvedProj::Micros { label, .. }
             | ResolvedProj::Nanos { label, .. }
+            | ResolvedProj::ToUtc { label, .. }
             | ResolvedProj::DayOfWeek { label, .. }
             | ResolvedProj::WeekOfYear { label, .. }
             | ResolvedProj::DateTrunc { label, .. }
@@ -324,6 +326,13 @@ impl OrderKey {
             Self::Column(_, _, descending) | Self::Expr(_, descending) => *descending,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UtcZone {
+    Utc,
+    Madrid,
+    NewYork,
 }
 
 enum ResolvedProj {
@@ -523,6 +532,11 @@ enum ResolvedProj {
     Nanos {
         label: String,
         value: DateDiffSide,
+    },
+    ToUtc {
+        label: String,
+        index: usize,
+        zone: UtcZone,
     },
     DayOfWeek {
         label: String,
@@ -874,6 +888,7 @@ impl ResolvedProj {
             | Self::Millis { label, .. }
             | Self::Micros { label, .. }
             | Self::Nanos { label, .. }
+            | Self::ToUtc { label, .. }
             | Self::DayOfWeek { label, .. }
             | Self::WeekOfYear { label, .. }
             | Self::DateTrunc { label, .. }
@@ -938,7 +953,7 @@ impl ResolvedProj {
             | Self::RoundHalfEven { .. } => qdb_types::TAG_DOUBLE,
             Self::Coalesce { result_tag, .. } | Self::NullIf { result_tag, .. } => *result_tag,
             Self::Cast { type_tag, .. } => *type_tag,
-            Self::DateAdd { .. } => qdb_types::TAG_TIMESTAMP,
+            Self::DateAdd { .. } | Self::ToUtc { .. } => qdb_types::TAG_TIMESTAMP,
             Self::DateDiff { .. } => qdb_types::TAG_LONG,
             Self::Year { .. }
             | Self::Month { .. }
@@ -1083,6 +1098,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Millis(expr) => resolve_millis(table, expr),
         Proj::Micros(expr) => resolve_micros(table, expr),
         Proj::Nanos(expr) => resolve_nanos(table, expr),
+        Proj::ToUtc(expr) => resolve_to_utc(table, expr),
         Proj::DayOfWeek(expr) => resolve_day_of_week(table, expr),
         Proj::WeekOfYear(expr) => resolve_week_of_year(table, expr),
         Proj::DateTrunc(expr) => resolve_date_trunc(table, expr),
@@ -4608,6 +4624,160 @@ fn weekday_monday(micros: i64) -> i32 {
     }
 }
 
+fn resolve_to_utc(table: &Table, expr: &ToUtcExpr) -> Result<ResolvedProj, Error> {
+    if expr.args.len() != 2 {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `to_utc`; expected: 2, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::ToUtc {
+        label: expr.label.clone(),
+        index: to_utc_column(table, &expr.args[0])?,
+        zone: to_utc_zone(&expr.args[1])?,
+    })
+}
+
+fn to_utc_column(table: &Table, arg: &ConcatArg) -> Result<usize, Error> {
+    let ConcatArg::Column(name) = arg else {
+        return Err(Error::new(
+            "expression type mismatch, expected: TIMESTAMP, actual: UNSUPPORTED".to_string(),
+        ));
+    };
+    let Some(index) = table.column_index(name) else {
+        return Err(Error::new(format!("Invalid column: {name}")));
+    };
+    let tag = table.meta.columns[index].tag;
+    match tag {
+        qdb_types::TAG_TIMESTAMP
+        | qdb_types::TAG_DATE
+        | qdb_types::TAG_LONG
+        | qdb_types::TAG_INT => Ok(index),
+        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR | qdb_types::TAG_SYMBOL => {
+            let sample = table
+                .columns
+                .get(index)
+                .and_then(|column| column.first())
+                .map(scalar_text)
+                .unwrap_or_default();
+            Err(Error::new(format!(
+                "inconvertible value: `{sample}` [{} -> TIMESTAMP_NS]",
+                qdb_types::type_name(tag)
+            )))
+        }
+        _ => Err(Error::new(format!(
+            "expression type mismatch, expected: TIMESTAMP, actual: {}",
+            qdb_types::type_name(tag)
+        ))),
+    }
+}
+
+fn to_utc_zone(arg: &ConcatArg) -> Result<UtcZone, Error> {
+    match arg {
+        ConcatArg::Literal(Scalar::Null) => {
+            Err(Error::new("timezone must not be null".to_string()))
+        }
+        ConcatArg::Literal(Scalar::Text(zone)) => match zone.as_str() {
+            "UTC" => Ok(UtcZone::Utc),
+            "Europe/Madrid" => Ok(UtcZone::Madrid),
+            "America/New_York" => Ok(UtcZone::NewYork),
+            other => Err(Error::new(format!("invalid timezone: {other}"))),
+        },
+        _ => Err(Error::new(
+            "expression type mismatch, expected: STRING, actual: UNSUPPORTED".to_string(),
+        )),
+    }
+}
+
+fn to_utc_scalar(table: &Table, row: usize, index: usize, zone: UtcZone) -> Scalar {
+    let local = match table.columns[index][row] {
+        Scalar::Null => i64::MIN,
+        Scalar::Timestamp(number) | Scalar::Long(number) => number,
+        Scalar::Int(number) => i64::from(number),
+        Scalar::Date(millis) => millis.wrapping_mul(1_000),
+        _ => i64::MIN,
+    };
+    let shifted = local.wrapping_sub(utc_offset(zone, local));
+    if shifted == i64::MIN {
+        Scalar::Null
+    } else {
+        Scalar::Timestamp(shifted)
+    }
+}
+
+fn utc_offset(zone: UtcZone, local: i64) -> i64 {
+    let hour = 3_600_000_000;
+    match zone {
+        UtcZone::Utc => 0,
+        UtcZone::Madrid if local == i64::MIN => -884_000_000,
+        UtcZone::Madrid => {
+            let (year, month, day, time) = dateadd_parts(local);
+            if eu_dst(year, month, day, time) {
+                hour * 2
+            } else {
+                hour
+            }
+        }
+        UtcZone::NewYork => {
+            let (year, month, day, time) = dateadd_parts(local);
+            if us_eastern_dst(year, month, day, time) {
+                -hour * 4
+            } else {
+                -hour * 5
+            }
+        }
+    }
+}
+
+fn eu_dst(year: i32, month: u32, day: u32, time: i64) -> bool {
+    let two_hours = 2 * 3_600_000_000;
+    if (4..=9).contains(&month) {
+        return true;
+    }
+    if month == 3 {
+        let start = last_sunday(year, 3);
+        return day > start || (day == start && time >= two_hours);
+    }
+    if month == 10 {
+        let end = last_sunday(year, 10);
+        return day < end || (day == end && time < 3 * 3_600_000_000);
+    }
+    false
+}
+
+fn us_eastern_dst(year: i32, month: u32, day: u32, time: i64) -> bool {
+    let two_hours = 2 * 3_600_000_000;
+    if (4..=10).contains(&month) {
+        return true;
+    }
+    if month == 3 {
+        let start = nth_sunday(year, 3, 2);
+        return day > start || (day == start && time >= two_hours);
+    }
+    if month == 11 {
+        let end = nth_sunday(year, 11, 1);
+        return day < end || (day == end && time < two_hours);
+    }
+    false
+}
+
+fn last_sunday(year: i32, month: u32) -> u32 {
+    let last = dateadd_days_in_month(year, month);
+    let weekday = weekday_monday(dateadd_join(year, month, last, 0));
+    let back = if weekday == 7 { 0 } else { weekday as u32 };
+    last - back
+}
+
+fn nth_sunday(year: i32, month: u32, n: u32) -> u32 {
+    let weekday = weekday_monday(dateadd_join(year, month, 1, 0));
+    let first = if weekday == 7 {
+        1
+    } else {
+        1 + (7 - weekday as u32)
+    };
+    first + (n - 1) * 7
+}
+
 fn resolve_nanos(table: &Table, expr: &NanosExpr) -> Result<ResolvedProj, Error> {
     if expr.args.len() != 1 {
         return Err(Error::new(format!(
@@ -7894,6 +8064,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             None => Scalar::Null,
         },
         ResolvedProj::Nanos { value, .. } => nanos_scalar(table, row, value),
+        ResolvedProj::ToUtc { index, zone, .. } => to_utc_scalar(table, row, *index, *zone),
         ResolvedProj::Micros { value, .. } => match datediff_micros(table, row, value) {
             Some(micros) => Scalar::Int((dateadd_parts(micros).3 % 1_000) as i32),
             None => Scalar::Null,
@@ -38975,6 +39146,148 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn uc_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT to_utc(ts, 'UTC') FROM sensors",
+                "expected/uc_utc.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT TO_UTC(ts, 'UTC') FROM sensors",
+                "expected/uc_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_utc(ts, 'Europe/Madrid') FROM sensors",
+                "expected/uc_mad.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_utc(ts, 'Europe/Madrid') FROM sensors WHERE id = 1",
+                "expected/uc_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_utc(ts, 'America/New_York') FROM sensors",
+                "expected/uc_ny.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_utc(day, 'UTC') FROM sensors",
+                "expected/uc_day.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_utc(day, 'Europe/Madrid') FROM sensors",
+                "expected/uc_dmad.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_utc(id, 'UTC') FROM sensors",
+                "expected/uc_id.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_utc(flags, 'UTC') FROM sensors",
+                "expected/uc_flags.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_utc(ts, 'UTC') FROM sensors WHERE id > 100",
+                "expected/uc_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT to_utc(ts, 'UTC') FROM sensors LIMIT 0",
+                "expected/uc_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT to_utc(ts, 'UTC') FROM days",
+                "expected/uc_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT to_utc() FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("function `to_utc` requires arguments: to_utc(TIMESTAMP, STRING)"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_utc(ts) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `to_utc`; expected: 2, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_utc(ts, 'UTC', 1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `to_utc`; expected: 2, provided: 3"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_utc(ts, 'Mars') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("invalid timezone: Mars"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_utc(ts, null) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("timezone must not be null"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_utc(ok, 'UTC') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: TIMESTAMP, actual: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_utc(ch, 'UTC') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("expression type mismatch, expected: TIMESTAMP, actual: CHAR"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_utc(location, 'UTC') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `madrid` [SYMBOL -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_utc(note, 'UTC') FROM sensors").unwrap_err();
+        assert!(
+            err.message
+                .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT to_utc(missing, 'UTC') FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
             "{}",
             err.message
         );

@@ -30,6 +30,10 @@ Cada clave se compara con su propio ASC o DESC y con la regla de NULL de su tipo
 
 `count()` cuenta las filas que pasan el filtro, incluidos los NULL, y sin filas devuelve 0. `count(col)` omite NULL. Un `CHAR` 0 no cuenta; un `BYTE` o `SHORT` 0 sí, porque así responde 10.1.0. `count` de un `BOOLEAN` no tiene función. El resultado es una fila `LONG`, y `LIMIT` se aplica a esa fila. Se contrastó con `/exec` en `sensors` y `days`.
 
+## 2026-11-08 — `to_utc()`
+
+`to_utc` resta el desplazamiento local de la zona y devuelve `TIMESTAMP`. `UTC` deja el valor igual. En enero, `Europe/Madrid` resta una hora y `America/New_York` suma cinco. El 15 de junio Madrid resta dos horas. Un `DATE` nulo con Madrid no es NULL: el centinela menos el huso histórico `-00:14:44` se imprime `-290308-01-01T20:13:49.224192Z`. `to_utc(ts, 'Europe/Madrid')` es `2020-01-02T02:04:05.000000Z` en la primera fila. `TO_UTC` conserva las mayúsculas del encabezado. Una zona desconocida se rechaza con `invalid timezone`. Un booleano o un `CHAR` no encajan. Un símbolo o un texto se rechaza como inconvertible a `TIMESTAMP_NS`. Se contrastó con `/exec` en `sensors` y `days`.
+
 ## 2026-11-08 — `nanos()`
 
 `nanos` devuelve los nanosegundos dentro del microsegundo como `INT`. Un timestamp en microsegundos no tiene ese resto, así que un valor presente es `0` y un nulo sigue `NULL`. `nanos(ts)` es `0` en las cuatro filas. `nanos(day)` es `0`, `NULL`, `0` y `0`. `nanos(id)` es `0`, `0`, `NULL` y `0`. `nanos(flags)` es `0`, `NULL`, `0` y `0`. En `days`, `nanos(id)` es `0`, `0`, `0` y `NULL`. `NANOS` conserva las mayúsculas del encabezado. Un booleano o un `CHAR` no encajan. Un símbolo o un texto se rechaza como inconvertible a `TIMESTAMP_NS`. Se contrastó con `/exec` en `sensors` y `days`.
