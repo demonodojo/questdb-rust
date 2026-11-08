@@ -1350,6 +1350,13 @@ fn strip_alias_refs(
                 if let Proj::Column(name) = item {
                     *name = strip_table_alias(name, alias);
                 }
+                if let Proj::Length(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
             }
         }
         SelectList::Columns(names) => {
@@ -6957,7 +6964,7 @@ impl<'a> Parser<'a> {
             .peek()
             .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
         {
-            let spelling = self.ident_spelling()?;
+            let mut spelling = self.ident_spelling()?;
             let arg = if spelling.eq_ignore_ascii_case("null") {
                 ConcatArg::Literal(Scalar::Null)
             } else if spelling.eq_ignore_ascii_case("true") {
@@ -6965,6 +6972,11 @@ impl<'a> Parser<'a> {
             } else if spelling.eq_ignore_ascii_case("false") {
                 ConcatArg::Literal(Scalar::Boolean(false))
             } else {
+                self.skip();
+                if self.eat(b'.') {
+                    spelling.push('.');
+                    spelling.push_str(&self.ident_spelling()?);
+                }
                 ConcatArg::Column(spelling.clone())
             };
             return Ok((spelling, arg));
