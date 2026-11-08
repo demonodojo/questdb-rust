@@ -306,6 +306,7 @@ pub enum Proj {
     Exp(ExpExpr),
     Pi(PiExpr),
     CurrentSchema(CurrentSchemaExpr),
+    CurrentDatabase(CurrentDatabaseExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1045,6 +1046,13 @@ pub struct CurrentSchemaExpr {
     pub args: Vec<ConcatArg>,
 }
 
+/// `current_database()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CurrentDatabaseExpr {
+    pub label: String,
+    pub args: Vec<ConcatArg>,
+}
+
 /// `greatest(number, ...)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreatestExpr {
@@ -1280,6 +1288,8 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
                 parser.parse_pi()?.label
             } else if parser.starts_current_schema_call() {
                 parser.parse_current_schema()?.label
+            } else if parser.starts_current_database_call() {
+                parser.parse_current_database()?.label
             } else if parser.starts_greatest_call() {
                 parser.parse_greatest()?.label
             } else if parser.starts_least_call() {
@@ -1433,6 +1443,7 @@ enum SelectPiece {
     Exp(ExpExpr),
     Pi(PiExpr),
     CurrentSchema(CurrentSchemaExpr),
+    CurrentDatabase(CurrentDatabaseExpr),
     Greatest(GreatestExpr),
     Least(LeastExpr),
 }
@@ -1703,6 +1714,8 @@ impl<'a> Parser<'a> {
                 pieces.push(SelectPiece::Pi(self.parse_pi()?));
             } else if self.starts_current_schema_call() {
                 pieces.push(SelectPiece::CurrentSchema(self.parse_current_schema()?));
+            } else if self.starts_current_database_call() {
+                pieces.push(SelectPiece::CurrentDatabase(self.parse_current_database()?));
             } else if self.starts_greatest_call() {
                 pieces.push(SelectPiece::Greatest(self.parse_greatest()?));
             } else if self.starts_least_call() {
@@ -1875,6 +1888,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Exp(_)
                     | SelectPiece::Pi(_)
                     | SelectPiece::CurrentSchema(_)
+                    | SelectPiece::CurrentDatabase(_)
                     | SelectPiece::Greatest(_)
                     | SelectPiece::Least(_)
             )
@@ -1986,6 +2000,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::Exp(expr) => items.push(Proj::Exp(expr)),
                     SelectPiece::Pi(expr) => items.push(Proj::Pi(expr)),
                     SelectPiece::CurrentSchema(expr) => items.push(Proj::CurrentSchema(expr)),
+                    SelectPiece::CurrentDatabase(expr) => items.push(Proj::CurrentDatabase(expr)),
                     SelectPiece::Greatest(expr) => items.push(Proj::Greatest(expr)),
                     SelectPiece::Least(expr) => items.push(Proj::Least(expr)),
                     SelectPiece::Aggregate(_) => {
@@ -2117,6 +2132,7 @@ impl<'a> Parser<'a> {
                 | SelectPiece::Exp(_)
                 | SelectPiece::Pi(_)
                 | SelectPiece::CurrentSchema(_)
+                | SelectPiece::CurrentDatabase(_)
                 | SelectPiece::Greatest(_)
                 | SelectPiece::Least(_) => {
                     return Err(Error::new("internal: projection piece"));
@@ -2211,6 +2227,19 @@ impl<'a> Parser<'a> {
         let name = self.ident_spelling()?;
         let (labels, args) = self.parse_call_args(&name, true)?;
         Ok(CurrentSchemaExpr {
+            label: format!("{name}({})", labels.join(", ")),
+            args,
+        })
+    }
+
+    fn starts_current_database_call(&self) -> bool {
+        self.starts_named_call("current_database")
+    }
+
+    fn parse_current_database(&mut self) -> Result<CurrentDatabaseExpr, Error> {
+        let name = self.ident_spelling()?;
+        let (labels, args) = self.parse_call_args(&name, true)?;
+        Ok(CurrentDatabaseExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
         })

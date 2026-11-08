@@ -2,18 +2,19 @@ use crate::parse::{
     date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AddExpr, AggFunc,
     AggregateExpr, AggregateExtra, AndExpr, AndRight, ArithOp, AsinExpr, Atan2Expr, AtanExpr,
     BarExpr, BetweenExpr, BitNotExpr, BoolOp, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg,
-    CosExpr, CotExpr, CurrentSchemaExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
-    DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, ExpExpr,
-    ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr,
-    InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr, LikeExpr, LnExpr, LogExpr,
-    LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr,
-    NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
-    ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList,
-    Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr,
-    SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr,
-    TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr,
-    ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr,
-    TypeofExpr, UpperExpr, WeekOfYearExpr, WmidExpr, YearExpr,
+    CosExpr, CotExpr, CurrentDatabaseExpr, CurrentSchemaExpr, DateAddExpr, DateDiffExpr,
+    DateTruncExpr, DayExpr, DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr,
+    EqExpr, ExpExpr, ExtractExpr, Filter, FloorExpr, GlobExpr, GreatestExpr, GroupedSelect,
+    HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, LeastExpr, LengthExpr,
+    LikeExpr, LnExpr, LogExpr, LowerExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr, MinuteExpr,
+    MonthExpr, NanosExpr, NegExpr, NotExpr, NullIfExpr, PadExpr, PiExpr, PowerExpr, Proj, Query,
+    QuoteIdentExpr, RadiansExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr,
+    RoundUpExpr, SecondExpr, SelectList, Sha1Expr, Sha256Expr, SideExpr, SignExpr, SinExpr,
+    SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
+    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
+    TimestampFloorExpr, TimestampSequenceExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
+    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, TrimEnd, TrimExpr, TypeofExpr, UpperExpr,
+    WeekOfYearExpr, WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, Table};
 use qdb_types::{format_f64, format_timestamp_micros, Error, Scalar};
@@ -303,6 +304,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::Exp { label, .. }
             | ResolvedProj::Pi { label, .. }
             | ResolvedProj::CurrentSchema { label, .. }
+            | ResolvedProj::CurrentDatabase { label, .. }
             | ResolvedProj::Greatest { label, .. }
             | ResolvedProj::Least { label, .. } => label.clone(),
         })
@@ -786,6 +788,9 @@ enum ResolvedProj {
     CurrentSchema {
         label: String,
     },
+    CurrentDatabase {
+        label: String,
+    },
     Greatest {
         label: String,
         args: Vec<GreatestArg>,
@@ -962,6 +967,7 @@ impl ResolvedProj {
             | Self::Exp { label, .. }
             | Self::Pi { label, .. }
             | Self::CurrentSchema { label, .. }
+            | Self::CurrentDatabase { label, .. }
             | Self::Greatest { label, .. }
             | Self::Least { label, .. } => Some(label),
             Self::Column { .. } => None,
@@ -1034,7 +1040,7 @@ impl ResolvedProj {
             | Self::Log { .. }
             | Self::Exp { .. }
             | Self::Pi { .. } => qdb_types::TAG_DOUBLE,
-            Self::CurrentSchema { .. } => qdb_types::TAG_STRING,
+            Self::CurrentSchema { .. } | Self::CurrentDatabase { .. } => qdb_types::TAG_STRING,
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
             | Self::Add { result_tag, .. }
@@ -1178,6 +1184,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::Exp(expr) => resolve_exp(table, expr),
         Proj::Pi(expr) => resolve_pi(table, expr),
         Proj::CurrentSchema(expr) => resolve_current_schema(expr),
+        Proj::CurrentDatabase(expr) => resolve_current_database(expr),
         Proj::Greatest(expr) => resolve_greatest(table, expr),
         Proj::Least(expr) => resolve_least(table, expr),
     }
@@ -1494,6 +1501,18 @@ fn least_i64(table: &Table, row: usize, arg: &GreatestArg) -> Option<i64> {
             _ => None,
         },
     }
+}
+
+fn resolve_current_database(expr: &CurrentDatabaseExpr) -> Result<ResolvedProj, Error> {
+    if !expr.args.is_empty() {
+        return Err(Error::new(format!(
+            "wrong number of arguments for function `current_database`; expected: 0, provided: {}",
+            expr.args.len()
+        )));
+    }
+    Ok(ResolvedProj::CurrentDatabase {
+        label: expr.label.clone(),
+    })
 }
 
 fn resolve_current_schema(expr: &CurrentSchemaExpr) -> Result<ResolvedProj, Error> {
@@ -8096,6 +8115,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Exp { input, .. } => log_value(table, row, input, f64::exp),
         ResolvedProj::Pi { .. } => Scalar::Double(std::f64::consts::PI),
         ResolvedProj::CurrentSchema { .. } => Scalar::Text("public".to_string()),
+        ResolvedProj::CurrentDatabase { .. } => Scalar::Text("qdb".to_string()),
         ResolvedProj::Greatest {
             args, result_tag, ..
         } => greatest_value(table, row, args, *result_tag),
@@ -39317,6 +39337,65 @@ mod tests {
         assert!(
             err.message
                 .contains("inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn db_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
+        let cases = [
+            (
+                &sensors,
+                "SELECT current_database() FROM sensors",
+                "expected/db_all.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT CURRENT_DATABASE() FROM sensors",
+                "expected/db_case.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_database() FROM sensors WHERE id = 1",
+                "expected/db_one.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_database() FROM sensors WHERE id > 100",
+                "expected/db_none.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT current_database() FROM sensors LIMIT 0",
+                "expected/db_lim0.tsv",
+            ),
+            (
+                &days,
+                "SELECT current_database() FROM days",
+                "expected/db_days.tsv",
+            ),
+        ];
+        for (dir, sql, file) in cases {
+            let result = execute(dir, sql).unwrap();
+            let expected = std::fs::read_to_string(dir.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT current_database(note) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `current_database`; expected: 0, provided: 1"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT current_database(1) FROM sensors").unwrap_err();
+        assert!(
+            err.message.contains(
+                "wrong number of arguments for function `current_database`; expected: 0, provided: 1"
+            ),
             "{}",
             err.message
         );
