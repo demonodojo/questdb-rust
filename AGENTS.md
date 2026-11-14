@@ -11,6 +11,8 @@ Al empezar una sesión:
 
 Reglas que ya valen: corrección y durabilidad antes que velocidad; `unsafe` prohibido salvo un bloque local justificado; una función no está hecha hasta que un test la ve pasar; no declares compatibilidad de escritura sobre disco QuestDB.
 
+Skills locales en `.agents/skills/`: `qdb-port` para continuar o corregir SQL, `qdb-oracle` para evidencia diferencial, `qdb-storage` para lectura binaria y `qdb-status` para revisar el estado. Consulta [docs/skills.md](docs/skills.md) para elegir e invocar la pertinente. El estado y la siguiente tarea siguen en los documentos de `docs/`.
+
 Comandos:
 
 ```bash

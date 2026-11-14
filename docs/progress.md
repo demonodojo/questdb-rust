@@ -49,6 +49,18 @@ Las salidas de `h1` y de `h2` se capturaron con el servidor vivo, desde `GET /ex
 - BOOLEAN/BYTE/SHORT/CHAR no separan NULL de 0; es el formato upstream.
 - Maven no está instalado, así que la suite Java no se ejecutó (`docs/blockers.md`).
 
+## 2026-11-14 — skills del proyecto
+
+Añadidas cuatro skills locales en `.agents/skills/`: `qdb-port`, `qdb-oracle`, `qdb-storage` y `qdb-status`, con guía de uso en `docs/skills.md` y enlace desde `AGENTS.md`. Recogen los procedimientos del repositorio y distinguen la comparación TSV capturada de las cuentas de filas del runner vivo. Este cambio no amplía la compatibilidad del motor.
+
+Comprobaciones de esta sesión:
+
+- `tools/check.sh` terminó con código 0: formato, Clippy y 273 tests.
+- El validador `quick_validate.py` de `skill-creator` aceptó las cuatro skills. Se comprobaron además nombres iguales a sus directorios, enlaces locales y ausencia de plantillas pendientes. Los casos de selección de `docs/skills.md` se revisaron manualmente; la activación automática en una sesión nueva de Codex no se probó.
+- `mkdir -p target/oracle-tmp` y `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` terminaron con código 0: 3203 consultas de h1 y 376 de h2 coinciden con los TSV capturados. El runner informó `live-reference: NOT RUNNING`; no se ejecutó comparación viva. Log local ignorado: `target/skills-differential.log`.
+
+La próxima tarea del port se conserva.
+
 ## Próxima tarea
 
 Añadir `trim` de una columna cualificada y comprobarlo contra `/exec`. `SELECT trim(s.note) FROM sensors AS s` devuelve la columna `trim(s.note)`, cuatro filas: `alpha`, `NULL`, cadena vacía y `βeta`. No abrir WAL en ese paso.
