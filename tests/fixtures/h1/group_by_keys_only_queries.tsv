@@ -1,0 +1,8 @@
+one_key	SELECT location FROM sensors GROUP BY location ORDER BY location
+multi_key	SELECT location, ok FROM sensors GROUP BY location, ok ORDER BY location, ok
+where	SELECT location FROM sensors WHERE id > 0 GROUP BY location ORDER BY location
+selected_subset	SELECT location FROM sensors GROUP BY location, ok ORDER BY location
+alias	SELECT s.location AS city FROM sensors s GROUP BY s.location ORDER BY city
+desc_limit	SELECT location FROM sensors GROUP BY location ORDER BY location DESC LIMIT 2
+arithmetic	SELECT id + 1 FROM sensors GROUP BY id + 1 ORDER BY id + 1
+mixed_keys	SELECT id + 1, location FROM sensors GROUP BY id + 1, location ORDER BY id + 1, location

@@ -1,0 +1,2 @@
+regexp_replace('abcdmnopxyz', '[a-d[m-p]]', 'X')
+XXXXXXXXxyz

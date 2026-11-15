@@ -1,2 +1,2 @@
-ilike(location, 'M%')
+location ilike 'M%'
 true

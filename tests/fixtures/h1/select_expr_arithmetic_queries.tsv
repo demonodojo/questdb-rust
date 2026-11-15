@@ -1,0 +1,28 @@
+add_literal	SELECT id + 1 FROM sensors ORDER BY ts
+sub_literal	SELECT id - 1 FROM sensors ORDER BY ts
+mul_literal	SELECT id * 2 FROM sensors ORDER BY ts
+div_literal	SELECT id / 2 FROM sensors ORDER BY ts
+mod_literal	SELECT id % 2 FROM sensors ORDER BY ts
+precedence	SELECT id + reading * 2 FROM sensors ORDER BY ts
+grouped	SELECT (id + reading) * 2 FROM sensors ORDER BY ts
+double_float	SELECT reading + score FROM sensors ORDER BY ts
+div_zero	SELECT id / 0 FROM sensors ORDER BY ts
+date_add_int	SELECT day + 1 FROM sensors ORDER BY ts
+date_sub_literal	SELECT day - 1 FROM sensors ORDER BY ts
+date_sub_int_column	SELECT day - flags FROM sensors ORDER BY ts
+date_time_add_ordered	SELECT day + ts FROM sensors ORDER BY ts
+date_time_add_reversed	SELECT ts + day FROM sensors ORDER BY ts
+qualified_precedence	SELECT s.id + s.reading * 2 FROM sensors AS s ORDER BY s.ts
+text_coercion_left	SELECT '2' + id FROM sensors ORDER BY ts
+text_coercion_right	SELECT id + '2' FROM sensors ORDER BY ts
+typeof_date_sub_literal	SELECT typeof(day - 1) FROM sensors LIMIT 1
+typeof_date_sub_column	SELECT typeof(day - flags) FROM sensors LIMIT 1
+select_alias	SELECT id + 1 AS id_plus FROM sensors ORDER BY ts
+cast_float_label	SELECT id::float + id::long FROM sensors ORDER BY ts
+unary_minus_function	SELECT -id + reading FROM sensors ORDER BY ts
+unary_bitnot_function	SELECT ~id + flags FROM sensors ORDER BY ts
+function_left	SELECT abs(id) + reading FROM sensors ORDER BY ts
+function_right	SELECT id + abs(score) FROM sensors ORDER BY ts
+function_round	SELECT round(reading, 1) * id FROM sensors ORDER BY ts
+function_sqrt	SELECT sqrt(id) + score FROM sensors ORDER BY ts
+typeof_unary	SELECT typeof(-id + reading) FROM sensors ORDER BY ts LIMIT 1

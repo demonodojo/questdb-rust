@@ -1,0 +1,3 @@
+location	min(id)	max(id)	count()
+NULL	2	2	1
+madrid	1	1	1

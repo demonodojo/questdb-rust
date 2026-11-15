@@ -1,0 +1,5 @@
+note ~ '^\Qalpha\E$'
+false
+false
+true
+false

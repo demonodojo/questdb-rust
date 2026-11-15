@@ -1,4 +1,4 @@
-between(day, day, day)
+day between (day, day)
 true
 false
 true

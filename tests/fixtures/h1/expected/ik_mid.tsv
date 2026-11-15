@@ -1,2 +1,2 @@
-ilike(note, 'A_PHA')
+note ilike 'A_PHA'
 true

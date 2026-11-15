@@ -1,0 +1,9 @@
+nested_union_replace	SELECT regexp_replace('abcdmnopxyz', '[a-d[m-p]]', 'X') FROM sensors LIMIT 1
+nested_intersection_replace	SELECT regexp_replace('abcdmnopxyz', '[a-z&&[^aeiou]]', 'X') FROM sensors LIMIT 1
+nonbasic_complement_filter	SELECT id, note FROM sensors WHERE note ~ '[\P{InBasic_Latin}]+' ORDER BY id
+nonbasic_complement_projection	SELECT note ~ '[\P{InBasic_Latin}]+' FROM sensors ORDER BY id
+nonbasic_complement_replace	SELECT regexp_replace('AβΩa', '[\P{InBasic_Latin}]', 'X') FROM sensors LIMIT 1
+nonbasic_complement_quantified_replace	SELECT regexp_replace('AβΩa', '[\P{InBasic_Latin}]+', 'X') FROM sensors LIMIT 1
+nested_property_union_replace	SELECT regexp_replace('aAβΩ', '[a[\p{InGreek}]]', 'X') FROM sensors LIMIT 1
+positive_negative_property_intersection_replace	SELECT regexp_replace('aAβΩ', '[\p{InBasic_Latin}&&\P{InBasic_Latin}]', 'X') AS result FROM sensors LIMIT 1
+nested_property_intersection_replace	SELECT regexp_replace('aAβΩ', '[\P{InBasic_Latin}&&[β]]', 'X') FROM sensors LIMIT 1

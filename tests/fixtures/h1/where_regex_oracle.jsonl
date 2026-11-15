@@ -1,0 +1,26 @@
+{"query":"SELECT id, note FROM sensors WHERE note ~ '^a' ORDER BY ts","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[1,"alpha"]],"count":1}
+{"query":"SELECT id, note FROM sensors WHERE note ~ 'a.*' ORDER BY ts","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[1,"alpha"],[-1,"βeta"]],"count":2}
+{"query":"SELECT id, note FROM sensors WHERE note !~ 'a.*' ORDER BY ts","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[2,null],[null,""]],"count":2}
+{"query":"SELECT id FROM sensors WHERE note ~ '[a-z]+' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"SELECT id FROM sensors WHERE note ~ 'alpha|βeta' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"SELECT id FROM sensors WHERE note ~ '^β' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"SELECT id FROM sensors WHERE note ~ NULL ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"SELECT id FROM sensors WHERE note !~ NULL ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"SELECT id FROM sensors WHERE note ~ '' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[-1]],"count":3}
+{"query":"SELECT id FROM sensors WHERE note !~ '' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2]],"count":1}
+{"query":"SELECT s.id FROM sensors AS s WHERE s.note ~ '^a' ORDER BY s.ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"SELECT id FROM sensors WHERE location ~ '^ma' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null]],"count":2}
+{"query":"SELECT id FROM sensors WHERE note ~ '^a' AND ok = true ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"SELECT id FROM sensors WHERE id = 2 OR note ~ '^a' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"SELECT id FROM sensors WHERE note !~ '^a' OR id = 1 ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"SELECT id FROM sensors WHERE note ~ 'XJ**'","error":"Dangling meta character '*' near index 3\nXJ**\n   ^","position":40}
+{"query":"SELECT id FROM sensors WHERE note ~ NULL","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"SELECT id FROM sensors WHERE flags ~ '1%'","error":"there is no matching operator `~` with the argument types: INT ~ STRING","position":35}
+{"query":"SELECT id FROM sensors WHERE note ~ note","error":"not implemented: dynamic pattern would be very slow to execute","position":36}
+{"query":"SELECT id FROM sensors WHERE note !~ note","error":"there is no matching operator `!~` with the argument types: STRING !~ STRING","position":34}
+{"query":"SELECT id FROM sensors WHERE missing ~ 'x'","error":"Invalid column: missing","position":29}
+{"query":"SELECT id FROM sensors WHERE note ~ 'a\\'","error":"Unescaped trailing backslash near index 2\na\\","position":39}
+{"query":"SELECT id FROM sensors WHERE note ~ '^\\x{03B2}' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"SELECT id FROM sensors WHERE note ~ 'XJ**' LIMIT 0","error":"Dangling meta character '*' near index 3\nXJ**\n   ^","position":40}
+{"query":"SELECT id FROM sensors WHERE flags ~ '1%' LIMIT 0","error":"there is no matching operator `~` with the argument types: INT ~ STRING","position":35}
+{"query":"SELECT id FROM sensors WHERE note ~ note LIMIT 0","error":"not implemented: dynamic pattern would be very slow to execute","position":36}

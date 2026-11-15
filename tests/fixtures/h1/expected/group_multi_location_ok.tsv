@@ -1,0 +1,4 @@
+location	ok	count()
+NULL	false	1
+madrid	true	2
+東京	false	1

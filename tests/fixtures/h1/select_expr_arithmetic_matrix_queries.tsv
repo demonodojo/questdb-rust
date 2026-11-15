@@ -1,0 +1,360 @@
+sel_arith_matrix_byte_byte_add_values	SELECT id::byte + flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_byte_add_type	SELECT typeof(id::byte + flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_byte_byte_sub_values	SELECT id::byte - flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_byte_sub_type	SELECT typeof(id::byte - flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_byte_byte_mul_values	SELECT id::byte * flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_byte_mul_type	SELECT typeof(id::byte * flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_byte_byte_div_values	SELECT id::byte / flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_byte_div_type	SELECT typeof(id::byte / flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_byte_byte_mod_values	SELECT id::byte % flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_byte_mod_type	SELECT typeof(id::byte % flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_byte_short_add_values	SELECT id::byte + flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_short_add_type	SELECT typeof(id::byte + flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_byte_short_sub_values	SELECT id::byte - flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_short_sub_type	SELECT typeof(id::byte - flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_byte_short_mul_values	SELECT id::byte * flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_short_mul_type	SELECT typeof(id::byte * flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_byte_short_div_values	SELECT id::byte / flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_short_div_type	SELECT typeof(id::byte / flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_byte_short_mod_values	SELECT id::byte % flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_short_mod_type	SELECT typeof(id::byte % flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_byte_int_add_values	SELECT id::byte + flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_int_add_type	SELECT typeof(id::byte + flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_byte_int_sub_values	SELECT id::byte - flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_int_sub_type	SELECT typeof(id::byte - flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_byte_int_mul_values	SELECT id::byte * flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_int_mul_type	SELECT typeof(id::byte * flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_byte_int_div_values	SELECT id::byte / flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_int_div_type	SELECT typeof(id::byte / flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_byte_int_mod_values	SELECT id::byte % flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_int_mod_type	SELECT typeof(id::byte % flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_byte_long_add_values	SELECT id::byte + flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_long_add_type	SELECT typeof(id::byte + flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_byte_long_sub_values	SELECT id::byte - flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_long_sub_type	SELECT typeof(id::byte - flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_byte_long_mul_values	SELECT id::byte * flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_long_mul_type	SELECT typeof(id::byte * flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_byte_long_div_values	SELECT id::byte / flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_long_div_type	SELECT typeof(id::byte / flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_byte_long_mod_values	SELECT id::byte % flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_long_mod_type	SELECT typeof(id::byte % flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_byte_float_add_values	SELECT id::byte + flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_float_add_type	SELECT typeof(id::byte + flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_byte_float_sub_values	SELECT id::byte - flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_float_sub_type	SELECT typeof(id::byte - flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_byte_float_mul_values	SELECT id::byte * flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_float_mul_type	SELECT typeof(id::byte * flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_byte_float_div_values	SELECT id::byte / flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_float_div_type	SELECT typeof(id::byte / flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_byte_float_mod_values	SELECT id::byte % flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_float_mod_type	SELECT typeof(id::byte % flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_byte_double_add_values	SELECT id::byte + flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_double_add_type	SELECT typeof(id::byte + flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_byte_double_sub_values	SELECT id::byte - flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_double_sub_type	SELECT typeof(id::byte - flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_byte_double_mul_values	SELECT id::byte * flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_double_mul_type	SELECT typeof(id::byte * flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_byte_double_div_values	SELECT id::byte / flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_double_div_type	SELECT typeof(id::byte / flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_byte_double_mod_values	SELECT id::byte % flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_byte_double_mod_type	SELECT typeof(id::byte % flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_short_byte_add_values	SELECT id::short + flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_byte_add_type	SELECT typeof(id::short + flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_short_byte_sub_values	SELECT id::short - flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_byte_sub_type	SELECT typeof(id::short - flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_short_byte_mul_values	SELECT id::short * flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_byte_mul_type	SELECT typeof(id::short * flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_short_byte_div_values	SELECT id::short / flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_byte_div_type	SELECT typeof(id::short / flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_short_byte_mod_values	SELECT id::short % flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_byte_mod_type	SELECT typeof(id::short % flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_short_short_add_values	SELECT id::short + flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_short_add_type	SELECT typeof(id::short + flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_short_short_sub_values	SELECT id::short - flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_short_sub_type	SELECT typeof(id::short - flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_short_short_mul_values	SELECT id::short * flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_short_mul_type	SELECT typeof(id::short * flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_short_short_div_values	SELECT id::short / flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_short_div_type	SELECT typeof(id::short / flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_short_short_mod_values	SELECT id::short % flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_short_mod_type	SELECT typeof(id::short % flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_short_int_add_values	SELECT id::short + flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_int_add_type	SELECT typeof(id::short + flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_short_int_sub_values	SELECT id::short - flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_int_sub_type	SELECT typeof(id::short - flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_short_int_mul_values	SELECT id::short * flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_int_mul_type	SELECT typeof(id::short * flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_short_int_div_values	SELECT id::short / flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_int_div_type	SELECT typeof(id::short / flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_short_int_mod_values	SELECT id::short % flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_int_mod_type	SELECT typeof(id::short % flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_short_long_add_values	SELECT id::short + flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_long_add_type	SELECT typeof(id::short + flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_short_long_sub_values	SELECT id::short - flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_long_sub_type	SELECT typeof(id::short - flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_short_long_mul_values	SELECT id::short * flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_long_mul_type	SELECT typeof(id::short * flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_short_long_div_values	SELECT id::short / flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_long_div_type	SELECT typeof(id::short / flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_short_long_mod_values	SELECT id::short % flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_long_mod_type	SELECT typeof(id::short % flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_short_float_add_values	SELECT id::short + flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_float_add_type	SELECT typeof(id::short + flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_short_float_sub_values	SELECT id::short - flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_float_sub_type	SELECT typeof(id::short - flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_short_float_mul_values	SELECT id::short * flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_float_mul_type	SELECT typeof(id::short * flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_short_float_div_values	SELECT id::short / flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_float_div_type	SELECT typeof(id::short / flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_short_float_mod_values	SELECT id::short % flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_float_mod_type	SELECT typeof(id::short % flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_short_double_add_values	SELECT id::short + flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_double_add_type	SELECT typeof(id::short + flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_short_double_sub_values	SELECT id::short - flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_double_sub_type	SELECT typeof(id::short - flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_short_double_mul_values	SELECT id::short * flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_double_mul_type	SELECT typeof(id::short * flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_short_double_div_values	SELECT id::short / flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_double_div_type	SELECT typeof(id::short / flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_short_double_mod_values	SELECT id::short % flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_short_double_mod_type	SELECT typeof(id::short % flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_int_byte_add_values	SELECT id::int + flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_byte_add_type	SELECT typeof(id::int + flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_int_byte_sub_values	SELECT id::int - flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_byte_sub_type	SELECT typeof(id::int - flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_int_byte_mul_values	SELECT id::int * flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_byte_mul_type	SELECT typeof(id::int * flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_int_byte_div_values	SELECT id::int / flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_byte_div_type	SELECT typeof(id::int / flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_int_byte_mod_values	SELECT id::int % flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_byte_mod_type	SELECT typeof(id::int % flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_int_short_add_values	SELECT id::int + flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_short_add_type	SELECT typeof(id::int + flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_int_short_sub_values	SELECT id::int - flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_short_sub_type	SELECT typeof(id::int - flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_int_short_mul_values	SELECT id::int * flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_short_mul_type	SELECT typeof(id::int * flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_int_short_div_values	SELECT id::int / flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_short_div_type	SELECT typeof(id::int / flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_int_short_mod_values	SELECT id::int % flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_short_mod_type	SELECT typeof(id::int % flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_int_int_add_values	SELECT id::int + flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_int_add_type	SELECT typeof(id::int + flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_int_int_sub_values	SELECT id::int - flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_int_sub_type	SELECT typeof(id::int - flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_int_int_mul_values	SELECT id::int * flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_int_mul_type	SELECT typeof(id::int * flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_int_int_div_values	SELECT id::int / flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_int_div_type	SELECT typeof(id::int / flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_int_int_mod_values	SELECT id::int % flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_int_mod_type	SELECT typeof(id::int % flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_int_long_add_values	SELECT id::int + flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_long_add_type	SELECT typeof(id::int + flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_int_long_sub_values	SELECT id::int - flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_long_sub_type	SELECT typeof(id::int - flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_int_long_mul_values	SELECT id::int * flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_long_mul_type	SELECT typeof(id::int * flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_int_long_div_values	SELECT id::int / flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_long_div_type	SELECT typeof(id::int / flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_int_long_mod_values	SELECT id::int % flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_long_mod_type	SELECT typeof(id::int % flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_int_float_add_values	SELECT id::int + flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_float_add_type	SELECT typeof(id::int + flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_int_float_sub_values	SELECT id::int - flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_float_sub_type	SELECT typeof(id::int - flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_int_float_mul_values	SELECT id::int * flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_float_mul_type	SELECT typeof(id::int * flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_int_float_div_values	SELECT id::int / flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_float_div_type	SELECT typeof(id::int / flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_int_float_mod_values	SELECT id::int % flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_float_mod_type	SELECT typeof(id::int % flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_int_double_add_values	SELECT id::int + flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_double_add_type	SELECT typeof(id::int + flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_int_double_sub_values	SELECT id::int - flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_double_sub_type	SELECT typeof(id::int - flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_int_double_mul_values	SELECT id::int * flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_double_mul_type	SELECT typeof(id::int * flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_int_double_div_values	SELECT id::int / flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_double_div_type	SELECT typeof(id::int / flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_int_double_mod_values	SELECT id::int % flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_int_double_mod_type	SELECT typeof(id::int % flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_long_byte_add_values	SELECT id::long + flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_byte_add_type	SELECT typeof(id::long + flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_long_byte_sub_values	SELECT id::long - flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_byte_sub_type	SELECT typeof(id::long - flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_long_byte_mul_values	SELECT id::long * flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_byte_mul_type	SELECT typeof(id::long * flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_long_byte_div_values	SELECT id::long / flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_byte_div_type	SELECT typeof(id::long / flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_long_byte_mod_values	SELECT id::long % flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_byte_mod_type	SELECT typeof(id::long % flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_long_short_add_values	SELECT id::long + flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_short_add_type	SELECT typeof(id::long + flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_long_short_sub_values	SELECT id::long - flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_short_sub_type	SELECT typeof(id::long - flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_long_short_mul_values	SELECT id::long * flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_short_mul_type	SELECT typeof(id::long * flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_long_short_div_values	SELECT id::long / flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_short_div_type	SELECT typeof(id::long / flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_long_short_mod_values	SELECT id::long % flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_short_mod_type	SELECT typeof(id::long % flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_long_int_add_values	SELECT id::long + flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_int_add_type	SELECT typeof(id::long + flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_long_int_sub_values	SELECT id::long - flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_int_sub_type	SELECT typeof(id::long - flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_long_int_mul_values	SELECT id::long * flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_int_mul_type	SELECT typeof(id::long * flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_long_int_div_values	SELECT id::long / flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_int_div_type	SELECT typeof(id::long / flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_long_int_mod_values	SELECT id::long % flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_int_mod_type	SELECT typeof(id::long % flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_long_long_add_values	SELECT id::long + flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_long_add_type	SELECT typeof(id::long + flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_long_long_sub_values	SELECT id::long - flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_long_sub_type	SELECT typeof(id::long - flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_long_long_mul_values	SELECT id::long * flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_long_mul_type	SELECT typeof(id::long * flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_long_long_div_values	SELECT id::long / flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_long_div_type	SELECT typeof(id::long / flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_long_long_mod_values	SELECT id::long % flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_long_mod_type	SELECT typeof(id::long % flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_long_float_add_values	SELECT id::long + flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_float_add_type	SELECT typeof(id::long + flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_long_float_sub_values	SELECT id::long - flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_float_sub_type	SELECT typeof(id::long - flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_long_float_mul_values	SELECT id::long * flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_float_mul_type	SELECT typeof(id::long * flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_long_float_div_values	SELECT id::long / flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_float_div_type	SELECT typeof(id::long / flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_long_float_mod_values	SELECT id::long % flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_float_mod_type	SELECT typeof(id::long % flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_long_double_add_values	SELECT id::long + flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_double_add_type	SELECT typeof(id::long + flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_long_double_sub_values	SELECT id::long - flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_double_sub_type	SELECT typeof(id::long - flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_long_double_mul_values	SELECT id::long * flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_double_mul_type	SELECT typeof(id::long * flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_long_double_div_values	SELECT id::long / flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_double_div_type	SELECT typeof(id::long / flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_long_double_mod_values	SELECT id::long % flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_long_double_mod_type	SELECT typeof(id::long % flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_float_byte_add_values	SELECT id::float + flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_byte_add_type	SELECT typeof(id::float + flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_float_byte_sub_values	SELECT id::float - flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_byte_sub_type	SELECT typeof(id::float - flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_float_byte_mul_values	SELECT id::float * flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_byte_mul_type	SELECT typeof(id::float * flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_float_byte_div_values	SELECT id::float / flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_byte_div_type	SELECT typeof(id::float / flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_float_byte_mod_values	SELECT id::float % flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_byte_mod_type	SELECT typeof(id::float % flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_float_short_add_values	SELECT id::float + flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_short_add_type	SELECT typeof(id::float + flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_float_short_sub_values	SELECT id::float - flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_short_sub_type	SELECT typeof(id::float - flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_float_short_mul_values	SELECT id::float * flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_short_mul_type	SELECT typeof(id::float * flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_float_short_div_values	SELECT id::float / flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_short_div_type	SELECT typeof(id::float / flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_float_short_mod_values	SELECT id::float % flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_short_mod_type	SELECT typeof(id::float % flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_float_int_add_values	SELECT id::float + flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_int_add_type	SELECT typeof(id::float + flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_float_int_sub_values	SELECT id::float - flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_int_sub_type	SELECT typeof(id::float - flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_float_int_mul_values	SELECT id::float * flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_int_mul_type	SELECT typeof(id::float * flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_float_int_div_values	SELECT id::float / flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_int_div_type	SELECT typeof(id::float / flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_float_int_mod_values	SELECT id::float % flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_int_mod_type	SELECT typeof(id::float % flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_float_long_add_values	SELECT id::float + flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_long_add_type	SELECT typeof(id::float + flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_float_long_sub_values	SELECT id::float - flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_long_sub_type	SELECT typeof(id::float - flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_float_long_mul_values	SELECT id::float * flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_long_mul_type	SELECT typeof(id::float * flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_float_long_div_values	SELECT id::float / flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_long_div_type	SELECT typeof(id::float / flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_float_long_mod_values	SELECT id::float % flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_long_mod_type	SELECT typeof(id::float % flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_float_float_add_values	SELECT id::float + flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_float_add_type	SELECT typeof(id::float + flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_float_float_sub_values	SELECT id::float - flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_float_sub_type	SELECT typeof(id::float - flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_float_float_mul_values	SELECT id::float * flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_float_mul_type	SELECT typeof(id::float * flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_float_float_div_values	SELECT id::float / flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_float_div_type	SELECT typeof(id::float / flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_float_float_mod_values	SELECT id::float % flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_float_mod_type	SELECT typeof(id::float % flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_float_double_add_values	SELECT id::float + flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_double_add_type	SELECT typeof(id::float + flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_float_double_sub_values	SELECT id::float - flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_double_sub_type	SELECT typeof(id::float - flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_float_double_mul_values	SELECT id::float * flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_double_mul_type	SELECT typeof(id::float * flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_float_double_div_values	SELECT id::float / flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_double_div_type	SELECT typeof(id::float / flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_float_double_mod_values	SELECT id::float % flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_float_double_mod_type	SELECT typeof(id::float % flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_double_byte_add_values	SELECT id::double + flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_byte_add_type	SELECT typeof(id::double + flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_double_byte_sub_values	SELECT id::double - flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_byte_sub_type	SELECT typeof(id::double - flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_double_byte_mul_values	SELECT id::double * flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_byte_mul_type	SELECT typeof(id::double * flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_double_byte_div_values	SELECT id::double / flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_byte_div_type	SELECT typeof(id::double / flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_double_byte_mod_values	SELECT id::double % flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_byte_mod_type	SELECT typeof(id::double % flags::byte) FROM sensors LIMIT 1
+sel_arith_matrix_double_short_add_values	SELECT id::double + flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_short_add_type	SELECT typeof(id::double + flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_double_short_sub_values	SELECT id::double - flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_short_sub_type	SELECT typeof(id::double - flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_double_short_mul_values	SELECT id::double * flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_short_mul_type	SELECT typeof(id::double * flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_double_short_div_values	SELECT id::double / flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_short_div_type	SELECT typeof(id::double / flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_double_short_mod_values	SELECT id::double % flags::short AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_short_mod_type	SELECT typeof(id::double % flags::short) FROM sensors LIMIT 1
+sel_arith_matrix_double_int_add_values	SELECT id::double + flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_int_add_type	SELECT typeof(id::double + flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_double_int_sub_values	SELECT id::double - flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_int_sub_type	SELECT typeof(id::double - flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_double_int_mul_values	SELECT id::double * flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_int_mul_type	SELECT typeof(id::double * flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_double_int_div_values	SELECT id::double / flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_int_div_type	SELECT typeof(id::double / flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_double_int_mod_values	SELECT id::double % flags::int AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_int_mod_type	SELECT typeof(id::double % flags::int) FROM sensors LIMIT 1
+sel_arith_matrix_double_long_add_values	SELECT id::double + flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_long_add_type	SELECT typeof(id::double + flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_double_long_sub_values	SELECT id::double - flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_long_sub_type	SELECT typeof(id::double - flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_double_long_mul_values	SELECT id::double * flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_long_mul_type	SELECT typeof(id::double * flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_double_long_div_values	SELECT id::double / flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_long_div_type	SELECT typeof(id::double / flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_double_long_mod_values	SELECT id::double % flags::long AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_long_mod_type	SELECT typeof(id::double % flags::long) FROM sensors LIMIT 1
+sel_arith_matrix_double_float_add_values	SELECT id::double + flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_float_add_type	SELECT typeof(id::double + flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_double_float_sub_values	SELECT id::double - flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_float_sub_type	SELECT typeof(id::double - flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_double_float_mul_values	SELECT id::double * flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_float_mul_type	SELECT typeof(id::double * flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_double_float_div_values	SELECT id::double / flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_float_div_type	SELECT typeof(id::double / flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_double_float_mod_values	SELECT id::double % flags::float AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_float_mod_type	SELECT typeof(id::double % flags::float) FROM sensors LIMIT 1
+sel_arith_matrix_double_double_add_values	SELECT id::double + flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_double_add_type	SELECT typeof(id::double + flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_double_double_sub_values	SELECT id::double - flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_double_sub_type	SELECT typeof(id::double - flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_double_double_mul_values	SELECT id::double * flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_double_mul_type	SELECT typeof(id::double * flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_double_double_div_values	SELECT id::double / flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_double_div_type	SELECT typeof(id::double / flags::double) FROM sensors LIMIT 1
+sel_arith_matrix_double_double_mod_values	SELECT id::double % flags::double AS value FROM sensors ORDER BY ts
+sel_arith_matrix_double_double_mod_type	SELECT typeof(id::double % flags::double) FROM sensors LIMIT 1

@@ -1,0 +1,22 @@
+{"query":"SELECT id, note FROM sensors WHERE note LIKE 'a%' ORDER BY ts","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[1,"alpha"]],"count":1}
+{"query":"SELECT id, note FROM sensors WHERE note ILIKE 'A%' ORDER BY ts","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[1,"alpha"]],"count":1}
+{"query":"SELECT id, note FROM sensors WHERE note NOT LIKE 'a%' ORDER BY ts","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[2,null],[null,""],[-1,"βeta"]],"count":3}
+{"query":"SELECT id, note FROM sensors WHERE note NOT ILIKE 'A%' ORDER BY ts","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[2,null],[null,""],[-1,"βeta"]],"count":3}
+{"query":"SELECT id FROM sensors WHERE note LIKE NULL ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"SELECT id FROM sensors WHERE note NOT LIKE NULL ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"SELECT id FROM sensors WHERE note LIKE '' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"SELECT id FROM sensors WHERE note NOT LIKE '' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"SELECT s.id FROM sensors AS s WHERE s.note ILIKE 'A%' ORDER BY s.ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"SELECT id FROM sensors WHERE note LIKE 'a\\%' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"SELECT id FROM sensors WHERE note LIKE 'a_pha' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"SELECT id FROM sensors WHERE note LIKE 'a%' AND ok = true ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"SELECT id FROM sensors WHERE id = 2 OR note ILIKE 'A%' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"SELECT id FROM sensors WHERE location ILIKE 'MA%' ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null]],"count":2}
+{"query":"SELECT id FROM sensors WHERE note NOT ILIKE 'A%' OR id = 1 ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"SELECT id FROM sensors WHERE flags LIKE '1%'","error":"there is no matching operator `like` with the argument types: INT like STRING","position":35}
+{"query":"SELECT id FROM sensors WHERE note LIKE note","error":"use constant or bind variable","position":39}
+{"query":"SELECT id FROM sensors WHERE missing LIKE 'x%'","error":"Invalid column: missing","position":29}
+{"query":"SELECT id FROM sensors WHERE note LIKE 'a\\'","error":"found [tok='a\\', len=2] LIKE pattern must not end with escape character","position":1}
+{"query":"SELECT id FROM sensors WHERE flags LIKE '1%' LIMIT 0","error":"there is no matching operator `like` with the argument types: INT like STRING","position":35}
+{"query":"SELECT id FROM sensors WHERE missing LIKE 'x%' LIMIT 0","error":"Invalid column: missing","position":29}
+{"query":"SELECT id FROM sensors WHERE note LIKE note LIMIT 0","error":"use constant or bind variable","position":39}

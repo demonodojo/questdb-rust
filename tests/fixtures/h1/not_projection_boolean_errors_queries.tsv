@@ -1,0 +1,3 @@
+int_and	SELECT NOT (ok AND flags) AS n FROM sensors	expression type mismatch, expected: BOOLEAN, actual: INT	19
+long_and	SELECT NOT (ok AND id) AS n FROM sensors	expression type mismatch, expected: BOOLEAN, actual: LONG	19
+missing_or	SELECT NOT (s.missing = 1 OR s.ok) AS n FROM sensors AS s	Invalid column: s.missing	12

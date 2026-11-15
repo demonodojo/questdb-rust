@@ -1,0 +1,4 @@
+location	covar_pop(s.score, s.id)	corr(s.score, s.id)	regr_slope(s.score, s.id)	count()
+NULL	NULL	NULL	NULL	1
+madrid	0.0	NULL	NULL	2
+東京	0.0	NULL	NULL	1

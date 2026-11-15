@@ -1,0 +1,6 @@
+missing_numeric_group	SELECT regexp_replace('alpha', '(a)', '$2') FROM sensors LIMIT 1
+missing_named_group	SELECT regexp_replace('alpha', '(?<x>a)', '${missing}') FROM sensors LIMIT 1
+trailing_replacement_escape	SELECT regexp_replace('alpha', 'a', '\') FROM sensors LIMIT 1
+invalid_pattern	SELECT regexp_replace(note, '[', 'x') FROM sensors
+dynamic_pattern	SELECT regexp_replace(note, location, 'x') FROM sensors
+dynamic_replacement	SELECT regexp_replace(note, 'a', location) FROM sensors

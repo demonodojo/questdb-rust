@@ -1,0 +1,2 @@
+z_before_final_lf	SELECT regexp_replace('alpha__LF__', 'alpha\Z', 'X') FROM sensors LIMIT 1
+absolute_z_before_final_lf	SELECT regexp_replace('alpha__LF__', 'alpha\z', 'X') FROM sensors LIMIT 1

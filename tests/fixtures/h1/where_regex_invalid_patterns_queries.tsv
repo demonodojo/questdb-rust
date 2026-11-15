@@ -1,0 +1,11 @@
+plain_regex	SELECT id FROM sensors WHERE note ~ '['	Unclosed character class near index 0\n[\n^	37
+plain_not_regex	SELECT id FROM sensors WHERE note !~ '['	Unclosed character class near index 0\n[\n^	38
+and_regex	SELECT id FROM sensors WHERE ok = true AND note ~ '['	Unclosed character class near index 0\n[\n^	51
+or_regex_alias	SELECT s.id FROM sensors AS s WHERE s.id = 1 OR s.note !~ '['	Unclosed character class near index 0\n[\n^	59
+paren_regex	SELECT id FROM sensors WHERE ok = true AND (note ~ '[')	Unclosed character class near index 0\n[\n^	52
+short_circuit_and	SELECT id FROM sensors WHERE id = 999 AND note ~ '['	Unclosed character class near index 0\n[\n^	50
+false_and	SELECT id FROM sensors WHERE false AND note ~ '['	Unclosed character class near index 0\n[\n^	47
+limit_zero	SELECT id FROM sensors WHERE note ~ '[' LIMIT 0	Unclosed character class near index 0\n[\n^	37
+trailing_backslash	SELECT id FROM sensors WHERE note ~ 'a\'	Unescaped trailing backslash near index 2\na\	39
+dangling_star	SELECT id FROM sensors WHERE note ~ 'XJ**'	Dangling meta character '*' near index 3\nXJ**\n   ^	40
+unclosed_group	SELECT id FROM sensors WHERE note ~ '(abc'	Unclosed group near index 4\n(abc	41

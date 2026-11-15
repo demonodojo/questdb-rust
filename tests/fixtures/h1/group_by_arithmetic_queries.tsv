@@ -1,0 +1,14 @@
+plus_ordered	SELECT id + 1, count() FROM sensors GROUP BY id + 1 ORDER BY id + 1
+key_second	SELECT count(), id + 1 FROM sensors GROUP BY id + 1 ORDER BY id + 1
+multiply_sum	SELECT id * 2, sum(flags) FROM sensors GROUP BY id * 2 ORDER BY id * 2
+alias_order	SELECT id + 1 AS shifted, count() FROM sensors GROUP BY id + 1 ORDER BY shifted
+aggregate_order	SELECT id + 1, count() FROM sensors GROUP BY id + 1 ORDER BY count() DESC
+where_filtered	SELECT id + 1, count() FROM sensors WHERE id > 0 GROUP BY id + 1 ORDER BY id + 1
+null_key	SELECT id + NULL, count() FROM sensors GROUP BY id + NULL
+limit_zero	SELECT id + 1, count() FROM sensors GROUP BY id + 1 LIMIT 0
+desc_limit	SELECT id + 1, count() FROM sensors GROUP BY id + 1 ORDER BY id + 1 DESC LIMIT 2
+double_average	SELECT reading * 2, avg(score) FROM sensors GROUP BY reading * 2 ORDER BY reading * 2
+temporal_key	SELECT day + 1, count() FROM sensors GROUP BY day + 1 ORDER BY day + 1
+aggregate_only	SELECT count() FROM sensors GROUP BY id + 1 ORDER BY id + 1
+qualified_alias	SELECT s.id + 1 AS shifted, count() FROM sensors s GROUP BY s.id + 1 ORDER BY shifted
+scalar_operand	SELECT abs(id) + 1 AS shifted, count() FROM sensors GROUP BY abs(id) + 1 ORDER BY shifted

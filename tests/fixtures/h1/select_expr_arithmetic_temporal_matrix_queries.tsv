@@ -1,0 +1,280 @@
+sel_arith_temporal_date_byte_forward_add_values	SELECT day + flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_byte_forward_add_type	SELECT typeof(day + flags::byte) FROM sensors LIMIT 1
+sel_arith_temporal_date_byte_forward_sub_values	SELECT day - flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_byte_forward_sub_type	SELECT typeof(day - flags::byte) FROM sensors LIMIT 1
+sel_arith_temporal_date_byte_forward_mul_values	SELECT day * flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_byte_forward_mul_type	SELECT typeof(day * flags::byte) FROM sensors LIMIT 1
+sel_arith_temporal_date_byte_forward_div_values	SELECT day / flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_byte_forward_div_type	SELECT typeof(day / flags::byte) FROM sensors LIMIT 1
+sel_arith_temporal_date_byte_forward_mod_values	SELECT day % flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_byte_forward_mod_type	SELECT typeof(day % flags::byte) FROM sensors LIMIT 1
+sel_arith_temporal_date_byte_reverse_add_values	SELECT flags::byte + day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_byte_reverse_add_type	SELECT typeof(flags::byte + day) FROM sensors LIMIT 1
+sel_arith_temporal_date_byte_reverse_sub_values	SELECT flags::byte - day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_byte_reverse_sub_type	SELECT typeof(flags::byte - day) FROM sensors LIMIT 1
+sel_arith_temporal_date_byte_reverse_mul_values	SELECT flags::byte * day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_byte_reverse_mul_type	SELECT typeof(flags::byte * day) FROM sensors LIMIT 1
+sel_arith_temporal_date_byte_reverse_div_values	SELECT flags::byte / day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_byte_reverse_div_type	SELECT typeof(flags::byte / day) FROM sensors LIMIT 1
+sel_arith_temporal_date_byte_reverse_mod_values	SELECT flags::byte % day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_byte_reverse_mod_type	SELECT typeof(flags::byte % day) FROM sensors LIMIT 1
+sel_arith_temporal_date_short_forward_add_values	SELECT day + flags::short AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_short_forward_add_type	SELECT typeof(day + flags::short) FROM sensors LIMIT 1
+sel_arith_temporal_date_short_forward_sub_values	SELECT day - flags::short AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_short_forward_sub_type	SELECT typeof(day - flags::short) FROM sensors LIMIT 1
+sel_arith_temporal_date_short_forward_mul_values	SELECT day * flags::short AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_short_forward_mul_type	SELECT typeof(day * flags::short) FROM sensors LIMIT 1
+sel_arith_temporal_date_short_forward_div_values	SELECT day / flags::short AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_short_forward_div_type	SELECT typeof(day / flags::short) FROM sensors LIMIT 1
+sel_arith_temporal_date_short_forward_mod_values	SELECT day % flags::short AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_short_forward_mod_type	SELECT typeof(day % flags::short) FROM sensors LIMIT 1
+sel_arith_temporal_date_short_reverse_add_values	SELECT flags::short + day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_short_reverse_add_type	SELECT typeof(flags::short + day) FROM sensors LIMIT 1
+sel_arith_temporal_date_short_reverse_sub_values	SELECT flags::short - day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_short_reverse_sub_type	SELECT typeof(flags::short - day) FROM sensors LIMIT 1
+sel_arith_temporal_date_short_reverse_mul_values	SELECT flags::short * day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_short_reverse_mul_type	SELECT typeof(flags::short * day) FROM sensors LIMIT 1
+sel_arith_temporal_date_short_reverse_div_values	SELECT flags::short / day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_short_reverse_div_type	SELECT typeof(flags::short / day) FROM sensors LIMIT 1
+sel_arith_temporal_date_short_reverse_mod_values	SELECT flags::short % day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_short_reverse_mod_type	SELECT typeof(flags::short % day) FROM sensors LIMIT 1
+sel_arith_temporal_date_int_forward_add_values	SELECT day + flags AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_int_forward_add_type	SELECT typeof(day + flags) FROM sensors LIMIT 1
+sel_arith_temporal_date_int_forward_sub_values	SELECT day - flags AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_int_forward_sub_type	SELECT typeof(day - flags) FROM sensors LIMIT 1
+sel_arith_temporal_date_int_forward_mul_values	SELECT day * flags AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_int_forward_mul_type	SELECT typeof(day * flags) FROM sensors LIMIT 1
+sel_arith_temporal_date_int_forward_div_values	SELECT day / flags AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_int_forward_div_type	SELECT typeof(day / flags) FROM sensors LIMIT 1
+sel_arith_temporal_date_int_forward_mod_values	SELECT day % flags AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_int_forward_mod_type	SELECT typeof(day % flags) FROM sensors LIMIT 1
+sel_arith_temporal_date_int_reverse_add_values	SELECT flags + day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_int_reverse_add_type	SELECT typeof(flags + day) FROM sensors LIMIT 1
+sel_arith_temporal_date_int_reverse_sub_values	SELECT flags - day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_int_reverse_sub_type	SELECT typeof(flags - day) FROM sensors LIMIT 1
+sel_arith_temporal_date_int_reverse_mul_values	SELECT flags * day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_int_reverse_mul_type	SELECT typeof(flags * day) FROM sensors LIMIT 1
+sel_arith_temporal_date_int_reverse_div_values	SELECT flags / day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_int_reverse_div_type	SELECT typeof(flags / day) FROM sensors LIMIT 1
+sel_arith_temporal_date_int_reverse_mod_values	SELECT flags % day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_int_reverse_mod_type	SELECT typeof(flags % day) FROM sensors LIMIT 1
+sel_arith_temporal_date_long_forward_add_values	SELECT day + id AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_long_forward_add_type	SELECT typeof(day + id) FROM sensors LIMIT 1
+sel_arith_temporal_date_long_forward_sub_values	SELECT day - id AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_long_forward_sub_type	SELECT typeof(day - id) FROM sensors LIMIT 1
+sel_arith_temporal_date_long_forward_mul_values	SELECT day * id AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_long_forward_mul_type	SELECT typeof(day * id) FROM sensors LIMIT 1
+sel_arith_temporal_date_long_forward_div_values	SELECT day / id AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_long_forward_div_type	SELECT typeof(day / id) FROM sensors LIMIT 1
+sel_arith_temporal_date_long_forward_mod_values	SELECT day % id AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_long_forward_mod_type	SELECT typeof(day % id) FROM sensors LIMIT 1
+sel_arith_temporal_date_long_reverse_add_values	SELECT id + day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_long_reverse_add_type	SELECT typeof(id + day) FROM sensors LIMIT 1
+sel_arith_temporal_date_long_reverse_sub_values	SELECT id - day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_long_reverse_sub_type	SELECT typeof(id - day) FROM sensors LIMIT 1
+sel_arith_temporal_date_long_reverse_mul_values	SELECT id * day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_long_reverse_mul_type	SELECT typeof(id * day) FROM sensors LIMIT 1
+sel_arith_temporal_date_long_reverse_div_values	SELECT id / day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_long_reverse_div_type	SELECT typeof(id / day) FROM sensors LIMIT 1
+sel_arith_temporal_date_long_reverse_mod_values	SELECT id % day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_long_reverse_mod_type	SELECT typeof(id % day) FROM sensors LIMIT 1
+sel_arith_temporal_date_float_forward_add_values	SELECT day + score::float AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_float_forward_add_type	SELECT typeof(day + score::float) FROM sensors LIMIT 1
+sel_arith_temporal_date_float_forward_sub_values	SELECT day - score::float AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_float_forward_sub_type	SELECT typeof(day - score::float) FROM sensors LIMIT 1
+sel_arith_temporal_date_float_forward_mul_values	SELECT day * score::float AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_float_forward_mul_type	SELECT typeof(day * score::float) FROM sensors LIMIT 1
+sel_arith_temporal_date_float_forward_div_values	SELECT day / score::float AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_float_forward_div_type	SELECT typeof(day / score::float) FROM sensors LIMIT 1
+sel_arith_temporal_date_float_forward_mod_values	SELECT day % score::float AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_float_forward_mod_type	SELECT typeof(day % score::float) FROM sensors LIMIT 1
+sel_arith_temporal_date_float_reverse_add_values	SELECT score::float + day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_float_reverse_add_type	SELECT typeof(score::float + day) FROM sensors LIMIT 1
+sel_arith_temporal_date_float_reverse_sub_values	SELECT score::float - day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_float_reverse_sub_type	SELECT typeof(score::float - day) FROM sensors LIMIT 1
+sel_arith_temporal_date_float_reverse_mul_values	SELECT score::float * day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_float_reverse_mul_type	SELECT typeof(score::float * day) FROM sensors LIMIT 1
+sel_arith_temporal_date_float_reverse_div_values	SELECT score::float / day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_float_reverse_div_type	SELECT typeof(score::float / day) FROM sensors LIMIT 1
+sel_arith_temporal_date_float_reverse_mod_values	SELECT score::float % day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_float_reverse_mod_type	SELECT typeof(score::float % day) FROM sensors LIMIT 1
+sel_arith_temporal_date_double_forward_add_values	SELECT day + reading AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_double_forward_add_type	SELECT typeof(day + reading) FROM sensors LIMIT 1
+sel_arith_temporal_date_double_forward_sub_values	SELECT day - reading AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_double_forward_sub_type	SELECT typeof(day - reading) FROM sensors LIMIT 1
+sel_arith_temporal_date_double_forward_mul_values	SELECT day * reading AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_double_forward_mul_type	SELECT typeof(day * reading) FROM sensors LIMIT 1
+sel_arith_temporal_date_double_forward_div_values	SELECT day / reading AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_double_forward_div_type	SELECT typeof(day / reading) FROM sensors LIMIT 1
+sel_arith_temporal_date_double_forward_mod_values	SELECT day % reading AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_double_forward_mod_type	SELECT typeof(day % reading) FROM sensors LIMIT 1
+sel_arith_temporal_date_double_reverse_add_values	SELECT reading + day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_double_reverse_add_type	SELECT typeof(reading + day) FROM sensors LIMIT 1
+sel_arith_temporal_date_double_reverse_sub_values	SELECT reading - day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_double_reverse_sub_type	SELECT typeof(reading - day) FROM sensors LIMIT 1
+sel_arith_temporal_date_double_reverse_mul_values	SELECT reading * day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_double_reverse_mul_type	SELECT typeof(reading * day) FROM sensors LIMIT 1
+sel_arith_temporal_date_double_reverse_div_values	SELECT reading / day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_double_reverse_div_type	SELECT typeof(reading / day) FROM sensors LIMIT 1
+sel_arith_temporal_date_double_reverse_mod_values	SELECT reading % day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_double_reverse_mod_type	SELECT typeof(reading % day) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_byte_forward_add_values	SELECT ts + flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_byte_forward_add_type	SELECT typeof(ts + flags::byte) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_byte_forward_sub_values	SELECT ts - flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_byte_forward_sub_type	SELECT typeof(ts - flags::byte) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_byte_forward_mul_values	SELECT ts * flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_byte_forward_mul_type	SELECT typeof(ts * flags::byte) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_byte_forward_div_values	SELECT ts / flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_byte_forward_div_type	SELECT typeof(ts / flags::byte) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_byte_forward_mod_values	SELECT ts % flags::byte AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_byte_forward_mod_type	SELECT typeof(ts % flags::byte) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_byte_reverse_add_values	SELECT flags::byte + ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_byte_reverse_add_type	SELECT typeof(flags::byte + ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_byte_reverse_sub_values	SELECT flags::byte - ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_byte_reverse_sub_type	SELECT typeof(flags::byte - ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_byte_reverse_mul_values	SELECT flags::byte * ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_byte_reverse_mul_type	SELECT typeof(flags::byte * ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_byte_reverse_div_values	SELECT flags::byte / ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_byte_reverse_div_type	SELECT typeof(flags::byte / ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_byte_reverse_mod_values	SELECT flags::byte % ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_byte_reverse_mod_type	SELECT typeof(flags::byte % ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_short_forward_add_values	SELECT ts + flags::short AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_short_forward_add_type	SELECT typeof(ts + flags::short) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_short_forward_sub_values	SELECT ts - flags::short AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_short_forward_sub_type	SELECT typeof(ts - flags::short) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_short_forward_mul_values	SELECT ts * flags::short AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_short_forward_mul_type	SELECT typeof(ts * flags::short) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_short_forward_div_values	SELECT ts / flags::short AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_short_forward_div_type	SELECT typeof(ts / flags::short) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_short_forward_mod_values	SELECT ts % flags::short AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_short_forward_mod_type	SELECT typeof(ts % flags::short) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_short_reverse_add_values	SELECT flags::short + ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_short_reverse_add_type	SELECT typeof(flags::short + ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_short_reverse_sub_values	SELECT flags::short - ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_short_reverse_sub_type	SELECT typeof(flags::short - ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_short_reverse_mul_values	SELECT flags::short * ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_short_reverse_mul_type	SELECT typeof(flags::short * ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_short_reverse_div_values	SELECT flags::short / ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_short_reverse_div_type	SELECT typeof(flags::short / ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_short_reverse_mod_values	SELECT flags::short % ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_short_reverse_mod_type	SELECT typeof(flags::short % ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_int_forward_add_values	SELECT ts + flags AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_int_forward_add_type	SELECT typeof(ts + flags) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_int_forward_sub_values	SELECT ts - flags AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_int_forward_sub_type	SELECT typeof(ts - flags) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_int_forward_mul_values	SELECT ts * flags AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_int_forward_mul_type	SELECT typeof(ts * flags) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_int_forward_div_values	SELECT ts / flags AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_int_forward_div_type	SELECT typeof(ts / flags) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_int_forward_mod_values	SELECT ts % flags AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_int_forward_mod_type	SELECT typeof(ts % flags) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_int_reverse_add_values	SELECT flags + ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_int_reverse_add_type	SELECT typeof(flags + ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_int_reverse_sub_values	SELECT flags - ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_int_reverse_sub_type	SELECT typeof(flags - ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_int_reverse_mul_values	SELECT flags * ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_int_reverse_mul_type	SELECT typeof(flags * ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_int_reverse_div_values	SELECT flags / ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_int_reverse_div_type	SELECT typeof(flags / ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_int_reverse_mod_values	SELECT flags % ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_int_reverse_mod_type	SELECT typeof(flags % ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_long_forward_add_values	SELECT ts + id AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_long_forward_add_type	SELECT typeof(ts + id) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_long_forward_sub_values	SELECT ts - id AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_long_forward_sub_type	SELECT typeof(ts - id) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_long_forward_mul_values	SELECT ts * id AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_long_forward_mul_type	SELECT typeof(ts * id) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_long_forward_div_values	SELECT ts / id AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_long_forward_div_type	SELECT typeof(ts / id) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_long_forward_mod_values	SELECT ts % id AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_long_forward_mod_type	SELECT typeof(ts % id) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_long_reverse_add_values	SELECT id + ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_long_reverse_add_type	SELECT typeof(id + ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_long_reverse_sub_values	SELECT id - ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_long_reverse_sub_type	SELECT typeof(id - ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_long_reverse_mul_values	SELECT id * ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_long_reverse_mul_type	SELECT typeof(id * ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_long_reverse_div_values	SELECT id / ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_long_reverse_div_type	SELECT typeof(id / ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_long_reverse_mod_values	SELECT id % ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_long_reverse_mod_type	SELECT typeof(id % ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_float_forward_add_values	SELECT ts + score::float AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_float_forward_add_type	SELECT typeof(ts + score::float) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_float_forward_sub_values	SELECT ts - score::float AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_float_forward_sub_type	SELECT typeof(ts - score::float) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_float_forward_mul_values	SELECT ts * score::float AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_float_forward_mul_type	SELECT typeof(ts * score::float) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_float_forward_div_values	SELECT ts / score::float AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_float_forward_div_type	SELECT typeof(ts / score::float) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_float_forward_mod_values	SELECT ts % score::float AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_float_forward_mod_type	SELECT typeof(ts % score::float) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_float_reverse_add_values	SELECT score::float + ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_float_reverse_add_type	SELECT typeof(score::float + ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_float_reverse_sub_values	SELECT score::float - ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_float_reverse_sub_type	SELECT typeof(score::float - ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_float_reverse_mul_values	SELECT score::float * ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_float_reverse_mul_type	SELECT typeof(score::float * ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_float_reverse_div_values	SELECT score::float / ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_float_reverse_div_type	SELECT typeof(score::float / ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_float_reverse_mod_values	SELECT score::float % ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_float_reverse_mod_type	SELECT typeof(score::float % ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_double_forward_add_values	SELECT ts + reading AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_double_forward_add_type	SELECT typeof(ts + reading) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_double_forward_sub_values	SELECT ts - reading AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_double_forward_sub_type	SELECT typeof(ts - reading) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_double_forward_mul_values	SELECT ts * reading AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_double_forward_mul_type	SELECT typeof(ts * reading) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_double_forward_div_values	SELECT ts / reading AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_double_forward_div_type	SELECT typeof(ts / reading) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_double_forward_mod_values	SELECT ts % reading AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_double_forward_mod_type	SELECT typeof(ts % reading) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_double_reverse_add_values	SELECT reading + ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_double_reverse_add_type	SELECT typeof(reading + ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_double_reverse_sub_values	SELECT reading - ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_double_reverse_sub_type	SELECT typeof(reading - ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_double_reverse_mul_values	SELECT reading * ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_double_reverse_mul_type	SELECT typeof(reading * ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_double_reverse_div_values	SELECT reading / ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_double_reverse_div_type	SELECT typeof(reading / ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_double_reverse_mod_values	SELECT reading % ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_double_reverse_mod_type	SELECT typeof(reading % ts) FROM sensors LIMIT 1
+sel_arith_temporal_date_date_add_values	SELECT day + day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_date_add_type	SELECT typeof(day + day) FROM sensors LIMIT 1
+sel_arith_temporal_date_date_sub_values	SELECT day - day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_date_sub_type	SELECT typeof(day - day) FROM sensors LIMIT 1
+sel_arith_temporal_date_date_mul_values	SELECT day * day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_date_mul_type	SELECT typeof(day * day) FROM sensors LIMIT 1
+sel_arith_temporal_date_date_div_values	SELECT day / day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_date_div_type	SELECT typeof(day / day) FROM sensors LIMIT 1
+sel_arith_temporal_date_date_mod_values	SELECT day % day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_date_mod_type	SELECT typeof(day % day) FROM sensors LIMIT 1
+sel_arith_temporal_date_timestamp_add_values	SELECT day + ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_timestamp_add_type	SELECT typeof(day + ts) FROM sensors LIMIT 1
+sel_arith_temporal_date_timestamp_sub_values	SELECT day - ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_timestamp_sub_type	SELECT typeof(day - ts) FROM sensors LIMIT 1
+sel_arith_temporal_date_timestamp_mul_values	SELECT day * ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_timestamp_mul_type	SELECT typeof(day * ts) FROM sensors LIMIT 1
+sel_arith_temporal_date_timestamp_div_values	SELECT day / ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_timestamp_div_type	SELECT typeof(day / ts) FROM sensors LIMIT 1
+sel_arith_temporal_date_timestamp_mod_values	SELECT day % ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_date_timestamp_mod_type	SELECT typeof(day % ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_date_add_values	SELECT ts + day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_date_add_type	SELECT typeof(ts + day) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_date_sub_values	SELECT ts - day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_date_sub_type	SELECT typeof(ts - day) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_date_mul_values	SELECT ts * day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_date_mul_type	SELECT typeof(ts * day) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_date_div_values	SELECT ts / day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_date_div_type	SELECT typeof(ts / day) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_date_mod_values	SELECT ts % day AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_date_mod_type	SELECT typeof(ts % day) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_timestamp_add_values	SELECT ts + ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_timestamp_add_type	SELECT typeof(ts + ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_timestamp_sub_values	SELECT ts - ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_timestamp_sub_type	SELECT typeof(ts - ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_timestamp_mul_values	SELECT ts * ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_timestamp_mul_type	SELECT typeof(ts * ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_timestamp_div_values	SELECT ts / ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_timestamp_div_type	SELECT typeof(ts / ts) FROM sensors LIMIT 1
+sel_arith_temporal_timestamp_timestamp_mod_values	SELECT ts % ts AS value FROM sensors ORDER BY ts
+sel_arith_temporal_timestamp_timestamp_mod_type	SELECT typeof(ts % ts) FROM sensors LIMIT 1

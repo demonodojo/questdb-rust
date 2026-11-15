@@ -1,0 +1,2 @@
+typeof(id::byte + flags::int)
+INT

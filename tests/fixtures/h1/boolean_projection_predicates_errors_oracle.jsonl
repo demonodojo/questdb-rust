@@ -1,0 +1,6 @@
+{"query":"SELECT ok AND id IN ('x') FROM sensors","error":"cannot compare LONG with type CHAR","position":21}
+{"query":"SELECT ok OR note LIKE id FROM sensors","error":"there is no matching operator `like` with the argument types: STRING like LONG","position":18}
+{"query":"SELECT ok OR note ~ '[' FROM sensors","error":"Unclosed character class near index 0\n[\n^","position":21}
+{"query":"SELECT ok AND note !~ '[' AS v FROM sensors","error":"Unclosed character class near index 0\n[\n^","position":23}
+{"query":"SELECT ok OR (note ~ '[') AS v FROM sensors","error":"Unclosed character class near index 0\n[\n^","position":22}
+{"query":"SELECT ok AND missing IN (1) FROM sensors","error":"Invalid column: missing","position":14}

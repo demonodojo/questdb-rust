@@ -1,0 +1,5 @@
+to_timestamp(s.note, 'yyyy-MM-dd')
+NULL
+NULL
+NULL
+NULL

@@ -1,0 +1,4 @@
+location	approx_percentile(flags, 0.5)	approx_median(flags)	sum(flags)
+NULL	NULL	NULL	NULL
+madrid	0.0	0.0	10
+東京	43.0	43.0	42

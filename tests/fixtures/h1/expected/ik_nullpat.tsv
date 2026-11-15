@@ -1,2 +1,2 @@
-ilike(note, null)
+note ilike null
 false

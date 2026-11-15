@@ -1,0 +1,5 @@
+typeof(json_extract(s.tag, '$'))
+VARCHAR
+VARCHAR
+VARCHAR
+VARCHAR

@@ -1,0 +1,2 @@
+{"query":"SELECT note FROM sensors WHERE note ~ '[\\Z]' ORDER BY id","error":"Illegal/unsupported escape sequence near index 2\n[\\Z]\n  ^","position":41}
+{"query":"SELECT note FROM sensors WHERE note ~ '[\\z]' ORDER BY id","error":"Illegal/unsupported escape sequence near index 2\n[\\z]\n  ^","position":41}

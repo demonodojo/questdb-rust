@@ -1,0 +1,5 @@
+id	location	count()
+NULL	madrid	1
+-1	東京	1
+1	madrid	1
+2	NULL	1

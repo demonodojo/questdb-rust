@@ -1,0 +1,5 @@
+typeof(to_char(from_base64(s.tag)))
+STRING
+STRING
+STRING
+STRING

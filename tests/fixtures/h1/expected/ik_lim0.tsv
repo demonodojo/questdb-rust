@@ -1,1 +1,1 @@
-ilike(note, 'A%')
+note ilike 'A%'

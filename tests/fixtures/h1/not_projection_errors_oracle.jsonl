@@ -1,0 +1,3 @@
+{"query":"SELECT NOT flags AS n FROM sensors","error":"argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: INT","position":11}
+{"query":"SELECT NOT s.missing AS n FROM sensors AS s","error":"Invalid column: s.missing","position":11}
+{"query":"SELECT NOT (id LIKE 'a%') AS n FROM sensors","error":"there is no matching operator `like` with the argument types: LONG like STRING","position":15}

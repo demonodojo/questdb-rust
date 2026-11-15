@@ -1,0 +1,5 @@
+id	location	ok	count()
+NULL	madrid	true	1
+-1	東京	false	1
+1	madrid	true	1
+2	NULL	false	1

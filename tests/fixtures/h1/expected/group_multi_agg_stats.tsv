@@ -1,0 +1,4 @@
+location	variance(score)	stddev(score)	first(note)	last(note)
+NULL	NULL	NULL	NULL	NULL
+madrid	0.78125	0.8838834764831844	alpha	
+東京	NULL	NULL	βeta	βeta

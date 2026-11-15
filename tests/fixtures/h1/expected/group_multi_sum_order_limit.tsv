@@ -1,0 +1,4 @@
+id	location	sum(flags)
+-1	東京	42
+1	madrid	10
+NULL	madrid	0

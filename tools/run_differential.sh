@@ -59,12 +59,240 @@ compare_captured() {
   echo "captured-oracle: ${count} queries match ${data#"$ROOT_DIR/"}/expected"
 }
 
+compare_captured_numeric() {
+  local data="$1"
+  local manifest="$2"
+  local captures="$3"
+  DIFF_BIN="$BIN" python3 - "$data" "$manifest" "$captures" <<'PY'
+import json
+import os
+import struct
+import subprocess
+import sys
+from pathlib import Path
+
+data = Path(sys.argv[1])
+manifest = [line.rstrip("\n").split("\t", 1) for line in Path(sys.argv[2]).read_text().splitlines()]
+captures = [json.loads(line) for line in Path(sys.argv[3]).read_text().splitlines()]
+if len(manifest) != len(captures):
+    raise SystemExit("numeric manifest and oracle captures differ in length")
+for (name, sql), oracle in zip(manifest, captures):
+    expected = (data / "expected" / f"{name}.tsv").read_text().splitlines()
+    actual = subprocess.check_output(
+        [os.environ["DIFF_BIN"], "query", "--data-dir", str(data), "--sql", sql],
+        text=True,
+    ).splitlines()
+    if not expected or not actual or expected[0] != actual[0] or len(expected) != len(actual):
+        raise SystemExit(f"header or row-count mismatch for {name}")
+    numeric_type = oracle["columns"][0]["type"] in ("FLOAT", "DOUBLE")
+    for row_number, (expected_row, actual_row) in enumerate(zip(expected[1:], actual[1:]), 1):
+        if expected_row == actual_row:
+            continue
+        if not numeric_type:
+            raise SystemExit(f"text mismatch for {name} row {row_number}: {actual_row!r} != {expected_row!r}")
+        try:
+            expected_number = float(expected_row)
+            actual_number = float(actual_row)
+        except ValueError as error:
+            raise SystemExit(f"non-numeric mismatch for {name} row {row_number}") from error
+        if struct.pack("!d", expected_number) != struct.pack("!d", actual_number):
+            raise SystemExit(f"numeric value mismatch for {name} row {row_number}: {actual_row!r} != {expected_row!r}")
+print(f"captured-oracle: {len(manifest)} temporal numeric queries match by exact f64 value")
+PY
+}
+
 compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   select_star "SELECT * FROM sensors ORDER BY ts" \
   id_gt_1 "SELECT id, note, location, tag FROM sensors WHERE id > 1" \
   madrid "SELECT ts, location, tag FROM sensors WHERE location = 'madrid' ORDER BY ts" \
   ok_true "SELECT id, ok FROM sensors WHERE ok = true ORDER BY ts" \
   id_null "SELECT id FROM sensors WHERE id = NULL" \
+  where_or "SELECT id FROM sensors WHERE id = 1 OR id = 2 ORDER BY ts" \
+  where_and "SELECT id FROM sensors WHERE id = 1 AND ok = true ORDER BY ts" \
+  where_precedence "SELECT id FROM sensors WHERE id = 1 OR id = 2 AND ok = false ORDER BY ts" \
+  where_parentheses "SELECT id FROM sensors WHERE (id = 1 OR id = 2) AND ok = false ORDER BY ts" \
+  where_alias_or "SELECT s.id FROM sensors AS s WHERE s.id = 1 OR s.id = 2 ORDER BY s.ts" \
+  where_between_and "SELECT id FROM sensors WHERE id = 1 AND id BETWEEN 1 AND 2 ORDER BY ts" \
+  where_or_null "SELECT id FROM sensors WHERE id = NULL OR id = -1 ORDER BY ts" \
+  where_in "SELECT id FROM sensors WHERE id IN (1, -1) ORDER BY ts" \
+  where_not_in "SELECT id FROM sensors WHERE id NOT IN (1, -1) ORDER BY ts" \
+  where_in_null "SELECT id FROM sensors WHERE id IN (NULL, 1) ORDER BY ts" \
+  where_not_in_null "SELECT id FROM sensors WHERE id NOT IN (NULL, 1) ORDER BY ts" \
+  where_in_alias "SELECT s.id FROM sensors AS s WHERE s.id IN (1, -1) ORDER BY s.ts" \
+  where_in_duplicates "SELECT id FROM sensors WHERE id IN (1, 1) ORDER BY ts" \
+  where_in_and "SELECT id FROM sensors WHERE id IN (1, -1) AND ok = false ORDER BY ts" \
+  where_in_or "SELECT id FROM sensors WHERE id = 1 OR id IN (-1, 2) ORDER BY ts" \
+  where_in_text "SELECT note FROM sensors WHERE note IN ('alpha', '') ORDER BY ts" \
+  where_not_in_mixed_null "SELECT id FROM sensors WHERE id NOT IN (1, NULL) OR id = 1 ORDER BY ts" \
+  where_like_prefix "SELECT id, note FROM sensors WHERE note LIKE 'a%' ORDER BY ts" \
+  where_ilike_prefix "SELECT id, note FROM sensors WHERE note ILIKE 'A%' ORDER BY ts" \
+  where_not_like_prefix "SELECT id, note FROM sensors WHERE note NOT LIKE 'a%' ORDER BY ts" \
+  where_not_ilike_prefix "SELECT id, note FROM sensors WHERE note NOT ILIKE 'A%' ORDER BY ts" \
+  where_like_null "SELECT id FROM sensors WHERE note LIKE NULL ORDER BY ts" \
+  where_not_like_null "SELECT id FROM sensors WHERE note NOT LIKE NULL ORDER BY ts" \
+  where_like_empty "SELECT id FROM sensors WHERE note LIKE '' ORDER BY ts" \
+  where_not_like_empty "SELECT id FROM sensors WHERE note NOT LIKE '' ORDER BY ts" \
+  where_ilike_alias "SELECT s.id FROM sensors AS s WHERE s.note ILIKE 'A%' ORDER BY s.ts" \
+  where_like_escaped "SELECT id FROM sensors WHERE note LIKE 'a\\%' ORDER BY ts" \
+  where_like_underscore "SELECT id FROM sensors WHERE note LIKE 'a_pha' ORDER BY ts" \
+  where_like_and "SELECT id FROM sensors WHERE note LIKE 'a%' AND ok = true ORDER BY ts" \
+  where_ilike_or "SELECT id FROM sensors WHERE id = 2 OR note ILIKE 'A%' ORDER BY ts" \
+  where_ilike_symbol "SELECT id FROM sensors WHERE location ILIKE 'MA%' ORDER BY ts" \
+  where_not_ilike_or "SELECT id FROM sensors WHERE note NOT ILIKE 'A%' OR id = 1 ORDER BY ts" \
+  where_regex_prefix "SELECT id, note FROM sensors WHERE note ~ '^a' ORDER BY ts" \
+  where_regex_search "SELECT id, note FROM sensors WHERE note ~ 'a.*' ORDER BY ts" \
+  where_not_regex_search "SELECT id, note FROM sensors WHERE note !~ 'a.*' ORDER BY ts" \
+  where_regex_class "SELECT id FROM sensors WHERE note ~ '[a-z]+' ORDER BY ts" \
+  where_regex_alt "SELECT id FROM sensors WHERE note ~ 'alpha|βeta' ORDER BY ts" \
+  where_regex_unicode "SELECT id FROM sensors WHERE note ~ '^β' ORDER BY ts" \
+  where_regex_hex_escape "SELECT id FROM sensors WHERE note ~ '^\\x{03B2}' ORDER BY ts" \
+  where_regex_null "SELECT id FROM sensors WHERE note ~ NULL ORDER BY ts" \
+  where_not_regex_null "SELECT id FROM sensors WHERE note !~ NULL ORDER BY ts" \
+  where_regex_empty "SELECT id FROM sensors WHERE note ~ '' ORDER BY ts" \
+  where_not_regex_empty "SELECT id FROM sensors WHERE note !~ '' ORDER BY ts" \
+  where_regex_alias "SELECT s.id FROM sensors AS s WHERE s.note ~ '^a' ORDER BY s.ts" \
+  where_regex_symbol "SELECT id FROM sensors WHERE location ~ '^ma' ORDER BY ts" \
+  where_regex_and "SELECT id FROM sensors WHERE note ~ '^a' AND ok = true ORDER BY ts" \
+  where_regex_or "SELECT id FROM sensors WHERE id = 2 OR note ~ '^a' ORDER BY ts" \
+  where_not_regex_or "SELECT id FROM sensors WHERE note !~ '^a' OR id = 1 ORDER BY ts" \
+  where_regex_null_type "SELECT id FROM sensors WHERE note ~ NULL" \
+  where_not_eq "SELECT id FROM sensors WHERE NOT id = 1 ORDER BY ts" \
+  where_not_group "SELECT id FROM sensors WHERE NOT (id = 1 OR id = -1) ORDER BY ts" \
+  where_not_precedence "SELECT id FROM sensors WHERE NOT id = 1 AND ok = true ORDER BY ts" \
+  where_not_or_rhs "SELECT id FROM sensors WHERE id = 1 OR NOT id = -1 ORDER BY ts" \
+  where_not_nested "SELECT id FROM sensors WHERE NOT NOT (id = 1) ORDER BY ts" \
+  where_not_regex "SELECT id FROM sensors WHERE NOT (note ~ '^a') ORDER BY ts" \
+  where_not_in "SELECT id FROM sensors WHERE NOT (id IN (1, -1)) ORDER BY ts" \
+  where_not_boolean_column "SELECT id FROM sensors WHERE NOT ok ORDER BY ts" \
+  where_boolean_column "SELECT id FROM sensors WHERE ok ORDER BY ts" \
+  where_boolean_true "SELECT id FROM sensors WHERE true ORDER BY ts" \
+  where_boolean_false "SELECT id FROM sensors WHERE false ORDER BY ts" \
+  where_not_null_literal "SELECT id FROM sensors WHERE NOT NULL ORDER BY ts" \
+  where_not_false_literal "SELECT id FROM sensors WHERE NOT false ORDER BY ts" \
+  where_not_and_boolean_column "SELECT id FROM sensors WHERE NOT (id = 1) AND ok ORDER BY ts" \
+  where_not_alias "SELECT s.id FROM sensors AS s WHERE NOT (s.note ~ '^a') ORDER BY s.ts" \
+  where_not_lim0 "SELECT id FROM sensors WHERE NOT (id = 1) LIMIT 0" \
+  where_cols_id_eq_self "SELECT id FROM sensors WHERE id = id ORDER BY ts" \
+  where_cols_id_ne_self "SELECT id FROM sensors WHERE id <> id ORDER BY ts" \
+  where_cols_id_ge_self "SELECT id FROM sensors WHERE id >= id ORDER BY ts" \
+  where_cols_id_le_self "SELECT id FROM sensors WHERE id <= id ORDER BY ts" \
+  where_cols_long_int_eq "SELECT id FROM sensors WHERE id = flags ORDER BY ts" \
+  where_cols_long_int_ne "SELECT id FROM sensors WHERE id != flags ORDER BY ts" \
+  where_cols_double_float_eq "SELECT id FROM sensors WHERE reading = score ORDER BY ts" \
+  where_cols_double_float_gt "SELECT id FROM sensors WHERE reading > score ORDER BY ts" \
+  where_cols_double_long_eq "SELECT id FROM sensors WHERE reading = id ORDER BY ts" \
+  where_cols_string_symbol_eq "SELECT id FROM sensors WHERE note = location ORDER BY ts" \
+  where_cols_symbol_varchar_lt "SELECT id FROM sensors WHERE location < tag ORDER BY ts" \
+  where_cols_long_symbol "SELECT id FROM sensors WHERE id = location ORDER BY ts" \
+  where_cols_long_char "SELECT id FROM sensors WHERE id = ch ORDER BY ts" \
+  where_cols_date_timestamp_lt "SELECT id FROM sensors WHERE day < ts ORDER BY ts" \
+  where_cols_timestamp_date_lt "SELECT id FROM sensors WHERE ts < day ORDER BY ts" \
+  where_cols_boolean_eq_self "SELECT id FROM sensors WHERE ok = ok ORDER BY ts" \
+  where_cols_alias "SELECT s.id FROM sensors AS s WHERE s.reading = s.score ORDER BY s.ts" \
+  where_cols_compound "SELECT id FROM sensors WHERE id = flags OR reading > score AND ok = true ORDER BY ts" \
+  where_cols_not "SELECT id FROM sensors WHERE NOT (id = flags) ORDER BY ts" \
+  where_cols_lim0_valid "SELECT id FROM sensors WHERE id = flags LIMIT 0" \
+  where_expr_id_add_gt_2 "SELECT id FROM sensors WHERE id + 1 > 2 ORDER BY ts" \
+  where_expr_id_gt_flags_add "SELECT id FROM sensors WHERE id > flags + 1 ORDER BY ts" \
+  where_expr_id_add_gt_flags "SELECT id FROM sensors WHERE id + 1 > flags ORDER BY ts" \
+  where_expr_id_mul_eq_flags "SELECT id FROM sensors WHERE id * 2 = flags ORDER BY ts" \
+  where_expr_id_add_gt_1 "SELECT id FROM sensors WHERE id + 1 > 1 ORDER BY ts" \
+  where_expr_id_div_lt_0 "SELECT id FROM sensors WHERE id / 1 < 0 ORDER BY ts" \
+  where_expr_or "SELECT id FROM sensors WHERE id + 1 > 2 OR ok = true ORDER BY ts" \
+  where_expr_alias "SELECT s.id FROM sensors s WHERE s.id + 1 > 1 ORDER BY s.ts" \
+  where_expr_null "SELECT id FROM sensors WHERE id + NULL = 0 ORDER BY ts" \
+  where_expr_abs_id "SELECT id FROM sensors WHERE abs(id) > 1 ORDER BY ts" \
+  where_expr_length_note "SELECT id FROM sensors WHERE length(note) > 3 ORDER BY ts" \
+  where_expr_lower_note "SELECT id FROM sensors WHERE lower(note) = 'alpha' ORDER BY ts" \
+  where_expr_id_gt_abs_flags "SELECT id FROM sensors WHERE id > abs(flags) ORDER BY ts" \
+  where_expr_abs_both "SELECT id FROM sensors WHERE abs(id) < abs(flags) ORDER BY ts" \
+  where_expr_func_or "SELECT id FROM sensors WHERE abs(id) = 1 OR length(note) > 3 ORDER BY ts" \
+  where_expr_abs_alias "SELECT s.id FROM sensors s WHERE abs(s.id) > 1 ORDER BY s.ts" \
+  where_expr_abs_null "SELECT id FROM sensors WHERE abs(id) > NULL ORDER BY ts" \
+  where_expr_chain_precedence "SELECT id FROM sensors WHERE id + flags * 2 = code ORDER BY ts" \
+  where_expr_constant_precedence "SELECT id FROM sensors WHERE id + 1 * 2 > 2 ORDER BY ts" \
+  where_expr_parenthesized "SELECT id FROM sensors WHERE (id + flags) * 2 > 20 ORDER BY ts" \
+  where_expr_function_arithmetic "SELECT id FROM sensors WHERE abs(id) + 1 > 2 ORDER BY ts" \
+  where_expr_float_arithmetic "SELECT id FROM sensors WHERE reading * 2 > 2 ORDER BY ts" \
+  where_expr_left_associative "SELECT id FROM sensors WHERE id + 1 + flags > 12 ORDER BY ts" \
+  where_expr_chain_null "SELECT id FROM sensors WHERE id + NULL * 2 = NULL ORDER BY ts" \
+  where_expr_decimal_literal "SELECT id FROM sensors WHERE id + 1.5 > 2 ORDER BY ts" \
+  where_expr_float_columns "SELECT id FROM sensors WHERE score + score > 0 ORDER BY ts" \
+  where_expr_int_real "SELECT id FROM sensors WHERE flags + 1.5 > 2 ORDER BY ts" \
+  where_expr_modulo "SELECT id FROM sensors WHERE id % 2 = 0 ORDER BY ts" \
+  where_expr_symbol_key "SELECT id FROM sensors WHERE location + 1 > 0 ORDER BY ts" \
+  where_expr_long_overflow "SELECT id FROM sensors WHERE id + 9223372036854775807 > 0 ORDER BY ts" \
+  where_expr_int_overflow "SELECT id FROM sensors WHERE flags + 2147483647 > 0 ORDER BY ts" \
+  where_expr_div_zero "SELECT id FROM sensors WHERE id / 0 > 0 ORDER BY ts" \
+  where_expr_function_alias "SELECT s.id FROM sensors s WHERE abs(s.id) + 1 > 2 ORDER BY s.ts" \
+  where_expr_float_rounding "SELECT id FROM sensors WHERE score * 16777217 = 20971520.0 ORDER BY ts" \
+  where_expr_float_rounding_gt "SELECT id FROM sensors WHERE score * 16777217 > 20971520.0 ORDER BY ts" \
+  where_expr_float_null "SELECT id FROM sensors WHERE cast(id AS FLOAT) + 1 > 0 ORDER BY ts" \
+  where_expr_int_null "SELECT id FROM sensors WHERE cast(id AS INT) + 1 > 0 ORDER BY ts" \
+  where_expr_ts_plus_int "SELECT id FROM sensors WHERE ts + 1 > ts ORDER BY ts" \
+  where_expr_ts_minus_ts "SELECT id FROM sensors WHERE ts - ts = 0 ORDER BY ts" \
+  where_expr_day_plus_int "SELECT id FROM sensors WHERE day + 1 > day ORDER BY ts" \
+  where_expr_day_minus_day "SELECT id FROM sensors WHERE day - day = 0 ORDER BY ts" \
+  where_expr_day_plus_double "SELECT id FROM sensors WHERE day + 1.0 > 0 ORDER BY ts" \
+  where_expr_day_plus_ts "SELECT id FROM sensors WHERE day + ts > 0 ORDER BY ts" \
+  where_expr_ts_minus_day "SELECT id FROM sensors WHERE ts - day > 0 ORDER BY ts" \
+  where_expr_day_minus_ts_gt0 "SELECT id FROM sensors WHERE day - ts > 0 ORDER BY ts" \
+  where_expr_int_plus_ts "SELECT id FROM sensors WHERE 1 + ts > ts ORDER BY ts" \
+  where_expr_ts_mul_int "SELECT id FROM sensors WHERE ts * 2 > 0 ORDER BY ts" \
+  where_expr_day_mul_int "SELECT id FROM sensors WHERE day * 2 > 0 ORDER BY ts" \
+  where_expr_long_min_null "SELECT id FROM sensors WHERE (id - 9223372036854775807 - 1 - id) = NULL ORDER BY ts" \
+  where_expr_long_min_div_null "SELECT id FROM sensors WHERE (id - 9223372036854775807 - 1 - id) / -1 = NULL ORDER BY ts" \
+  where_expr_int_min_null "SELECT id FROM sensors WHERE (cast(id AS INT) - 2147483647 - 1 - cast(id AS INT)) = NULL ORDER BY ts" \
+  where_expr_int_min_div_null "SELECT id FROM sensors WHERE (cast(id AS INT) - 2147483647 - 1 - cast(id AS INT)) / -1 = NULL ORDER BY ts" \
+  where_expr_ts_overflow_neg "SELECT id FROM sensors WHERE ts + 9223372036854775807 < 0 ORDER BY ts" \
+  where_expr_day_overflow_neg "SELECT id FROM sensors WHERE day + 9223372036854775807 < 0 ORDER BY ts" \
+  where_expr_day_overflow_pos "SELECT id FROM sensors WHERE day + 9223372036854775807 > 0 ORDER BY ts" \
+  where_expr_byte_short "SELECT id FROM sensors WHERE b + code > 5 ORDER BY ts" \
+  where_expr_byte_short_div "SELECT id FROM sensors WHERE code / b > 1 ORDER BY ts" \
+  where_expr_byte_byte_mod "SELECT id FROM sensors WHERE b % 2 = 1 ORDER BY ts" \
+  where_expr_float_div0 "SELECT id FROM sensors WHERE score / 0.0 > 0 ORDER BY ts" \
+  where_expr_float_mod0 "SELECT id FROM sensors WHERE score % 0.0 > 0 ORDER BY ts" \
+  where_expr_double_div0 "SELECT id FROM sensors WHERE reading / 0.0 > 0 ORDER BY ts" \
+  where_expr_double_mod0 "SELECT id FROM sensors WHERE reading % 0.0 > 0 ORDER BY ts" \
+  where_expr_nested_null_float "SELECT id FROM sensors WHERE (cast(score AS FLOAT) + 1) * 2 > 0 ORDER BY ts" \
+  where_expr_nested_null_double "SELECT id FROM sensors WHERE (cast(reading AS DOUBLE) / 0.0) + 1 > 0 ORDER BY ts" \
+  where_expr_null_nested "SELECT id FROM sensors WHERE (cast(id AS FLOAT) + NULL) * 2 = NULL ORDER BY ts" \
+  where_expr_int_double_add "SELECT id FROM sensors WHERE id + 1.5 > 2 ORDER BY ts" \
+  where_expr_double_int_add "SELECT id FROM sensors WHERE 1.5 + id > 2 ORDER BY ts" \
+  where_expr_int_double_div "SELECT id FROM sensors WHERE id / 2.0 > 0.5 ORDER BY ts" \
+  where_expr_int_double_mod "SELECT id FROM sensors WHERE id % 2.0 = 1.0 ORDER BY ts" \
+  where_expr_float_int_mod "SELECT id FROM sensors WHERE score % 2 > 0.5 ORDER BY ts" \
+  where_expr_double_double_mod "SELECT id FROM sensors WHERE reading % 2.0 = 1.5 ORDER BY ts" \
+  where_expr_inf_compare "SELECT id FROM sensors WHERE reading * 1e308 * 1e308 > 1e308 ORDER BY ts" \
+  where_expr_inf_eq_inf "SELECT id FROM sensors WHERE reading * 1e308 * 1e308 = reading * 1e308 * 1e308 ORDER BY ts" \
+  where_expr_nan_gt "SELECT id FROM sensors WHERE (reading * 1e308 * 1e308) - (reading * 1e308 * 1e308) > 0 ORDER BY ts" \
+  where_expr_nan_eq_null "SELECT id FROM sensors WHERE (reading * 1e308 * 1e308) - (reading * 1e308 * 1e308) = NULL ORDER BY ts" \
+  where_expr_scientific_max_finite "SELECT id FROM sensors WHERE reading < 1.7976931348623157e308 ORDER BY ts" \
+  where_expr_scientific_min_subnormal "SELECT id FROM sensors WHERE reading > 4.9e-324 ORDER BY ts" \
+  where_expr_scientific_signed "SELECT id FROM sensors WHERE reading * 1E+2 > 0 ORDER BY ts" \
+  where_expr_matrix_byte_short_add "SELECT id FROM sensors WHERE b + code > 0 ORDER BY ts" \
+  where_expr_matrix_byte_short_sub "SELECT id FROM sensors WHERE b - code < 0 ORDER BY ts" \
+  where_expr_matrix_byte_short_mul "SELECT id FROM sensors WHERE b * code < 0 ORDER BY ts" \
+  where_expr_matrix_byte_short_div "SELECT id FROM sensors WHERE b / code > 0 ORDER BY ts" \
+  where_expr_matrix_byte_short_mod "SELECT id FROM sensors WHERE b % code != 0 ORDER BY ts" \
+  where_expr_matrix_int_long_add "SELECT id FROM sensors WHERE flags + id > 0 ORDER BY ts" \
+  where_expr_matrix_int_long_sub "SELECT id FROM sensors WHERE flags - id > 0 ORDER BY ts" \
+  where_expr_matrix_int_long_mul "SELECT id FROM sensors WHERE flags * id < 0 ORDER BY ts" \
+  where_expr_matrix_int_long_div "SELECT id FROM sensors WHERE flags / id > 0 ORDER BY ts" \
+  where_expr_matrix_int_long_mod "SELECT id FROM sensors WHERE flags % id != 0 ORDER BY ts" \
+  where_expr_matrix_long_float_add "SELECT id FROM sensors WHERE id + score > 0 ORDER BY ts" \
+  where_expr_matrix_long_float_sub "SELECT id FROM sensors WHERE id - score > 0 ORDER BY ts" \
+  where_expr_matrix_long_float_mul "SELECT id FROM sensors WHERE id * score < 0 ORDER BY ts" \
+  where_expr_matrix_long_float_div "SELECT id FROM sensors WHERE id / score > 0 ORDER BY ts" \
+  where_expr_matrix_long_float_mod "SELECT id FROM sensors WHERE id % score < 0 ORDER BY ts" \
+  where_expr_matrix_float_double_add "SELECT id FROM sensors WHERE score + reading > 0 ORDER BY ts" \
+  where_expr_matrix_float_double_sub "SELECT id FROM sensors WHERE score - reading < 0 ORDER BY ts" \
+  where_expr_matrix_float_double_mul "SELECT id FROM sensors WHERE score * reading < 0 ORDER BY ts" \
+  where_expr_matrix_float_double_div "SELECT id FROM sensors WHERE score / reading > 0 ORDER BY ts" \
+  where_expr_matrix_float_double_mod "SELECT id FROM sensors WHERE score % reading < 0 ORDER BY ts" \
+  where_expr_matrix_int_null_ne_zero "SELECT id FROM sensors WHERE flags != 0 ORDER BY ts" \
+  where_expr_matrix_double_null_ne_zero "SELECT id FROM sensors WHERE reading != 0 ORDER BY ts" \
+  where_expr_ts_minus_long_min "SELECT id FROM sensors WHERE ts - -9223372036854775808 > 0 ORDER BY ts" \
   order_id "SELECT id FROM sensors ORDER BY id" \
   limit_order_id "SELECT id FROM sensors ORDER BY id LIMIT 2" \
   limit_ts "SELECT id FROM sensors ORDER BY ts LIMIT 1" \
@@ -299,6 +527,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   upper_limit_zero "SELECT upper(note) FROM sensors LIMIT 0" \
   left_note "SELECT left(note, 2) FROM sensors" \
   right_note "SELECT right(note, 2) FROM sensors" \
+  right_qualified_note "SELECT right(s.note, 2) FROM sensors AS s" \
   left_location "SELECT left(location, 3) FROM sensors" \
   right_tag "SELECT right(tag, 4) FROM sensors" \
   left_ch "SELECT left(ch, 1) FROM sensors" \
@@ -340,6 +569,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sub_null_start "SELECT substring(note, null, 2) FROM sensors" \
   sub_code "SELECT substring(note, code, 1) FROM sensors" \
   trim_note "SELECT trim(note) FROM sensors" \
+  trim_qualified_note "SELECT trim(s.note) FROM sensors AS s" \
   trim_location "SELECT trim(location) FROM sensors" \
   trim_tag "SELECT trim(tag) FROM sensors" \
   trim_ch "SELECT trim(ch) FROM sensors" \
@@ -361,7 +591,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rtrim_null "SELECT rtrim(null) FROM sensors LIMIT 1" \
   rtrim_tab $'SELECT rtrim(\'\t ab \') FROM sensors LIMIT 1' \
   ltrim_note "SELECT ltrim(note) FROM sensors" \
+  ltrim_qualified_note "SELECT ltrim(s.note) FROM sensors AS s" \
   rtrim_note "SELECT rtrim(note) FROM sensors" \
+  rtrim_qualified_note "SELECT rtrim(s.note) FROM sensors AS s" \
   ltrim_location "SELECT ltrim(location) FROM sensors" \
   rtrim_tag "SELECT rtrim(tag) FROM sensors" \
   ltrim_ch "SELECT ltrim(ch) FROM sensors" \
@@ -371,6 +603,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ltrim_where_empty "SELECT ltrim(note) FROM sensors WHERE note = ''" \
   rtrim_limit_zero "SELECT rtrim(note) FROM sensors LIMIT 0" \
   rep_note "SELECT replace(note, 'a', 'X') FROM sensors" \
+  rep_qualified_note "SELECT replace(s.note, 'a', 'A') FROM sensors AS s" \
   rep_drop "SELECT replace(note, 'ta', '') FROM sensors" \
   rep_beta "SELECT replace('βeta', 'β', 'B') FROM sensors LIMIT 1" \
   rep_null "SELECT replace(null, 'a', 'b') FROM sensors LIMIT 1" \
@@ -390,6 +623,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rep_empty_value "SELECT replace('', location, 'x') FROM sensors" \
   rep_tag "SELECT replace(tag, '0', 'x') FROM sensors" \
   sw_note "SELECT starts_with(note, 'a') FROM sensors" \
+  sw_qualified_note "SELECT starts_with(s.note, 'a'), starts_with(s.note, '') FROM sensors AS s" \
   sw_beta "SELECT starts_with(note, 'β') FROM sensors" \
   sw_empty "SELECT starts_with(note, '') FROM sensors" \
   sw_null_prefix "SELECT starts_with(note, null) FROM sensors" \
@@ -407,6 +641,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sw_tag "SELECT starts_with(tag, '0') FROM sensors" \
   sw_location "SELECT starts_with(location, '東') FROM sensors" \
   sp_note "SELECT strpos(note, 'a') FROM sensors" \
+  sp_qualified_note "SELECT strpos(s.note, 'a'), strpos(s.note, '') FROM sensors AS s" \
   sp_ph "SELECT strpos(note, 'ph') FROM sensors" \
   sp_miss "SELECT strpos(note, 'z') FROM sensors" \
   sp_empty "SELECT strpos(note, '') FROM sensors" \
@@ -424,7 +659,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sp_tag "SELECT strpos(tag, '0') FROM sensors" \
   sp_ch "SELECT strpos(ch, 'A') FROM sensors" \
   sp_position "SELECT position(note, 'a') FROM sensors" \
+  sp_qualified_position "SELECT position(s.note, 'a'), position(s.note, '') FROM sensors AS s" \
   part_note "SELECT split_part(note, 'a', 1) FROM sensors" \
+  part_qualified_note "SELECT split_part(s.note, 'a', 1), split_part(s.note, 'a', 2) FROM sensors AS s" \
   part_second "SELECT split_part(note, 'a', 2) FROM sensors" \
   part_third "SELECT split_part(note, 'a', 3) FROM sensors" \
   part_dash "SELECT split_part('a-b-c', '-', 2) FROM sensors LIMIT 1" \
@@ -453,7 +690,9 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tl_limit_zero "SELECT to_lowercase(note) FROM sensors LIMIT 0" \
   tu_ch "SELECT to_uppercase(ch) FROM sensors" \
   tu_tag "SELECT to_uppercase(tag) FROM sensors" \
+  lp_qualified_note "SELECT lpad(s.note, 5, '_') FROM sensors AS s" \
   lp_note "SELECT lpad(note, 6, 'x') FROM sensors" \
+  rp_qualified_note "SELECT rpad(s.note, 5, '_') FROM sensors AS s" \
   rp_note "SELECT rpad(note, 6, 'x') FROM sensors" \
   lp_fill "SELECT lpad('ab', 5, 'xy') FROM sensors LIMIT 1" \
   lp_cut "SELECT lpad('abc', 2, 'x') FROM sensors LIMIT 1" \
@@ -474,6 +713,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rp_order "SELECT rpad(note, 6, 'x') FROM sensors ORDER BY rpad(note, 6, 'x')" \
   lp_limit_zero "SELECT lpad(note, 6, 'x') FROM sensors LIMIT 0" \
   qi_note "SELECT quote_ident(note) FROM sensors" \
+  qi_qualified_note "SELECT quote_ident(s.note) FROM sensors AS s" \
   qi_quote "SELECT quote_ident('a\"b') FROM sensors LIMIT 1" \
   qi_space "SELECT quote_ident('a b') FROM sensors LIMIT 1" \
   qi_dash "SELECT quote_ident('a-b') FROM sensors LIMIT 1" \
@@ -502,6 +742,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   lb_where "SELECT length_bytes(note) FROM sensors WHERE note = ''" \
   lb_limit_zero "SELECT length_bytes(note) FROM sensors LIMIT 0" \
   sz_id "SELECT size_pretty(id) FROM sensors" \
+  sz_qualified_id "SELECT size_pretty(s.id) FROM sensors AS s" \
   sz_zero "SELECT size_pretty(0) FROM sensors LIMIT 1" \
   sz_kib "SELECT size_pretty(1024) FROM sensors LIMIT 1" \
   sz_round "SELECT size_pretty(1500) FROM sensors LIMIT 1" \
@@ -519,6 +760,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sz_where "SELECT size_pretty(id) FROM sensors WHERE id = 1" \
   sz_limit_zero "SELECT size_pretty(id) FROM sensors LIMIT 0" \
   abs_id "SELECT abs(id) FROM sensors" \
+  abs_qualified_id "SELECT abs(s.id) FROM sensors AS s" \
   abs_reading "SELECT abs(reading) FROM sensors" \
   abs_score "SELECT abs(score) FROM sensors" \
   abs_byte "SELECT abs(b) FROM sensors" \
@@ -534,6 +776,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   abs_where "SELECT abs(id) FROM sensors WHERE id = -1" \
   abs_limit_zero "SELECT abs(id) FROM sensors LIMIT 0" \
   rd_reading "SELECT round(reading) FROM sensors" \
+  rd_qualified_reading "SELECT round(s.reading) FROM sensors AS s" \
   rd_score "SELECT round(score) FROM sensors" \
   rd_id "SELECT round(id) FROM sensors" \
   rd_flags "SELECT round(flags) FROM sensors" \
@@ -554,6 +797,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rd_where "SELECT round(id) FROM sensors WHERE id = -1" \
   rd_limit_zero "SELECT round(id) FROM sensors LIMIT 0" \
   fl_reading "SELECT floor(reading) FROM sensors" \
+  fl_qualified_reading "SELECT floor(s.reading) FROM sensors AS s ORDER BY s.ts" \
   fl_score "SELECT floor(score) FROM sensors" \
   fl_id "SELECT floor(id) FROM sensors" \
   fl_flags "SELECT floor(flags) FROM sensors" \
@@ -572,6 +816,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   fl_where "SELECT floor(id) FROM sensors WHERE id = -1" \
   fl_limit_zero "SELECT floor(id) FROM sensors LIMIT 0" \
   ce_reading "SELECT ceil(reading) FROM sensors" \
+  ce_qualified_reading "SELECT ceil(s.reading) FROM sensors AS s ORDER BY s.ts" \
   ce_score "SELECT ceil(score) FROM sensors" \
   ce_id "SELECT ceil(id) FROM sensors" \
   ce_flags "SELECT ceil(flags) FROM sensors" \
@@ -591,6 +836,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ce_where "SELECT ceil(id) FROM sensors WHERE id = -1" \
   ce_limit_zero "SELECT ceil(id) FROM sensors LIMIT 0" \
   sg_reading "SELECT sign(reading) FROM sensors" \
+  sg_qualified_reading "SELECT sign(s.reading) FROM sensors AS s ORDER BY s.ts" \
   sg_score "SELECT sign(score) FROM sensors" \
   sg_id "SELECT sign(id) FROM sensors" \
   sg_flags "SELECT sign(flags) FROM sensors" \
@@ -610,6 +856,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sg_where "SELECT sign(id) FROM sensors WHERE id = -1" \
   sg_limit_zero "SELECT sign(id) FROM sensors LIMIT 0" \
   sq_reading "SELECT sqrt(reading) FROM sensors" \
+  sq_qualified_reading "SELECT sqrt(s.reading) FROM sensors AS s ORDER BY s.ts" \
   sq_score "SELECT sqrt(score) FROM sensors" \
   sq_id "SELECT sqrt(id) FROM sensors" \
   sq_flags "SELECT sqrt(flags) FROM sensors" \
@@ -625,6 +872,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sq_where "SELECT sqrt(id) FROM sensors WHERE id = 1" \
   sq_limit_zero "SELECT sqrt(id) FROM sensors LIMIT 0" \
   pw_reading "SELECT power(reading, 2) FROM sensors" \
+  pw_qualified_reading "SELECT power(s.reading, 2) FROM sensors AS s ORDER BY s.ts" \
   pw_score "SELECT power(score, 2) FROM sensors" \
   pw_id "SELECT power(id, 2) FROM sensors" \
   pw_flags "SELECT power(flags, 2) FROM sensors" \
@@ -646,6 +894,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   pw_where "SELECT power(id, 2) FROM sensors WHERE id = -1" \
   pw_limit_zero "SELECT power(id, 2) FROM sensors LIMIT 0" \
   ln_reading "SELECT ln(reading) FROM sensors" \
+  ln_qualified_reading "SELECT ln(s.reading) FROM sensors AS s ORDER BY s.ts" \
   ln_score "SELECT ln(score) FROM sensors" \
   ln_id "SELECT ln(id) FROM sensors" \
   ln_flags "SELECT ln(flags) FROM sensors" \
@@ -662,6 +911,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ln_where "SELECT ln(id) FROM sensors WHERE id = 1" \
   ln_limit_zero "SELECT ln(id) FROM sensors LIMIT 0" \
   lg_reading "SELECT log(reading) FROM sensors" \
+  lg_qualified_reading "SELECT log(s.reading) FROM sensors AS s ORDER BY s.ts" \
   lg_score "SELECT log(score) FROM sensors" \
   lg_id "SELECT log(id) FROM sensors" \
   lg_flags "SELECT log(flags) FROM sensors" \
@@ -678,6 +928,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   lg_where "SELECT log(id) FROM sensors WHERE id = 1" \
   lg_limit_zero "SELECT log(id) FROM sensors LIMIT 0" \
   ex_reading "SELECT exp(reading) FROM sensors" \
+  ex_qualified_reading "SELECT exp(s.reading) FROM sensors AS s ORDER BY s.ts" \
   ex_score "SELECT exp(score) FROM sensors" \
   ex_id "SELECT exp(id) FROM sensors" \
   ex_flags "SELECT exp(flags) FROM sensors" \
@@ -701,6 +952,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   pi_where "SELECT pi() FROM sensors WHERE id = 1" \
   pi_order "SELECT pi() FROM sensors ORDER BY pi()" \
   pi_limit_zero "SELECT pi() FROM sensors LIMIT 0" \
+  ls_qualified_reading_score "SELECT least(s.reading, s.score) FROM sensors AS s" \
+  gt_qualified_reading_score "SELECT greatest(s.reading, s.score) FROM sensors AS s" \
   gt_id_flags "SELECT greatest(id, flags) FROM sensors" \
   gt_reading_score "SELECT greatest(reading, score) FROM sensors" \
   gt_code_byte "SELECT greatest(code, b) FROM sensors" \
@@ -747,6 +1000,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ls_flags_order "SELECT least(flags) FROM sensors ORDER BY least(flags)" \
   ls_where "SELECT least(id, flags) FROM sensors WHERE id = -1" \
   ls_limit_zero "SELECT least(id, flags) FROM sensors LIMIT 0" \
+  rdn_qualified_reading "SELECT round_down(s.reading, 1) FROM sensors AS s" \
   rdn_reading "SELECT round_down(reading, 0) FROM sensors" \
   rdn_reading_scale "SELECT round_down(reading, 1) FROM sensors" \
   rdn_score "SELECT round_down(score, 0) FROM sensors" \
@@ -769,6 +1023,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rdn_order "SELECT round_down(reading, 1) FROM sensors ORDER BY round_down(reading, 1)" \
   rdn_where "SELECT round_down(id, 0) FROM sensors WHERE id = -1" \
   rdn_limit_zero "SELECT round_down(id, 0) FROM sensors LIMIT 0" \
+  rup_qualified_reading "SELECT round_up(s.reading, 1) FROM sensors AS s" \
   rup_reading "SELECT round_up(reading, 0) FROM sensors" \
   rup_reading_scale "SELECT round_up(reading, 1) FROM sensors" \
   rup_score "SELECT round_up(score, 0) FROM sensors" \
@@ -791,6 +1046,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rup_order "SELECT round_up(reading, 1) FROM sensors ORDER BY round_up(reading, 1)" \
   rup_where "SELECT round_up(id, 0) FROM sensors WHERE id = -1" \
   rup_limit_zero "SELECT round_up(id, 0) FROM sensors LIMIT 0" \
+  rhe_qualified_reading "SELECT round_half_even(s.reading, 1) FROM sensors AS s" \
   rhe_reading "SELECT round_half_even(reading, 0) FROM sensors" \
   rhe_reading_scale "SELECT round_half_even(reading, 1) FROM sensors" \
   rhe_score "SELECT round_half_even(score, 0) FROM sensors" \
@@ -816,6 +1072,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rhe_order "SELECT round_half_even(reading, 0) FROM sensors ORDER BY round_half_even(reading, 0)" \
   rhe_where "SELECT round_half_even(id, 0) FROM sensors WHERE id = -1" \
   rhe_limit_zero "SELECT round_half_even(id, 0) FROM sensors LIMIT 0" \
+  ca_qualified_reading_score "SELECT coalesce(s.reading, s.score) FROM sensors AS s" \
   ca_id_flags "SELECT coalesce(id, flags) FROM sensors" \
   ca_flags_id "SELECT coalesce(flags, id) FROM sensors" \
   ca_reading_score "SELECT coalesce(reading, score) FROM sensors" \
@@ -841,6 +1098,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ca_text_order "SELECT coalesce(note, tag) FROM sensors ORDER BY coalesce(note, tag)" \
   ca_where "SELECT coalesce(note, 'x') FROM sensors WHERE id = 1" \
   ca_limit_zero "SELECT coalesce(id, flags) FROM sensors LIMIT 0" \
+  ni_qualified_reading_score "SELECT nullif(s.reading, s.score) FROM sensors AS s" \
   ni_id "SELECT nullif(id, 1) FROM sensors" \
   ni_id_flags "SELECT nullif(id, flags) FROM sensors" \
   ni_flags "SELECT nullif(flags, 10) FROM sensors" \
@@ -907,6 +1165,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   cs_order "SELECT cast(id AS INT) FROM sensors ORDER BY cast(id AS INT)" \
   cs_where "SELECT cast(id AS INT) FROM sensors WHERE id = 1" \
   cs_limit_zero "SELECT cast(id AS INT) FROM sensors LIMIT 0" \
+  da_qualified_ts "SELECT dateadd('d', 1, s.ts) FROM sensors AS s" \
   da_day "SELECT dateadd('d', 1, ts) FROM sensors" \
   da_hour "SELECT dateadd('h', -1, ts) FROM sensors" \
   da_month "SELECT dateadd('M', 1, ts) FROM sensors" \
@@ -925,6 +1184,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   da_flags_order "SELECT dateadd('d', flags, ts) FROM sensors ORDER BY dateadd('d', flags, ts)" \
   da_where "SELECT dateadd('d', 1, ts) FROM sensors WHERE id = 1" \
   da_limit_zero "SELECT dateadd('d', 1, ts) FROM sensors LIMIT 0" \
+  df_qualified_ts "SELECT datediff('d', s.ts, s.ts) FROM sensors AS s" \
   df_day "SELECT datediff('d', ts, ts) FROM sensors" \
   df_second "SELECT datediff('s', ts, '2020-01-02T03:04:06.000000Z') FROM sensors" \
   df_hour "SELECT datediff('h', ts, '2020-01-02T06:04:05.000000Z') FROM sensors" \
@@ -937,6 +1197,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   df_order "SELECT datediff('s', ts, '2020-01-02T03:04:06.000000Z') FROM sensors ORDER BY datediff('s', ts, '2020-01-02T03:04:06.000000Z')" \
   df_where "SELECT datediff('s', ts, '2020-01-02T03:04:06.000000Z') FROM sensors WHERE id = 1" \
   df_limit_zero "SELECT datediff('d', ts, ts) FROM sensors LIMIT 0" \
+  yr_qualified_ts "SELECT year(s.ts) FROM sensors AS s" \
   yr_ts "SELECT year(ts) FROM sensors" \
   yr_id "SELECT year(id) FROM sensors" \
   yr_lit "SELECT year('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
@@ -945,6 +1206,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   yr_order "SELECT year(id) FROM sensors ORDER BY year(id)" \
   yr_where "SELECT year(ts) FROM sensors WHERE id = 1" \
   yr_limit_zero "SELECT year(ts) FROM sensors LIMIT 0" \
+  mo_qualified_ts "SELECT month(s.ts) FROM sensors AS s" \
   mo_ts "SELECT month(ts) FROM sensors" \
   mo_id "SELECT month(id) FROM sensors" \
   mo_lit "SELECT month('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
@@ -953,6 +1215,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   mo_order "SELECT month(id) FROM sensors ORDER BY month(id)" \
   mo_where "SELECT month(ts) FROM sensors WHERE id = 1" \
   mo_limit_zero "SELECT month(ts) FROM sensors LIMIT 0" \
+  dy_qualified_ts "SELECT day(s.ts) FROM sensors AS s" \
   dy_ts "SELECT day(ts) FROM sensors" \
   dy_id "SELECT day(id) FROM sensors" \
   dy_lit "SELECT day('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
@@ -961,6 +1224,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   dy_order "SELECT day(id) FROM sensors ORDER BY day(id)" \
   dy_where "SELECT day(ts) FROM sensors WHERE id = 1" \
   dy_limit_zero "SELECT day(ts) FROM sensors LIMIT 0" \
+  hr_qualified_ts "SELECT hour(s.ts) FROM sensors AS s" \
   hr_ts "SELECT hour(ts) FROM sensors" \
   hr_id "SELECT hour(id) FROM sensors" \
   hr_lit "SELECT hour('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
@@ -969,6 +1233,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   hr_order "SELECT hour(id) FROM sensors ORDER BY hour(id)" \
   hr_where "SELECT hour(ts) FROM sensors WHERE id = 1" \
   hr_limit_zero "SELECT hour(ts) FROM sensors LIMIT 0" \
+  mi_qualified_ts "SELECT minute(s.ts) FROM sensors AS s" \
   mi_ts "SELECT minute(ts) FROM sensors" \
   mi_id "SELECT minute(id) FROM sensors" \
   mi_lit "SELECT minute('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
@@ -977,6 +1242,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   mi_order "SELECT minute(id) FROM sensors ORDER BY minute(id)" \
   mi_where "SELECT minute(ts) FROM sensors WHERE id = 1" \
   mi_limit_zero "SELECT minute(ts) FROM sensors LIMIT 0" \
+  se_qualified_ts "SELECT second(s.ts) FROM sensors AS s" \
   se_ts "SELECT second(ts) FROM sensors" \
   se_id "SELECT second(id) FROM sensors" \
   se_lit "SELECT second('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
@@ -985,6 +1251,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   se_order "SELECT second(id) FROM sensors ORDER BY second(id)" \
   se_where "SELECT second(ts) FROM sensors WHERE id = 1" \
   se_limit_zero "SELECT second(ts) FROM sensors LIMIT 0" \
+  ms_qualified_ts "SELECT millis(s.ts) FROM sensors AS s" \
   ms_ts "SELECT millis(ts) FROM sensors" \
   ms_id "SELECT millis(id) FROM sensors" \
   ms_lit "SELECT millis('2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1" \
@@ -993,6 +1260,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ms_order "SELECT millis(id) FROM sensors ORDER BY millis(id)" \
   ms_where "SELECT millis(ts) FROM sensors WHERE id = 1" \
   ms_limit_zero "SELECT millis(ts) FROM sensors LIMIT 0" \
+  mc_qualified_ts "SELECT micros(s.ts) FROM sensors AS s" \
   mc_ts "SELECT micros(ts) FROM sensors" \
   mc_id "SELECT micros(id) FROM sensors" \
   mc_lit "SELECT micros('2020-01-02T03:04:05.000123Z') FROM sensors LIMIT 1" \
@@ -1001,6 +1269,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   mc_order "SELECT micros(id) FROM sensors ORDER BY micros(id)" \
   mc_where "SELECT micros(ts) FROM sensors WHERE id = 1" \
   mc_limit_zero "SELECT micros(ts) FROM sensors LIMIT 0" \
+  dw_qualified_ts "SELECT day_of_week(s.ts) FROM sensors AS s" \
   dw_ts "SELECT day_of_week(ts) FROM sensors" \
   dw_id "SELECT day_of_week(id) FROM sensors" \
   dw_lit "SELECT day_of_week('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
@@ -1010,6 +1279,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   dw_order "SELECT day_of_week(id) FROM sensors ORDER BY day_of_week(id)" \
   dw_where "SELECT day_of_week(ts) FROM sensors WHERE id = 1" \
   dw_limit_zero "SELECT day_of_week(ts) FROM sensors LIMIT 0" \
+  wy_qualified_ts "SELECT week_of_year(s.ts) FROM sensors AS s" \
   wy_ts "SELECT week_of_year(ts) FROM sensors" \
   wy_id "SELECT week_of_year(id) FROM sensors" \
   wy_lit "SELECT week_of_year('2020-01-02T03:04:05.000000Z') FROM sensors LIMIT 1" \
@@ -1020,6 +1290,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   wy_order "SELECT week_of_year(id) FROM sensors ORDER BY week_of_year(id)" \
   wy_where "SELECT week_of_year(ts) FROM sensors WHERE id = 1" \
   wy_limit_zero "SELECT week_of_year(ts) FROM sensors LIMIT 0" \
+  dt_qualified_ts "SELECT date_trunc('day', s.ts) FROM sensors AS s" \
   dt_day "SELECT date_trunc('day', ts) FROM sensors" \
   dt_year "SELECT date_trunc('year', id) FROM sensors" \
   dt_minute "SELECT date_trunc('minute', '2020-01-02T03:04:05.123456Z') FROM sensors LIMIT 1" \
@@ -1033,6 +1304,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   dt_order "SELECT date_trunc('hour', id) FROM sensors ORDER BY date_trunc('hour', id)" \
   dt_where "SELECT date_trunc('day', ts) FROM sensors WHERE id = 1" \
   dt_zero "SELECT date_trunc('day', ts) FROM sensors LIMIT 0" \
+  tf_qualified_ts "SELECT timestamp_floor('d', s.ts) FROM sensors AS s" \
   tf_day "SELECT timestamp_floor('d', ts) FROM sensors" \
   tf_year "SELECT timestamp_floor('y', id) FROM sensors" \
   tf_2h "SELECT timestamp_floor('2h', id) FROM sensors" \
@@ -1047,6 +1319,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tf_order "SELECT timestamp_floor('h', id) FROM sensors ORDER BY timestamp_floor('h', id)" \
   tf_where "SELECT timestamp_floor('d', ts) FROM sensors WHERE id = 1" \
   tf_zero "SELECT timestamp_floor('d', ts) FROM sensors LIMIT 0" \
+  tc_qualified_ts "SELECT timestamp_ceil('d', s.ts) FROM sensors AS s" \
   tc_day "SELECT timestamp_ceil('d', ts) FROM sensors" \
   tc_year "SELECT timestamp_ceil('y', id) FROM sensors" \
   tc_hour_id "SELECT timestamp_ceil('h', id) FROM sensors" \
@@ -1058,6 +1331,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tc_order "SELECT timestamp_ceil('h', id) FROM sensors ORDER BY timestamp_ceil('h', id)" \
   tc_where "SELECT timestamp_ceil('d', ts) FROM sensors WHERE id = 1" \
   tc_zero "SELECT timestamp_ceil('d', ts) FROM sensors LIMIT 0" \
+  ly_qualified_ts "SELECT is_leap_year(s.ts) FROM sensors AS s" \
   ly_ts "SELECT is_leap_year(ts) FROM sensors" \
   ly_id "SELECT is_leap_year(id) FROM sensors" \
   ly_2020 "SELECT is_leap_year('2020-01-02T00:00:00.000000Z') FROM sensors LIMIT 1" \
@@ -1068,6 +1342,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ly_case "SELECT IS_LEAP_YEAR(TS) FROM sensors LIMIT 1" \
   ly_where "SELECT is_leap_year(ts) FROM sensors WHERE id = 1" \
   ly_zero "SELECT is_leap_year(ts) FROM sensors LIMIT 0" \
+  dm_qualified_ts "SELECT days_in_month(s.ts) FROM sensors AS s" \
   dm_ts "SELECT days_in_month(ts) FROM sensors" \
   dm_id "SELECT days_in_month(id) FROM sensors" \
   dm_feb "SELECT days_in_month('2020-02-01T00:00:00.000000Z') FROM sensors LIMIT 1" \
@@ -1081,6 +1356,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   dm_where "SELECT days_in_month(ts) FROM sensors WHERE id = 1" \
   dm_zero "SELECT days_in_month(ts) FROM sensors LIMIT 0" \
   ts_day "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors" \
+  tostr_qualified_ts "SELECT to_str(s.ts, 'yyyy-MM-dd HH:mm:ss.SSSUUU') FROM sensors AS s ORDER BY s.ts" \
   ts_id "SELECT to_str(id, 'yyyy-MM-dd') FROM sensors" \
   ts_frac "SELECT to_str('2020-01-02T03:04:05.123456Z', 'SSS UUU') FROM sensors LIMIT 1" \
   ts_ampm "SELECT to_str('2020-01-02T15:07:09.000000Z', 'h:mm a') FROM sensors LIMIT 1" \
@@ -1096,6 +1372,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ts_order "SELECT to_str(id, 'yyyy-MM-dd') FROM sensors ORDER BY to_str(id, 'yyyy-MM-dd')" \
   ts_where "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors WHERE id = 1" \
   ts_zero "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors LIMIT 0" \
+  em_qualified_ts "SELECT is_end_of_month(s.ts) FROM sensors AS s" \
   em_ts "SELECT is_end_of_month(ts) FROM sensors" \
   em_id "SELECT is_end_of_month(id) FROM sensors" \
   em_jan "SELECT is_end_of_month('2020-01-31T00:00:00.000000Z') FROM sensors LIMIT 1" \
@@ -1109,6 +1386,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   em_order "SELECT is_end_of_month(id) FROM sensors ORDER BY is_end_of_month(id)" \
   em_where "SELECT is_end_of_month(ts) FROM sensors WHERE id = 1" \
   em_zero "SELECT is_end_of_month(ts) FROM sensors LIMIT 0" \
+  ds_qualified_ts "SELECT day_of_week_sunday_first(s.ts) FROM sensors AS s" \
   ds_ts "SELECT day_of_week_sunday_first(ts) FROM sensors" \
   ds_id "SELECT day_of_week_sunday_first(id) FROM sensors" \
   ds_sun "SELECT day_of_week_sunday_first('2020-01-05T00:00:00.000000Z') FROM sensors LIMIT 1" \
@@ -1136,6 +1414,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tt_where "SELECT to_timestamp('1') FROM sensors WHERE id = 1" \
   tt_limit "SELECT to_timestamp('1') FROM sensors LIMIT 0" \
   tp_date "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
+  tp_qualified_note "SELECT to_timestamp(s.note, 'yyyy-MM-dd') FROM sensors AS s ORDER BY s.id" \
   tp_loose "SELECT to_timestamp('2020-1-2', 'yyyy-M-d') FROM sensors LIMIT 1" \
   tp_yy "SELECT to_timestamp('20', 'yy') FROM sensors LIMIT 1" \
   tp_yy69 "SELECT to_timestamp('69', 'yy') FROM sensors LIMIT 1" \
@@ -1154,6 +1433,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tp_where "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1" \
   tp_zero "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0" \
   xt_year "SELECT extract(year FROM ts) FROM sensors" \
+  xt_qualified_ts "SELECT extract(year FROM s.ts) FROM sensors AS s ORDER BY s.ts" \
   xt_id "SELECT extract(year FROM id) FROM sensors" \
   xt_hour "SELECT extract(hour FROM ts) FROM sensors" \
   xt_dow "SELECT extract(dow FROM ts) FROM sensors" \
@@ -1190,6 +1470,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   td_leap "SELECT to_date('2020-02-29', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
   td_nleap "SELECT to_date('2019-02-29', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
   td_note "SELECT to_date(note, 'yyyy-MM-dd') FROM sensors" \
+  td_qualified_note "SELECT to_date(s.note, 'yyyy-MM-dd') FROM sensors AS s ORDER BY s.id" \
   td_sym "SELECT to_date(location, 'yyyy-MM-dd') FROM sensors LIMIT 1" \
   td_null "SELECT to_date(null, 'yyyy-MM-dd') FROM sensors LIMIT 1" \
   td_bad "SELECT to_date('nope', 'yyyy-MM-dd') FROM sensors LIMIT 1" \
@@ -1198,6 +1479,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   td_where "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1" \
   td_zero "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0" \
   m5_abc "SELECT md5('abc') FROM sensors LIMIT 1" \
+  m5_qualified_tag "SELECT md5(s.tag) FROM sensors AS s ORDER BY s.ts" \
   m5_empty "SELECT md5('') FROM sensors LIMIT 1" \
   m5_null "SELECT md5(null) FROM sensors LIMIT 1" \
   m5_note "SELECT md5(note) FROM sensors" \
@@ -1209,6 +1491,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   m5_where "SELECT md5(note) FROM sensors WHERE id = 1" \
   m5_zero "SELECT md5(note) FROM sensors LIMIT 0" \
   s1_abc "SELECT sha1('abc') FROM sensors LIMIT 1" \
+  s1_qualified_tag "SELECT sha1(s.tag) FROM sensors AS s ORDER BY s.ts" \
   s1_empty "SELECT sha1('') FROM sensors LIMIT 1" \
   s1_null "SELECT sha1(null) FROM sensors LIMIT 1" \
   s1_note "SELECT sha1(note) FROM sensors" \
@@ -1220,6 +1503,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   s1_where "SELECT sha1(note) FROM sensors WHERE id = 1" \
   s1_zero "SELECT sha1(note) FROM sensors LIMIT 0" \
   s2_abc "SELECT sha256('abc') FROM sensors LIMIT 1" \
+  s2_qualified_tag "SELECT sha256(s.tag) FROM sensors AS s ORDER BY s.ts" \
   s2_empty "SELECT sha256('') FROM sensors LIMIT 1" \
   s2_null "SELECT sha256(null) FROM sensors LIMIT 1" \
   s2_note "SELECT sha256(note) FROM sensors" \
@@ -1237,6 +1521,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sn_null "SELECT sin(null) FROM sensors LIMIT 1" \
   sn_id "SELECT sin(id) FROM sensors" \
   sn_read "SELECT sin(reading) FROM sensors" \
+  sn_qualified_reading "SELECT sin(s.reading) FROM sensors AS s ORDER BY s.ts" \
   sn_score "SELECT sin(score) FROM sensors LIMIT 1" \
   sn_flags "SELECT sin(flags) FROM sensors LIMIT 1" \
   sn_byte "SELECT sin(b) FROM sensors LIMIT 1" \
@@ -1260,6 +1545,15 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   co_null "SELECT cos(null) FROM sensors LIMIT 1" \
   co_id "SELECT cos(id) FROM sensors" \
   co_read "SELECT cos(reading) FROM sensors" \
+  co_qualified_reading "SELECT cos(s.reading) FROM sensors AS s ORDER BY s.ts" \
+  tn_qualified_reading "SELECT tan(s.reading) FROM sensors AS s ORDER BY s.ts" \
+  an_qualified_reading "SELECT asin(s.reading) FROM sensors AS s ORDER BY s.ts" \
+  ac_qualified_reading "SELECT acos(s.reading) FROM sensors AS s ORDER BY s.ts" \
+  at_qualified_reading "SELECT atan(s.reading) FROM sensors AS s ORDER BY s.ts" \
+  a2_qualified_reading "SELECT atan2(s.reading, s.reading) FROM sensors AS s ORDER BY s.ts" \
+  dg_qualified_reading "SELECT degrees(s.reading) FROM sensors AS s ORDER BY s.ts" \
+  ra_qualified_reading "SELECT radians(s.reading) FROM sensors AS s ORDER BY s.ts" \
+  ct_qualified_reading "SELECT cot(s.reading) FROM sensors AS s ORDER BY s.ts" \
   co_score "SELECT cos(score) FROM sensors LIMIT 1" \
   co_flags "SELECT cos(flags) FROM sensors LIMIT 1" \
   co_byte "SELECT cos(b) FROM sensors LIMIT 1" \
@@ -1476,6 +1770,11 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ty_short "SELECT typeof(code) FROM sensors" \
   ty_flags "SELECT typeof(flags) FROM sensors" \
   ty_ts "SELECT typeof(ts) FROM sensors" \
+  ty_qualified_ts "SELECT typeof(s.ts) FROM sensors AS s ORDER BY s.ts" \
+  ty_json_qualified_tag "SELECT typeof(json_extract(s.tag, '$')) FROM sensors AS s ORDER BY s.ts" \
+  ty_uuid_qualified_id "SELECT typeof(to_uuid(s.id, s.id)) FROM sensors AS s ORDER BY s.ts" \
+  ty_geohash_qualified_reading "SELECT typeof(make_geohash(s.reading, 41.0, 5)) FROM sensors AS s ORDER BY s.ts" \
+  ty_to_char_qualified_tag "SELECT typeof(to_char(from_base64(s.tag))) FROM sensors AS s ORDER BY s.ts" \
   ty_day "SELECT typeof(day) FROM sensors" \
   ty_ok "SELECT typeof(ok) FROM sensors" \
   ty_note "SELECT typeof(note) FROM sensors" \
@@ -1487,6 +1786,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ty_order "SELECT typeof(id) FROM sensors ORDER BY typeof(id)" \
   ty_lim0 "SELECT typeof(id) FROM sensors LIMIT 0" \
   nt_ok "SELECT not(ok) FROM sensors" \
+  no_alias_flags "SELECT not(s.ok) FROM sensors AS s ORDER BY s.ts" \
   nt_null "SELECT not(null) FROM sensors LIMIT 1" \
   nt_case "SELECT NOT(ok) FROM sensors LIMIT 1" \
   nt_where "SELECT not(ok) FROM sensors WHERE id = 1" \
@@ -2252,6 +2552,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   qd_grp_r "SELECT quantile_disc(reading, 0.5) FROM sensors GROUP BY location ORDER BY location" \
   qd_lim0 "SELECT quantile_disc(flags, 0.5) FROM sensors LIMIT 0" \
   qd_case "SELECT QUANTILE_DISC(flags, 0.5) FROM sensors" \
+  gl_qualified_note "SELECT glob(s.note, 'a*') FROM sensors AS s" \
   gl_all "SELECT glob(note, 'a*') FROM sensors" \
   gl_one "SELECT glob(note, 'a*') FROM sensors WHERE id = 1" \
   gl_null "SELECT glob(note, 'a*') FROM sensors WHERE id = 2" \
@@ -2267,6 +2568,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   gl_case "SELECT GLOB(note, 'a*') FROM sensors WHERE id = 1" \
   gl_none "SELECT glob(note, 'a*') FROM sensors WHERE id > 100" \
   gl_lim0 "SELECT glob(note, 'a*') FROM sensors LIMIT 0" \
+  ik_qualified_note "SELECT ilike(s.note, 'A%') FROM sensors AS s" \
   ik_all "SELECT ilike(note, 'A%') FROM sensors" \
   ik_one "SELECT ilike(note, 'A%') FROM sensors WHERE id = 1" \
   ik_null "SELECT ilike(note, 'A%') FROM sensors WHERE id = 2" \
@@ -2285,6 +2587,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ik_case "SELECT ILIKE(note, 'A%') FROM sensors WHERE id = 1" \
   ik_none "SELECT ilike(note, 'A%') FROM sensors WHERE id > 100" \
   ik_lim0 "SELECT ilike(note, 'A%') FROM sensors LIMIT 0" \
+  lk_qualified_note "SELECT like(s.note, 'a%') FROM sensors AS s" \
   lk_all "SELECT like(note, 'a%') FROM sensors" \
   lk_one "SELECT like(note, 'a%') FROM sensors WHERE id = 1" \
   lk_upper "SELECT like(note, 'A%') FROM sensors WHERE id = 1" \
@@ -2303,6 +2606,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   lk_case "SELECT LIKE(note, 'a%') FROM sensors WHERE id = 1" \
   lk_none "SELECT like(note, 'a%') FROM sensors WHERE id > 100" \
   lk_lim0 "SELECT like(note, 'a%') FROM sensors LIMIT 0" \
+  sx_qualified_id "SELECT switch(s.id, 1, 'one', 'other') FROM sensors AS s" \
   sx_all "SELECT switch(id, 1, 'one', 'other') FROM sensors" \
   sx_one "SELECT switch(id, 1, 'one', 'other') FROM sensors WHERE id = 1" \
   sx_noelse "SELECT switch(id, 1, 'one') FROM sensors" \
@@ -2312,6 +2616,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sx_case "SELECT SWITCH(id, 1, 'one', 'other') FROM sensors WHERE id = 1" \
   sx_none "SELECT switch(id, 1, 'one', 'other') FROM sensors WHERE id > 100" \
   sx_lim0 "SELECT switch(id, 1, 'one', 'other') FROM sensors LIMIT 0" \
+  bn_qualified_flags "SELECT bar(s.flags, 0, 42, 4) FROM sensors AS s" \
   bn_all "SELECT bar(flags, 0, 42, 4) FROM sensors" \
   bn_read "SELECT bar(reading, 0, 2, 4) FROM sensors WHERE id = 1" \
   bn_reads "SELECT bar(reading, 0, 2, 4) FROM sensors" \
@@ -2330,6 +2635,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tq_one "SELECT timestamp_sequence(0, 1000000) FROM sensors WHERE id = 1" \
   tq_none "SELECT timestamp_sequence(0, 1000000) FROM sensors WHERE id > 100" \
   tq_back "SELECT timestamp_sequence(1000000, -1000000) FROM sensors" \
+  tq_qualified_ts "SELECT timestamp_sequence(s.ts, 1) FROM sensors AS s" \
   tq_ts "SELECT timestamp_sequence(ts, 1000) FROM sensors" \
   tq_nullstep "SELECT timestamp_sequence(0, null) FROM sensors" \
   tq_null "SELECT timestamp_sequence(null, 1000) FROM sensors WHERE id = 1" \
@@ -2338,6 +2644,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tq_order "SELECT timestamp_sequence(0, 1000000) FROM sensors ORDER BY id" \
   tq_lim0 "SELECT timestamp_sequence(0, 1000000) FROM sensors LIMIT 0" \
   mp_all "SELECT mid(reading, score) FROM sensors" \
+  mi_alias_reading_score "SELECT mid(s.reading, s.score) FROM sensors AS s ORDER BY s.ts" \
   mp_one "SELECT mid(reading, score) FROM sensors WHERE id = 1" \
   mp_null "SELECT mid(reading, score) FROM sensors WHERE id = 2" \
   mp_none "SELECT mid(reading, score) FROM sensors WHERE id > 100" \
@@ -2345,6 +2652,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   mp_case "SELECT MID(reading, score) FROM sensors WHERE id = 1" \
   mp_lim0 "SELECT mid(reading, score) FROM sensors LIMIT 0" \
   sb_all "SELECT spread(reading, score) FROM sensors" \
+  sd_alias_reading_score "SELECT spread(s.reading, s.score) FROM sensors AS s ORDER BY s.ts" \
   sb_one "SELECT spread(reading, score) FROM sensors WHERE id = 1" \
   sb_null "SELECT spread(reading, score) FROM sensors WHERE id = 2" \
   sb_none "SELECT spread(reading, score) FROM sensors WHERE id > 100" \
@@ -2352,6 +2660,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   sb_case "SELECT SPREAD(reading, score) FROM sensors WHERE id = 1" \
   sb_lim0 "SELECT spread(reading, score) FROM sensors LIMIT 0" \
   bp_all "SELECT spread_bps(reading, score) FROM sensors" \
+  bp_alias_reading_score "SELECT spread_bps(s.reading, s.score) FROM sensors AS s ORDER BY s.ts" \
   bp_one "SELECT spread_bps(reading, score) FROM sensors WHERE id = 1" \
   bp_null "SELECT spread_bps(reading, score) FROM sensors WHERE id = 2" \
   bp_none "SELECT spread_bps(reading, score) FROM sensors WHERE id > 100" \
@@ -2364,7 +2673,19 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   wm_none "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id > 100" \
   wm_case "SELECT WMID(flags, reading, score, id) FROM sensors WHERE id = 1" \
   wm_lim0 "SELECT wmid(flags, reading, score, id) FROM sensors LIMIT 0" \
+  wm_alias_args "SELECT wmid(s.id, s.reading, s.score, s.id) FROM sensors AS s ORDER BY s.ts" \
   bt_all "SELECT between(id, 1, 2) FROM sensors" \
+  bt_alias_function "SELECT between(s.id, 1, 2) FROM sensors AS s" \
+  bt_alias_order_with_source "SELECT s.id, s.id BETWEEN 1 AND 2 FROM sensors AS s ORDER BY s.ts" \
+  bt_alias_order_operand "SELECT s.id BETWEEN 1 AND 2 FROM sensors AS s ORDER BY s.id" \
+  wf_null_low_not "SELECT id FROM sensors WHERE id NOT BETWEEN NULL AND 2" \
+  wf_null_low "SELECT id FROM sensors WHERE id BETWEEN NULL AND 2" \
+  wf_reverse "SELECT id FROM sensors WHERE id BETWEEN 2 AND 1" \
+  wf_alias_limit0 "SELECT s.id FROM sensors AS s WHERE s.id BETWEEN 1 AND 2 LIMIT 0" \
+  wf_alias_not_between "SELECT s.id FROM sensors AS s WHERE s.id NOT BETWEEN 1 AND 2 ORDER BY s.ts" \
+  wf_alias_between "SELECT s.id FROM sensors AS s WHERE s.id BETWEEN 1 AND 2 ORDER BY s.ts" \
+  bt_alias_not_operator "SELECT s.id NOT BETWEEN 1 AND 2 FROM sensors AS s" \
+  bt_alias_operator "SELECT s.id BETWEEN 1 AND 2 FROM sensors AS s" \
   bt_one "SELECT between(id, 1, 2) FROM sensors WHERE id = 1" \
   bt_two "SELECT between(id, 1, 2) FROM sensors WHERE id = 2" \
   bt_none "SELECT between(id, 1, 2) FROM sensors WHERE id > 100" \
@@ -2374,6 +2695,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   bt_null "SELECT between(id, null, 2) FROM sensors WHERE id = 1" \
   bt_lim0 "SELECT between(id, 1, 2) FROM sensors LIMIT 0" \
   iq_all "SELECT id in (1, -1) FROM sensors" \
+  iq_qualified_id "SELECT s.id IN (1, 2) FROM sensors AS s ORDER BY s.ts" \
   iq_one "SELECT id in (1, -1) FROM sensors WHERE id = 1" \
   iq_two "SELECT id in (1, -1) FROM sensors WHERE id = 2" \
   iq_none "SELECT id in (1, -1) FROM sensors WHERE id > 100" \
@@ -2382,6 +2704,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   iq_dbl "SELECT reading in (1.5, 0) FROM sensors" \
   iq_lim0 "SELECT id in (1, -1) FROM sensors LIMIT 0" \
   eq_all "SELECT id = 1 FROM sensors" \
+  eq_qualified_id "SELECT s.id = 1 FROM sensors AS s ORDER BY s.ts" \
   eq_one "SELECT id = 1 FROM sensors WHERE id = 1" \
   eq_two "SELECT id = 1 FROM sensors WHERE id = 2" \
   eq_none "SELECT id = 1 FROM sensors WHERE id > 100" \
@@ -2433,6 +2756,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   lq_note "SELECT note <= 'alpha' FROM sensors" \
   lq_lim0 "SELECT id <= 1 FROM sensors LIMIT 0" \
   ad_all "SELECT id + 1 FROM sensors" \
+  ad_qualified_id "SELECT s.id + 1 FROM sensors AS s ORDER BY s.ts" \
   ad_one "SELECT id + 1 FROM sensors WHERE id = 1" \
   ad_two "SELECT id + 1 FROM sensors WHERE id = 2" \
   ad_none "SELECT id + 1 FROM sensors WHERE id > 100" \
@@ -2475,6 +2799,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rm_flags "SELECT flags % 2 FROM sensors" \
   rm_lim0 "SELECT id % 2 FROM sensors LIMIT 0" \
   ng_all "SELECT -id FROM sensors" \
+  ng_qualified_id "SELECT -s.id FROM sensors AS s ORDER BY s.ts" \
   ng_one "SELECT -id FROM sensors WHERE id = 1" \
   ng_neg "SELECT -id FROM sensors WHERE id = -1" \
   ng_none "SELECT -id FROM sensors WHERE id > 100" \
@@ -2485,6 +2810,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ng_code "SELECT -code FROM sensors" \
   ng_lim0 "SELECT -id FROM sensors LIMIT 0" \
   bc_all "SELECT ~id FROM sensors" \
+  bc_qualified_id "SELECT ~s.id FROM sensors AS s ORDER BY s.ts" \
   bc_one "SELECT ~id FROM sensors WHERE id = 1" \
   bc_neg "SELECT ~id FROM sensors WHERE id = -1" \
   bc_none "SELECT ~id FROM sensors WHERE id > 100" \
@@ -2499,6 +2825,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   nd_one "SELECT ok and ok FROM sensors WHERE id = 1" \
   nd_none "SELECT ok and ok FROM sensors WHERE id > 100" \
   nd_false "SELECT ok and false FROM sensors" \
+  nd_qualified_flags "SELECT s.ok AND false FROM sensors AS s ORDER BY s.ts" \
   nd_null "SELECT ok and null FROM sensors" \
   nd_true "SELECT ok and true FROM sensors" \
   dj_all "SELECT ok or ok FROM sensors" \
@@ -2675,6 +3002,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   zs_flags "SELECT flags::string FROM sensors" \
   zs_note "SELECT note::string FROM sensors" \
   zl_all "SELECT id::long FROM sensors" \
+  zl_qualified_id "SELECT s.id::long FROM sensors AS s ORDER BY s.ts" \
   zl_one "SELECT id::long FROM sensors WHERE id = 1" \
   zl_none "SELECT id::long FROM sensors WHERE id > 100" \
   zl_flags "SELECT flags::long FROM sensors" \
@@ -2788,6 +3116,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ku_case "SELECT KURTOSIS(flags) FROM sensors" \
   ku_day "SELECT kurtosis(day) FROM sensors" \
   ku_ts "SELECT kurtosis(ts) FROM sensors" \
+  na_qualified_ts "SELECT nanos(s.ts) FROM sensors AS s" \
   na_ts "SELECT nanos(ts) FROM sensors" \
   na_day "SELECT nanos(day) FROM sensors" \
   na_id "SELECT nanos(id) FROM sensors" \
@@ -2796,6 +3125,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   na_none "SELECT nanos(ts) FROM sensors WHERE id > 100" \
   na_lim0 "SELECT nanos(ts) FROM sensors LIMIT 0" \
   na_case "SELECT NANOS(ts) FROM sensors" \
+  uc_qualified_ts "SELECT to_utc(s.ts, 'UTC') FROM sensors AS s" \
   uc_utc "SELECT to_utc(ts, 'UTC') FROM sensors" \
   uc_case "SELECT TO_UTC(ts, 'UTC') FROM sensors" \
   uc_mad "SELECT to_utc(ts, 'Europe/Madrid') FROM sensors" \
@@ -2809,6 +3139,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   uc_lim0 "SELECT to_utc(ts, 'UTC') FROM sensors LIMIT 0" \
   tz_utc "SELECT to_timezone(ts, 'UTC') FROM sensors" \
   tz_case "SELECT TO_TIMEZONE(ts, 'UTC') FROM sensors" \
+  tz_qualified_ts "SELECT to_timezone(s.ts, 'Europe/Madrid') FROM sensors AS s" \
   tz_mad "SELECT to_timezone(ts, 'Europe/Madrid') FROM sensors" \
   tz_one "SELECT to_timezone(ts, 'Europe/Madrid') FROM sensors WHERE id = 1" \
   tz_ny "SELECT to_timezone(ts, 'America/New_York') FROM sensors" \
@@ -2819,6 +3150,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tz_flags "SELECT to_timezone(flags, 'UTC') FROM sensors" \
   tz_none "SELECT to_timezone(ts, 'UTC') FROM sensors WHERE id > 100" \
   tz_lim0 "SELECT to_timezone(ts, 'UTC') FROM sensors LIMIT 0" \
+  pg_qualified_note "SELECT to_pg_date(s.note) FROM sensors AS s" \
   pg_lit "SELECT to_pg_date('2020-01-02') FROM sensors LIMIT 1" \
   pg_case "SELECT TO_PG_DATE('2020-01-02') FROM sensors LIMIT 1" \
   pg_epoch "SELECT to_pg_date('1970-01-01') FROM sensors LIMIT 1" \
@@ -2872,6 +3204,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   pr_none "SELECT pg_is_in_recovery() FROM sensors WHERE id > 100" \
   pr_lim0 "SELECT pg_is_in_recovery() FROM sensors LIMIT 0" \
   ft_lit "SELECT format_type(20, 0) FROM sensors" \
+  ft_qualified_flags "SELECT format_type(s.flags, s.flags) FROM sensors AS s ORDER BY s.ts" \
   ft_case "SELECT FORMAT_TYPE(20, 0) FROM sensors" \
   ft_neg "SELECT format_type(1114, -1) FROM sensors LIMIT 1" \
   ft_flags "SELECT format_type(flags, 0) FROM sensors WHERE id = 1" \
@@ -2889,6 +3222,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ft_none "SELECT format_type(20, 0) FROM sensors WHERE id > 100" \
   ft_lim0 "SELECT format_type(20, 0) FROM sensors LIMIT 0" \
   rr_note "SELECT regexp_replace(note, 'a', 'b') FROM sensors" \
+  rr_qualified_note "SELECT regexp_replace(s.note, 'a', 'A') FROM sensors AS s" \
   rr_case "SELECT REGEXP_REPLACE(note, 'a', 'b') FROM sensors" \
   rr_one "SELECT regexp_replace(note, 'a', 'b') FROM sensors WHERE id = 1" \
   rr_none "SELECT regexp_replace(note, 'a', 'b') FROM sensors WHERE id > 100" \
@@ -2897,6 +3231,30 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   rr_pat "SELECT regexp_replace(note, null, 'b') FROM sensors" \
   rr_rep "SELECT regexp_replace(note, 'a', null) FROM sensors" \
   rr_lit "SELECT regexp_replace('alpha', 'a', 'b') FROM sensors LIMIT 1" \
+  regexp_replace_all_matches "SELECT regexp_replace('banana', 'a', 'x') FROM sensors LIMIT 1" \
+  regexp_replace_capture_one "SELECT regexp_replace('alpha', '(ph)', '<\$1>') FROM sensors LIMIT 1" \
+  regexp_replace_capture_zero "SELECT regexp_replace('alpha', '(ph)', '\$0') FROM sensors LIMIT 1" \
+  regexp_replace_capture_reorder_unicode "SELECT regexp_replace('βeta 東京', '(β)(eta)', '\$2-\$1') FROM sensors LIMIT 1" \
+  regexp_replace_capture_named "SELECT regexp_replace('alpha', '(?<x>a)', '\${x}') FROM sensors LIMIT 1" \
+  regexp_replace_replacement_escape "SELECT regexp_replace('alpha', '(a)', '\\\$1') FROM sensors LIMIT 1" \
+  regexp_replace_optional_capture "SELECT regexp_replace('b', '(a)?b', '[\$1]') FROM sensors LIMIT 1" \
+  regexp_replace_invalid_group_without_match "SELECT regexp_replace('zzz', '(a)', '\$2') FROM sensors LIMIT 1" \
+  regexp_replace_greedy_group_number "SELECT regexp_replace('alpha', '(a)', '\$11') FROM sensors LIMIT 1" \
+  regexp_replace_lookbehind_pattern "SELECT regexp_replace('foo 123 foo 456', '(?<=foo )\\d+', 'N') FROM sensors LIMIT 1" \
+  regexp_replace_column_unicode "SELECT id, regexp_replace(note, '(β)', '<\$1>') FROM sensors ORDER BY id" \
+  regexp_replace_group_by_capture "SELECT regexp_replace(note, '(a)', '<\$1>') AS changed FROM sensors GROUP BY note ORDER BY changed" \
+  quoted_filter "SELECT id, note FROM sensors WHERE note ~ '^\\Qalpha\\E$' ORDER BY id" \
+  quoted_replace "SELECT regexp_replace('a.b+c', '\\Qa.b+c\\E', 'X') FROM sensors LIMIT 1" \
+  quoted_class_replace "SELECT regexp_replace('a', '[\\Qa\\E]', 'X') FROM sensors LIMIT 1" \
+  horizontal_class "SELECT id, note FROM sensors WHERE note ~ '^[\\H]+$' ORDER BY id" \
+  horizontal_class_union "SELECT id, note FROM sensors WHERE note ~ '^[a\\H]+$' ORDER BY id" \
+  horizontal_complement_class "SELECT id, note FROM sensors WHERE note ~ '^[^\\H]*$' ORDER BY id" \
+  anchor_upper_Z "SELECT id, note FROM sensors WHERE note ~ '\\Z' ORDER BY id" \
+  anchor_lower_z "SELECT id, note FROM sensors WHERE note ~ '\\z' ORDER BY id" \
+  basic_latin_block "SELECT id, note FROM sensors WHERE note ~ '\\p{InBasic_Latin}+' ORDER BY id" \
+  greek_script_property "SELECT id, note FROM sensors WHERE note ~ '\\p{sc=Greek}+' ORDER BY id" \
+  quoted_projection "SELECT note ~ '^\\Qalpha\\E$' FROM sensors ORDER BY id" \
+  horizontal_projection "SELECT note ~ '^[\\H]+$' FROM sensors ORDER BY id" \
   cw_ver "SELECT current_setting('server_version') FROM sensors" \
   cw_case "SELECT CURRENT_SETTING('server_version') FROM sensors LIMIT 1" \
   cw_one "SELECT current_setting('server_version') FROM sensors WHERE id = 1" \
@@ -2944,6 +3302,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   gx_tn "SELECT pg_get_expr(note, 1, null) FROM sensors LIMIT 1" \
   gx_ok "SELECT pg_get_expr(note, 1, ok) FROM sensors" \
   nm_24 "SELECT netmask('192.168.1.1/24') FROM sensors LIMIT 1" \
+  nm_qualified_tag "SELECT netmask(s.tag) FROM sensors AS s ORDER BY s.ts" \
   nm_8 "SELECT netmask('10.0.0.1/8') FROM sensors LIMIT 1" \
   nm_16 "SELECT netmask('1.2.3.4/16') FROM sensors LIMIT 1" \
   nm_1 "SELECT netmask('1.2.3.4/1') FROM sensors LIMIT 1" \
@@ -2967,6 +3326,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   nm_note "SELECT netmask(note) FROM sensors" \
   nm_loc "SELECT netmask(location) FROM sensors" \
   gd_zero "SELECT geo_distance_meters(0, 0, 0, 0) FROM sensors LIMIT 1" \
+  gd_qualified_flags "SELECT geo_distance_meters(s.flags, s.flags, s.flags, s.flags) FROM sensors AS s ORDER BY s.ts" \
   gd_one "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors LIMIT 1" \
   gd_mad "SELECT geo_distance_meters(41.0, 2.0, 40.0, -3.0) FROM sensors LIMIT 1" \
   gd_case "SELECT GEO_DISTANCE_METERS(0, 0, 0, 1) FROM sensors LIMIT 1" \
@@ -2982,6 +3342,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   gd_byte "SELECT geo_distance_meters(0, b, 0, 1) FROM sensors LIMIT 1" \
   gd_sc2 "SELECT geo_distance_meters(score, 0, score, 1) FROM sensors" \
   gw_in "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors LIMIT 1" \
+  gw_qualified_id "SELECT geo_within_radius_latlon(s.id, s.id, s.id, s.id, s.id) FROM sensors AS s ORDER BY s.ts" \
   gw_out "SELECT geo_within_radius_latlon(0, 0, 0, 1, 100000) FROM sensors LIMIT 1" \
   gw_eq "SELECT geo_within_radius_latlon(0, 0, 0, 1, 111320) FROM sensors LIMIT 1" \
   gw_zero "SELECT geo_within_radius_latlon(0, 0, 0, 0, 0) FROM sensors LIMIT 1" \
@@ -2996,6 +3357,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   gw_hi "SELECT geo_within_radius_latlon(0, score, 0, 1, 30000) FROM sensors LIMIT 1" \
   gw_lo "SELECT geo_within_radius_latlon(0, score, 0, 1, 20000) FROM sensors LIMIT 1" \
   wn_in "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors LIMIT 1" \
+  wn_qualified_id "SELECT within_radius(s.id, s.id, s.id, s.id, s.id) FROM sensors AS s ORDER BY s.ts" \
   wn_out "SELECT within_radius(0, 0, 3, 4, 4) FROM sensors LIMIT 1" \
   wn_zero "SELECT within_radius(0, 0, 0, 0, 0) FROM sensors LIMIT 1" \
   wn_neg "SELECT within_radius(0, 0, 3, 4, -1) FROM sensors LIMIT 1" \
@@ -3008,6 +3370,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   wn_lim0 "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors LIMIT 0" \
   wn_score "SELECT within_radius(0, score, 0, 1, 2) FROM sensors LIMIT 1" \
   wb_in "SELECT within_box(0, 0, -1, -1, 1, 1) FROM sensors LIMIT 1" \
+  wb_qualified_id "SELECT within_box(s.id, s.id, s.id, s.id, s.id, s.id) FROM sensors AS s ORDER BY s.ts" \
   wb_out "SELECT within_box(2, 0, -1, -1, 1, 1) FROM sensors LIMIT 1" \
   wb_edge "SELECT within_box(1, 1, -1, -1, 1, 1) FROM sensors LIMIT 1" \
   wb_zero "SELECT within_box(0, 0, 0, 0, 0, 0) FROM sensors LIMIT 1" \
@@ -3020,6 +3383,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   wb_score "SELECT within_box(0, score, -1, -2, 1, 2) FROM sensors" \
   wb_id "SELECT within_box(id, id, 0, 0, 1, 1) FROM sensors" \
   mg_mad "SELECT make_geohash(2.0, 41.0, 20) FROM sensors LIMIT 1" \
+  mg_qualified_reading "SELECT make_geohash(s.reading, s.reading, 5) FROM sensors AS s ORDER BY s.ts" \
   mg_s "SELECT make_geohash(0, 0, 5) FROM sensors LIMIT 1" \
   mg_bit "SELECT make_geohash(0, 0, 1) FROM sensors LIMIT 1" \
   mg_c2 "SELECT make_geohash(0, 0, 10) FROM sensors LIMIT 1" \
@@ -3055,6 +3419,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   mg_neg0 "SELECT make_geohash(-0.0, 0, 5) FROM sensors LIMIT 1" \
   mg_type "SELECT typeof(make_geohash(2.0, 41.0, 20)) FROM sensors LIMIT 1" \
   uu_12 "SELECT to_uuid(1, 2) FROM sensors LIMIT 1" \
+  uu_qualified_id "SELECT to_uuid(s.id, s.id) FROM sensors AS s ORDER BY s.ts" \
   uu_00 "SELECT to_uuid(0, 0) FROM sensors LIMIT 1" \
   uu_neg "SELECT to_uuid(-1, -1) FROM sensors LIMIT 1" \
   uu_nlo "SELECT to_uuid(null, 1) FROM sensors LIMIT 1" \
@@ -3093,6 +3458,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   je_empty "SELECT json_extract('', '$.a') FROM sensors LIMIT 1" \
   je_bad "SELECT json_extract('not json', '$.a') FROM sensors LIMIT 1" \
   je_tag "SELECT json_extract(tag, '$') FROM sensors LIMIT 1" \
+  je_qualified_tag "SELECT json_extract(s.tag, '$') FROM sensors AS s ORDER BY s.ts" \
+  je_num_suffix "SELECT json_extract('123abc', '$') FROM sensors LIMIT 1" \
   je_type "SELECT typeof(json_extract('{\"a\":1}', '$.a')) FROM sensors LIMIT 1" \
   je_bool "SELECT json_extract('{\"a\":1}', '$.a', 1) FROM sensors" \
   th_null "SELECT to_char(null) FROM sensors LIMIT 1" \
@@ -3102,6 +3469,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   th_bnull "SELECT to_char(from_base64(null)) FROM sensors LIMIT 1" \
   th_nopad "SELECT to_char(from_base64('YWI')) FROM sensors LIMIT 1" \
   th_one "SELECT to_char(from_base64('YWI=')) FROM sensors WHERE id = 1" \
+  th_qualified_tag "SELECT to_char(from_base64(s.tag)) FROM sensors AS s WHERE s.id = 1" \
   th_none "SELECT to_char(from_base64('YWI=')) FROM sensors WHERE id > 100" \
   th_lim0 "SELECT to_char(from_base64('YWI=')) FROM sensors LIMIT 0" \
   th_16 "SELECT to_char(from_base64('MDEyMzQ1Njc4OWFiY2RlZg==')) FROM sensors LIMIT 1" \
@@ -3113,6 +3481,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   pv_lim0 "SELECT pg_catalog.version() FROM sensors LIMIT 0" \
   pv_type "SELECT typeof(pg_catalog.version()) FROM sensors LIMIT 1" \
   ub_all "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors" \
+  ub_qualified_flags "SELECT pg_catalog.pg_get_userbyid(s.flags) FROM sensors AS s ORDER BY s.ts" \
   ub_zero "SELECT pg_catalog.pg_get_userbyid(0) FROM sensors LIMIT 1" \
   ub_null "SELECT pg_catalog.pg_get_userbyid(null) FROM sensors LIMIT 1" \
   ub_neg "SELECT pg_catalog.pg_get_userbyid(-1) FROM sensors LIMIT 1" \
@@ -3124,6 +3493,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ub_lim0 "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors LIMIT 0" \
   ub_type "SELECT typeof(pg_catalog.pg_get_userbyid(1)) FROM sensors LIMIT 1" \
   tv_all "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors" \
+  tv_qualified_flags "SELECT pg_catalog.pg_table_is_visible(s.flags) FROM sensors AS s ORDER BY s.ts" \
   tv_zero "SELECT pg_catalog.pg_table_is_visible(0) FROM sensors LIMIT 1" \
   tv_null "SELECT pg_catalog.pg_table_is_visible(null) FROM sensors LIMIT 1" \
   tv_neg "SELECT pg_catalog.pg_table_is_visible(-1) FROM sensors LIMIT 1" \
@@ -3135,6 +3505,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   tv_lim0 "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors LIMIT 0" \
   tv_type "SELECT typeof(pg_catalog.pg_table_is_visible(1)) FROM sensors LIMIT 1" \
   ag_all "SELECT pg_catalog.age(1) FROM sensors" \
+  ag_qualified_id "SELECT pg_catalog.age(s.id) FROM sensors AS s ORDER BY s.ts" \
   ag_null "SELECT pg_catalog.age(null) FROM sensors LIMIT 1" \
   ag_neg "SELECT pg_catalog.age(-1) FROM sensors LIMIT 1" \
   ag_str "SELECT pg_catalog.age('2') FROM sensors LIMIT 1" \
@@ -3167,6 +3538,7 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   ir_lim0 "SELECT pg_catalog.pg_is_in_recovery() FROM sensors LIMIT 0" \
   ir_type "SELECT typeof(pg_catalog.pg_is_in_recovery()) FROM sensors LIMIT 1" \
   kf_all "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors" \
+  kf_qualified_flags "SELECT pg_catalog.pg_get_partkeydef(s.flags) FROM sensors AS s ORDER BY s.ts" \
   kf_zero "SELECT pg_catalog.pg_get_partkeydef(0) FROM sensors LIMIT 1" \
   kf_null "SELECT pg_catalog.pg_get_partkeydef(null) FROM sensors LIMIT 1" \
   kf_neg "SELECT pg_catalog.pg_get_partkeydef(-1) FROM sensors LIMIT 1" \
@@ -3178,6 +3550,8 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   kf_lim0 "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors LIMIT 0" \
   kf_type "SELECT typeof(pg_catalog.pg_get_partkeydef(1)) FROM sensors LIMIT 1" \
   ge_all "SELECT pg_catalog.pg_get_expr(note, 1) FROM sensors" \
+  ge_qualified_args "SELECT pg_catalog.pg_get_expr(s.note, s.flags) FROM sensors AS s ORDER BY s.ts" \
+  ge_qualified_optional "SELECT pg_catalog.pg_get_expr(s.note, s.flags, s.ok) FROM sensors AS s ORDER BY s.ts" \
   ge_case "SELECT pg_catalog.PG_GET_EXPR(note, 1) FROM sensors LIMIT 1" \
   ge_one "SELECT pg_catalog.pg_get_expr(note, 1) FROM sensors WHERE id = 1" \
   ge_none "SELECT pg_catalog.pg_get_expr(note, 1) FROM sensors WHERE id > 100" \
@@ -3263,6 +3637,254 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   cq_note "SELECT concat(s.note, s.location) FROM sensors AS s" \
   lx_note "SELECT left(s.note, 1) FROM sensors AS s" \
   sv_note "SELECT substring(s.note, 1, 1) FROM sensors AS s"
+
+matrix_args=()
+for pair_fields in \
+  "byte_int|b|flags" \
+  "byte_long|b|id" \
+  "byte_float|b|score" \
+  "byte_double|b|reading" \
+  "short_int|code|flags" \
+  "short_long|code|id" \
+  "short_float|code|score" \
+  "short_double|code|reading" \
+  "int_float|flags|score" \
+  "int_double|flags|reading" \
+  "long_double|id|reading"; do
+  IFS='|' read -r pair left right <<<"$pair_fields"
+  for op_fields in "add|+|> 0" "sub|-|> 0" "mul|*|< 0" "div|/|> 0" "mod|%|!= 0"; do
+    IFS='|' read -r name operator condition <<<"$op_fields"
+    lhs="$left"
+    rhs="$right"
+    if [[ ( "$pair" == "byte_long" || "$pair" == "short_float" || "$pair" == "int_double" ) \
+      && ( "$name" == "sub" || "$name" == "div" || "$name" == "mod" ) ]]; then
+      lhs="$right"
+      rhs="$left"
+    fi
+    matrix_args+=("where_expr_matrix_${pair}_${name}" "SELECT id FROM sensors WHERE ${lhs} ${operator} ${rhs} ${condition} ORDER BY ts")
+  done
+done
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${matrix_args[@]}"
+
+reverse_matrix_args=()
+for pair_fields in \
+  "byte_short|b|code" \
+  "byte_int|b|flags" \
+  "byte_float|b|score" \
+  "byte_double|b|reading" \
+  "short_int|code|flags" \
+  "short_long|code|id" \
+  "short_double|code|reading" \
+  "int_long|flags|id" \
+  "int_float|flags|score" \
+  "long_float|id|score" \
+  "long_double|id|reading" \
+  "float_double|score|reading"; do
+  IFS='|' read -r pair left right <<<"$pair_fields"
+  for op_fields in "sub|-|> 0" "div|/|> 0" "mod|%|!= 0"; do
+    IFS='|' read -r name operator condition <<<"$op_fields"
+    reverse_matrix_args+=("where_expr_matrix_reverse_${pair}_${name}" "SELECT id FROM sensors WHERE ${right} ${operator} ${left} ${condition} ORDER BY ts")
+  done
+done
+reverse_matrix_args+=(
+  "where_expr_matrix_sentinel_byte_short_pair" "SELECT id FROM sensors WHERE b + code - code - 2147483647 - 1 - b = NULL ORDER BY ts"
+  "where_expr_matrix_sentinel_byte_int_pair" "SELECT id FROM sensors WHERE b + flags - flags - 2147483647 - 1 - b = NULL ORDER BY ts"
+  "where_expr_matrix_sentinel_short_int_pair" "SELECT id FROM sensors WHERE code + flags - flags - 2147483647 - 1 - code = NULL ORDER BY ts"
+  "where_expr_matrix_sentinel_byte_long_pair" "SELECT id FROM sensors WHERE id + b - b - 9223372036854775807 - 1 - id = NULL ORDER BY ts"
+  "where_expr_matrix_sentinel_short_long_pair" "SELECT id FROM sensors WHERE id + code - code - 9223372036854775807 - 1 - id = NULL ORDER BY ts"
+  "where_expr_matrix_sentinel_int_long_pair" "SELECT id FROM sensors WHERE id + flags - flags - 9223372036854775807 - 1 - id = NULL ORDER BY ts"
+  "where_expr_matrix_sentinel_byte_int_min" "SELECT id FROM sensors WHERE b - 2147483647 - 1 - b = NULL ORDER BY ts"
+  "where_expr_matrix_sentinel_short_int_min" "SELECT id FROM sensors WHERE code - 2147483647 - 1 - code = NULL ORDER BY ts"
+  "where_expr_matrix_sentinel_int_min" "SELECT id FROM sensors WHERE flags - 2147483647 - 1 - flags = NULL ORDER BY ts"
+  "where_expr_matrix_sentinel_long_int_min" "SELECT id FROM sensors WHERE id + flags - flags - 9223372036854775807 - 1 - id = NULL ORDER BY ts"
+)
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${reverse_matrix_args[@]}"
+
+same_type_args=()
+for pair_fields in \
+  "byte|b" \
+  "short|code" \
+  "int|flags" \
+  "long|id" \
+  "float|score" \
+  "double|reading"; do
+  IFS='|' read -r name column <<<"$pair_fields"
+  for op_fields in "add|+|> 0" "sub|-|= 0" "mul|*|> 0" "div|/|= 1" "mod|%|= 0"; do
+    IFS='|' read -r operator_name operator condition <<<"$op_fields"
+    same_type_args+=("where_expr_overflow_matrix_${name}_same_${operator_name}" "SELECT id FROM sensors WHERE ${column} ${operator} ${column} ${condition} ORDER BY ts")
+  done
+done
+same_type_args+=(
+  "where_expr_overflow_matrix_int_add_min" "SELECT id FROM sensors WHERE cast(id AS INT) + 2147483646 = NULL ORDER BY ts"
+  "where_expr_overflow_matrix_int_add_min_reverse" "SELECT id FROM sensors WHERE 2147483646 + cast(id AS INT) = NULL ORDER BY ts"
+  "where_expr_overflow_matrix_int_mul_min" "SELECT id FROM sensors WHERE cast(id AS INT) * 1073741824 = NULL ORDER BY ts"
+  "where_expr_overflow_matrix_int_mul_min_reverse" "SELECT id FROM sensors WHERE 1073741824 * cast(id AS INT) = NULL ORDER BY ts"
+  "where_expr_overflow_matrix_long_add_min" "SELECT id FROM sensors WHERE id + 9223372036854775807 + 1 = NULL ORDER BY ts"
+  "where_expr_overflow_matrix_long_add_min_reverse" "SELECT id FROM sensors WHERE 9223372036854775807 + id + 1 = NULL ORDER BY ts"
+  "where_expr_overflow_matrix_long_mul_min" "SELECT id FROM sensors WHERE id * 9223372036854775807 + id = NULL ORDER BY ts"
+  "where_expr_overflow_matrix_long_mul_min_reverse" "SELECT id FROM sensors WHERE 9223372036854775807 * id + id = NULL ORDER BY ts"
+)
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${same_type_args[@]}"
+
+type_args=()
+type_names=(byte short int long float double)
+type_columns=(b code flags id score reading)
+type_operators=("add|+" "sub|-" "mul|*" "div|/" "mod|%")
+for ((left_index = 0; left_index < ${#type_names[@]}; left_index++)); do
+  left_name="${type_names[$left_index]}"
+  left_column="${type_columns[$left_index]}"
+  for op_fields in "${type_operators[@]}"; do
+    IFS='|' read -r operator_name operator <<<"$op_fields"
+    type_args+=("where_expr_arithmetic_type_same_${left_name}_${operator_name}" "SELECT typeof(${left_column} ${operator} ${left_column}) FROM sensors LIMIT 1")
+  done
+  for ((right_index = left_index + 1; right_index < ${#type_names[@]}; right_index++)); do
+    right_name="${type_names[$right_index]}"
+    right_column="${type_columns[$right_index]}"
+    pair="${left_name}_${right_name}"
+    for op_fields in "${type_operators[@]}"; do
+      IFS='|' read -r operator_name operator <<<"$op_fields"
+      type_args+=("where_expr_arithmetic_type_${pair}_${operator_name}_forward" "SELECT typeof(${left_column} ${operator} ${right_column}) FROM sensors LIMIT 1")
+      type_args+=("where_expr_arithmetic_type_${pair}_${operator_name}_reverse" "SELECT typeof(${right_column} ${operator} ${left_column}) FROM sensors LIMIT 1")
+    done
+  done
+done
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${type_args[@]}"
+
+temporal_type_args=()
+temporal_names=(date timestamp)
+temporal_columns=(day ts)
+numeric_names=(byte short int long float double)
+numeric_columns=(b code flags id score reading)
+for ((left_index = 0; left_index < ${#temporal_names[@]}; left_index++)); do
+  temporal_name="${temporal_names[$left_index]}"
+  temporal_column="${temporal_columns[$left_index]}"
+  for op_fields in "${type_operators[@]}"; do
+    IFS='|' read -r operator_name operator <<<"$op_fields"
+    temporal_type_args+=("where_expr_arithmetic_temporal_type_same_${temporal_name}_${operator_name}" "SELECT typeof(${temporal_column} ${operator} ${temporal_column}) FROM sensors LIMIT 1")
+  done
+  for ((right_index = left_index + 1; right_index < ${#temporal_names[@]}; right_index++)); do
+    right_name="${temporal_names[$right_index]}"
+    right_column="${temporal_columns[$right_index]}"
+    pair="${temporal_name}_${right_name}"
+    for op_fields in "${type_operators[@]}"; do
+      IFS='|' read -r operator_name operator <<<"$op_fields"
+      temporal_type_args+=("where_expr_arithmetic_temporal_type_${pair}_${operator_name}_forward" "SELECT typeof(${temporal_column} ${operator} ${right_column}) FROM sensors LIMIT 1")
+      temporal_type_args+=("where_expr_arithmetic_temporal_type_${pair}_${operator_name}_reverse" "SELECT typeof(${right_column} ${operator} ${temporal_column}) FROM sensors LIMIT 1")
+    done
+  done
+  for ((right_index = 0; right_index < ${#numeric_names[@]}; right_index++)); do
+    right_name="${numeric_names[$right_index]}"
+    right_column="${numeric_columns[$right_index]}"
+    pair="${temporal_name}_${right_name}"
+    for op_fields in "${type_operators[@]}"; do
+      IFS='|' read -r operator_name operator <<<"$op_fields"
+      temporal_type_args+=("where_expr_arithmetic_temporal_type_${pair}_${operator_name}_forward" "SELECT typeof(${temporal_column} ${operator} ${right_column}) FROM sensors LIMIT 1")
+      temporal_type_args+=("where_expr_arithmetic_temporal_type_${pair}_${operator_name}_reverse" "SELECT typeof(${right_column} ${operator} ${temporal_column}) FROM sensors LIMIT 1")
+    done
+  done
+done
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${temporal_type_args[@]}"
+
+temporal_value_args=()
+while IFS=$'\t' read -r name sql; do
+  temporal_value_args+=("$name" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/where_expr_arithmetic_temporal_value_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${temporal_value_args[@]}"
+
+select_arithmetic_args=()
+while IFS=$'\t' read -r name sql; do
+  select_arithmetic_args+=("sel_arith_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/select_expr_arithmetic_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${select_arithmetic_args[@]}"
+
+select_arithmetic_matrix_args=()
+while IFS=$'\t' read -r name sql; do
+  select_arithmetic_matrix_args+=("$name" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/select_expr_arithmetic_matrix_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${select_arithmetic_matrix_args[@]}"
+
+select_arithmetic_edge_args=()
+while IFS=$'\t' read -r name sql; do
+  select_arithmetic_edge_args+=("sel_arith_edge_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/select_expr_arithmetic_edge_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${select_arithmetic_edge_args[@]}"
+
+compare_captured_numeric \
+  "$ROOT_DIR/tests/fixtures/h1" \
+  "$ROOT_DIR/tests/fixtures/h1/select_expr_arithmetic_temporal_matrix_queries.tsv" \
+  "$ROOT_DIR/tests/fixtures/h1/select_expr_arithmetic_temporal_matrix_oracle.jsonl"
+
+group_by_arithmetic_args=()
+while IFS=$'\t' read -r name sql; do
+  group_by_arithmetic_args+=("group_arith_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/group_by_arithmetic_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${group_by_arithmetic_args[@]}"
+
+group_by_multi_args=()
+while IFS=$'\t' read -r name sql; do
+  group_by_multi_args+=("group_multi_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/group_by_multi_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${group_by_multi_args[@]}"
+
+group_by_multi_aggregate_args=()
+while IFS=$'\t' read -r name sql; do
+  group_by_multi_aggregate_args+=("group_multi_agg_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/group_by_multi_aggregate_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${group_by_multi_aggregate_args[@]}"
+
+group_by_multi_special_args=()
+while IFS=$'\t' read -r name sql; do
+  group_by_multi_special_args+=("group_multi_special_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/group_by_multi_special_aggregates_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${group_by_multi_special_args[@]}"
+
+group_by_multi_weighted_args=()
+while IFS=$'\t' read -r name sql; do
+  group_by_multi_weighted_args+=("group_multi_weighted_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/group_by_multi_weighted_aggregates_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${group_by_multi_weighted_args[@]}"
+
+group_by_keys_only_args=()
+while IFS=$'\t' read -r name sql; do
+  group_by_keys_only_args+=("group_keys_only_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/group_by_keys_only_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${group_by_keys_only_args[@]}"
+
+group_by_scalar_keys_args=()
+while IFS=$'\t' read -r name sql; do
+  group_by_scalar_keys_args+=("group_keys_scalar_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/group_by_keys_scalar_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${group_by_scalar_keys_args[@]}"
+
+group_by_function_keys_args=()
+while IFS=$'\t' read -r name sql; do
+  group_by_function_keys_args+=("group_keys_fn_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/group_by_keys_function_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${group_by_function_keys_args[@]}"
+
+not_projection_args=()
+while IFS=$'\t' read -r name sql; do
+  not_projection_args+=("not_projection_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/not_projection_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${not_projection_args[@]}"
+
+not_projection_nested_args=()
+while IFS=$'\t' read -r name sql; do
+  not_projection_nested_args+=("not_projection_nested_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/not_projection_nested_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${not_projection_nested_args[@]}"
+
+not_projection_boolean_args=()
+while IFS=$'\t' read -r name sql; do
+  not_projection_boolean_args+=("not_projection_boolean_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/not_projection_boolean_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${not_projection_boolean_args[@]}"
+
+boolean_projection_args=()
+while IFS=$'\t' read -r name sql; do
+  boolean_projection_args+=("boolean_projection_${name}" "$sql")
+done < "$ROOT_DIR/tests/fixtures/h1/boolean_projection_queries.tsv"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" "${boolean_projection_args[@]}"
 
 compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   select_star "SELECT * FROM days ORDER BY ts" \
@@ -3642,9 +4264,11 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
   kf_days "SELECT pg_catalog.pg_get_partkeydef(1) FROM days" \
   ge_days "SELECT pg_catalog.pg_get_expr(note, 1) FROM days"
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
-if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o /tmp/qdb-diff-count.json; then
+DIFF_TMP="$ROOT_DIR/target/oracle-tmp"
+mkdir -p "$DIFF_TMP"
+if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o "$DIFF_TMP/qdb-diff-count.json"; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
-import json, os, subprocess, sys, urllib.parse, urllib.request
+import json, os, subprocess, sys, urllib.error, urllib.parse, urllib.request
 http = sys.argv[1]
 queries = [
     (os.environ["DIFF_H1"], "SELECT * FROM sensors ORDER BY ts"),
@@ -3652,6 +4276,91 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT ts, location, tag FROM sensors WHERE location = 'madrid' ORDER BY ts"),
     (os.environ["DIFF_H1"], "SELECT id, ok FROM sensors WHERE ok = true ORDER BY ts"),
     (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = NULL"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = 1 OR id = 2 ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = 1 AND ok = true ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = 1 OR id = 2 AND ok = false ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE (id = 1 OR id = 2) AND ok = false ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT s.id FROM sensors AS s WHERE s.id = 1 OR s.id = 2 ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = 1 AND id BETWEEN 1 AND 2 ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = NULL OR id = -1 ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id IN (1, -1) ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id NOT IN (1, -1) ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id IN (NULL, 1) ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id NOT IN (NULL, 1) ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT s.id FROM sensors AS s WHERE s.id IN (1, -1) ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id IN (1, 1) ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id IN (1, -1) AND ok = false ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = 1 OR id IN (-1, 2) ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT note FROM sensors WHERE note IN ('alpha', '') ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id NOT IN (1, NULL) OR id = 1 ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id, note FROM sensors WHERE note LIKE 'a%' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id, note FROM sensors WHERE note ILIKE 'A%' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id, note FROM sensors WHERE note NOT LIKE 'a%' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id, note FROM sensors WHERE note NOT ILIKE 'A%' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note LIKE NULL ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note NOT LIKE NULL ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note LIKE '' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note NOT LIKE '' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT s.id FROM sensors AS s WHERE s.note ILIKE 'A%' ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note LIKE 'a\\%' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note LIKE 'a_pha' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note LIKE 'a%' AND ok = true ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = 2 OR note ILIKE 'A%' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE location ILIKE 'MA%' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note NOT ILIKE 'A%' OR id = 1 ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id, note FROM sensors WHERE note ~ '^a' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id, note FROM sensors WHERE note ~ 'a.*' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id, note FROM sensors WHERE note !~ 'a.*' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note ~ '[a-z]+' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note ~ 'alpha|βeta' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note ~ '^β' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note ~ '^\\x{03B2}' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note ~ NULL ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note !~ NULL ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note ~ '' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note !~ '' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT s.id FROM sensors AS s WHERE s.note ~ '^a' ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE location ~ '^ma' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note ~ '^a' AND ok = true ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = 2 OR note ~ '^a' ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note !~ '^a' OR id = 1 ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note ~ NULL"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT id = 1 ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT (id = 1 OR id = -1) ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT id = 1 AND ok = true ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = 1 OR NOT id = -1 ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT NOT (id = 1) ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT (note ~ '^a') ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT (id IN (1, -1)) ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT ok ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE ok ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE true ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE false ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT NULL ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT false ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT (id = 1) AND ok ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT s.id FROM sensors AS s WHERE NOT (s.note ~ '^a') ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT (id = 1) LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = id ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id <> id ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id >= id ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id <= id ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = flags ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id != flags ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE reading = score ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE reading > score ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE reading = id ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE note = location ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE location < tag ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = location ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = ch ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE day < ts ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE ts < day ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE ok = ok ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT s.id FROM sensors AS s WHERE s.reading = s.score ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = flags OR reading > score AND ok = true ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE NOT (id = flags) ORDER BY ts"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id = flags LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY id"),
     (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY id LIMIT 2"),
     (os.environ["DIFF_H1"], "SELECT id FROM sensors ORDER BY ts LIMIT 1"),
@@ -3886,6 +4595,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT upper(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT left(note, 2) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT right(note, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT right(s.note, 2) FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT left(location, 3) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT right(tag, 4) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT left(ch, 1) FROM sensors"),
@@ -3958,6 +4668,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT ltrim(note) FROM sensors WHERE note = ''"),
     (os.environ["DIFF_H1"], "SELECT rtrim(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT replace(note, 'a', 'X') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT replace(s.note, 'a', 'A') FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT replace(note, 'ta', '') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT replace('βeta', 'β', 'B') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT replace(null, 'a', 'b') FROM sensors LIMIT 1"),
@@ -3977,6 +4688,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT replace('', location, 'x') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT replace(tag, '0', 'x') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT starts_with(note, 'a') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT starts_with(s.note, 'a'), starts_with(s.note, '') FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT starts_with(note, 'β') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT starts_with(note, '') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT starts_with(note, null) FROM sensors"),
@@ -3994,6 +4706,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT starts_with(tag, '0') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT starts_with(location, '東') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT strpos(note, 'a') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT strpos(s.note, 'a'), strpos(s.note, '') FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT strpos(note, 'ph') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT strpos(note, 'z') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT strpos(note, '') FROM sensors"),
@@ -4011,7 +4724,9 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT strpos(tag, '0') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT strpos(ch, 'A') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT position(note, 'a') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT position(s.note, 'a'), position(s.note, '') FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT split_part(s.note, 'a', 1), split_part(s.note, 'a', 2) FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', 2) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT split_part(note, 'a', 3) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT split_part('a-b-c', '-', 2) FROM sensors LIMIT 1"),
@@ -4061,6 +4776,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT rpad(note, 6, 'x') FROM sensors ORDER BY rpad(note, 6, 'x')"),
     (os.environ["DIFF_H1"], "SELECT lpad(note, 6, 'x') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT quote_ident(note) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT quote_ident(s.note) FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT quote_ident('a\"b') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT quote_ident('a b') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT quote_ident('a-b') FROM sensors LIMIT 1"),
@@ -4089,6 +4805,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT length_bytes(note) FROM sensors WHERE note = ''"),
     (os.environ["DIFF_H1"], "SELECT length_bytes(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT size_pretty(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT size_pretty(s.id) FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT size_pretty(0) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT size_pretty(1024) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT size_pretty(1500) FROM sensors LIMIT 1"),
@@ -4106,6 +4823,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT size_pretty(id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT size_pretty(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT abs(id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT abs(s.id) FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT abs(reading) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT abs(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT abs(b) FROM sensors"),
@@ -4121,6 +4839,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT abs(id) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT abs(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT round(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT round(s.reading) FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT round(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT round(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT round(flags) FROM sensors"),
@@ -4141,6 +4860,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT round(id) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT round(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT floor(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT floor(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT floor(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT floor(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT floor(flags) FROM sensors"),
@@ -4159,6 +4879,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT floor(id) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT floor(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT ceil(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ceil(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT ceil(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT ceil(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT ceil(flags) FROM sensors"),
@@ -4178,6 +4899,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT ceil(id) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT ceil(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT sign(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sign(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT sign(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT sign(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT sign(flags) FROM sensors"),
@@ -4197,6 +4919,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT sign(id) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT sign(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT sqrt(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sqrt(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT sqrt(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT sqrt(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT sqrt(flags) FROM sensors"),
@@ -4212,6 +4935,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT sqrt(id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT sqrt(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT power(reading, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT power(s.reading, 2) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT power(score, 2) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT power(id, 2) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT power(flags, 2) FROM sensors"),
@@ -4233,6 +4957,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT power(id, 2) FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT power(id, 2) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT ln(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ln(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT ln(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT ln(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT ln(flags) FROM sensors"),
@@ -4249,6 +4974,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT ln(id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT ln(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT log(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT log(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT log(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT log(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT log(flags) FROM sensors"),
@@ -4265,6 +4991,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT log(id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT log(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT exp(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT exp(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT exp(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT exp(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT exp(flags) FROM sensors"),
@@ -4668,6 +5395,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT days_in_month(ts) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT days_in_month(ts) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_str(s.ts, 'yyyy-MM-dd HH:mm:ss.SSSUUU') FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT to_str(id, 'yyyy-MM-dd') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT to_str('2020-01-02T03:04:05.123456Z', 'SSS UUU') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_str('2020-01-02T15:07:09.000000Z', 'h:mm a') FROM sensors LIMIT 1"),
@@ -4723,6 +5451,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_timestamp('1') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT to_timestamp('1') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_timestamp(s.note, 'yyyy-MM-dd') FROM sensors AS s ORDER BY s.id"),
     (os.environ["DIFF_H1"], "SELECT to_timestamp('2020-1-2', 'yyyy-M-d') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_timestamp('20', 'yy') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_timestamp('69', 'yy') FROM sensors LIMIT 1"),
@@ -4741,6 +5470,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT extract(year FROM ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT extract(year FROM s.ts) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT extract(year FROM id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT extract(hour FROM ts) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT extract(dow FROM ts) FROM sensors"),
@@ -4777,6 +5507,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_date('2020-02-29', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_date('2019-02-29', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_date(note, 'yyyy-MM-dd') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT to_date(s.note, 'yyyy-MM-dd') FROM sensors AS s ORDER BY s.id"),
     (os.environ["DIFF_H1"], "SELECT to_date(location, 'yyyy-MM-dd') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_date(null, 'yyyy-MM-dd') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_date('nope', 'yyyy-MM-dd') FROM sensors LIMIT 1"),
@@ -4785,6 +5516,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT md5('abc') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT md5(s.tag) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT md5('') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT md5(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT md5(note) FROM sensors"),
@@ -4796,6 +5528,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT md5(note) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT md5(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT sha1('abc') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sha1(s.tag) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT sha1('') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT sha1(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT sha1(note) FROM sensors"),
@@ -4807,6 +5540,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT sha1(note) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT sha1(note) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT sha256('abc') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT sha256(s.tag) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT sha256('') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT sha256(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT sha256(note) FROM sensors"),
@@ -4824,6 +5558,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT sin(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT sin(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT sin(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT sin(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT sin(score) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT sin(flags) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT sin(b) FROM sensors LIMIT 1"),
@@ -4847,6 +5582,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT cos(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT cos(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT cos(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cos(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT cos(score) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT cos(flags) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT cos(b) FROM sensors LIMIT 1"),
@@ -4870,6 +5606,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT tan(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT tan(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT tan(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT tan(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT tan(score) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT tan(flags) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT tan(b) FROM sensors LIMIT 1"),
@@ -4894,6 +5631,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT asin(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT asin(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT asin(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT asin(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT asin(b) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT asin(ts) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT asin('0.5') FROM sensors LIMIT 1"),
@@ -4915,6 +5653,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT acos(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT acos(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT acos(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT acos(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT acos(b) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT acos(ts) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT acos('0.5') FROM sensors LIMIT 1"),
@@ -4936,6 +5675,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT atan(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT atan(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT atan(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT atan(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT atan(b) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT atan(ts) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT atan('0.5') FROM sensors LIMIT 1"),
@@ -4961,6 +5701,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT atan2(1, null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT atan2(id, 1) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT atan2(reading, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT atan2(s.reading, s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT atan2(ts, 1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT atan2('0.5', '1') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT atan2('1.5d', 1) FROM sensors LIMIT 1"),
@@ -4983,6 +5724,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT degrees(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT degrees(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT degrees(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT degrees(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT degrees(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT degrees(b) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT degrees(code) FROM sensors"),
@@ -5008,6 +5750,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT radians(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT radians(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT radians(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT radians(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT radians(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT radians(b) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT radians(code) FROM sensors"),
@@ -5031,6 +5774,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT cot(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT cot(id) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT cot(reading) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT cot(s.reading) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT cot(score) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT cot(b) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT cot(code) FROM sensors"),
@@ -5063,6 +5807,11 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT typeof(code) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT typeof(flags) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT typeof(ts) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT typeof(s.ts) FROM sensors AS s ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT typeof(json_extract(s.tag, '$')) FROM sensors AS s ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT typeof(to_uuid(s.id, s.id)) FROM sensors AS s ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT typeof(make_geohash(s.reading, 41.0, 5)) FROM sensors AS s ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT typeof(to_char(from_base64(s.tag))) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT typeof(day) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT typeof(ok) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT typeof(note) FROM sensors"),
@@ -5074,6 +5823,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT typeof(id) FROM sensors ORDER BY typeof(id)"),
     (os.environ["DIFF_H1"], "SELECT typeof(id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT not(ok) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT not(s.ok) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT not(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT NOT(ok) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT not(ok) FROM sensors WHERE id = 1"),
@@ -5925,6 +6675,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT timestamp_sequence(0, 1000000) FROM sensors ORDER BY id"),
     (os.environ["DIFF_H1"], "SELECT timestamp_sequence(0, 1000000) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT mid(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT mid(s.reading, s.score) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT mid(reading, score) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT mid(reading, score) FROM sensors WHERE id = 2"),
     (os.environ["DIFF_H1"], "SELECT mid(reading, score) FROM sensors WHERE id > 100"),
@@ -5932,6 +6683,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT MID(reading, score) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT mid(reading, score) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT spread(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT spread(s.reading, s.score) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT spread(reading, score) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT spread(reading, score) FROM sensors WHERE id = 2"),
     (os.environ["DIFF_H1"], "SELECT spread(reading, score) FROM sensors WHERE id > 100"),
@@ -5939,6 +6691,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT SPREAD(reading, score) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT spread(reading, score) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT spread_bps(reading, score) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT spread_bps(s.reading, s.score) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT spread_bps(reading, score) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT spread_bps(reading, score) FROM sensors WHERE id = 2"),
     (os.environ["DIFF_H1"], "SELECT spread_bps(reading, score) FROM sensors WHERE id > 100"),
@@ -5946,12 +6699,24 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT SPREAD_BPS(reading, score) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT spread_bps(reading, score) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT wmid(flags, reading, score, id) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT wmid(s.id, s.reading, s.score, s.id) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id = 2"),
     (os.environ["DIFF_H1"], "SELECT wmid(flags, reading, score, id) FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT WMID(flags, reading, score, id) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT wmid(flags, reading, score, id) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT between(id, 1, 2) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id NOT BETWEEN NULL AND 2"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id BETWEEN NULL AND 2"),
+    (os.environ["DIFF_H1"], "SELECT id FROM sensors WHERE id BETWEEN 2 AND 1"),
+    (os.environ["DIFF_H1"], "SELECT s.id FROM sensors AS s WHERE s.id BETWEEN 1 AND 2 LIMIT 0"),
+    (os.environ["DIFF_H1"], "SELECT s.id FROM sensors AS s WHERE s.id NOT BETWEEN 1 AND 2 ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT s.id FROM sensors AS s WHERE s.id BETWEEN 1 AND 2 ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT between(s.id, 1, 2) FROM sensors AS s"),
+    (os.environ["DIFF_H1"], "SELECT s.id, s.id BETWEEN 1 AND 2 FROM sensors AS s ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT s.id BETWEEN 1 AND 2 FROM sensors AS s ORDER BY s.id"),
+    (os.environ["DIFF_H1"], "SELECT s.id NOT BETWEEN 1 AND 2 FROM sensors AS s"),
+    (os.environ["DIFF_H1"], "SELECT s.id BETWEEN 1 AND 2 FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT between(id, 1, 2) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT between(id, 1, 2) FROM sensors WHERE id = 2"),
     (os.environ["DIFF_H1"], "SELECT between(id, 1, 2) FROM sensors WHERE id > 100"),
@@ -5961,6 +6726,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT between(id, null, 2) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT between(id, 1, 2) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT id in (1, -1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT s.id IN (1, 2) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT id in (1, -1) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT id in (1, -1) FROM sensors WHERE id = 2"),
     (os.environ["DIFF_H1"], "SELECT id in (1, -1) FROM sensors WHERE id > 100"),
@@ -5969,6 +6735,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT reading in (1.5, 0) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT id in (1, -1) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT id = 1 FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT s.id = 1 FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT id = 1 FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT id = 1 FROM sensors WHERE id = 2"),
     (os.environ["DIFF_H1"], "SELECT id = 1 FROM sensors WHERE id > 100"),
@@ -6020,6 +6787,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT note <= 'alpha' FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT id <= 1 FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT id + 1 FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT s.id + 1 FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT id + 1 FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT id + 1 FROM sensors WHERE id = 2"),
     (os.environ["DIFF_H1"], "SELECT id + 1 FROM sensors WHERE id > 100"),
@@ -6062,6 +6830,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT flags % 2 FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT id % 2 FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT -id FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT -s.id FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT -id FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT -id FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT -id FROM sensors WHERE id > 100"),
@@ -6072,6 +6841,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT -code FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT -id FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT ~id FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT ~s.id FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT ~id FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT ~id FROM sensors WHERE id = -1"),
     (os.environ["DIFF_H1"], "SELECT ~id FROM sensors WHERE id > 100"),
@@ -6086,6 +6856,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT ok and ok FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT ok and ok FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT ok and false FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT s.ok AND false FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT ok and null FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT ok and true FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT ok or ok FROM sensors"),
@@ -6262,6 +7033,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT flags::string FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT note::string FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT id::long FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT s.id::long FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT id::long FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT id::long FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT flags::long FROM sensors"),
@@ -6459,6 +7231,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_is_in_recovery() FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT pg_is_in_recovery() FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT format_type(20, 0) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT format_type(s.flags, s.flags) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT FORMAT_TYPE(20, 0) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT format_type(1114, -1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT format_type(flags, 0) FROM sensors WHERE id = 1"),
@@ -6476,6 +7249,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT format_type(20, 0) FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT format_type(20, 0) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT regexp_replace(note, 'a', 'b') FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT regexp_replace(s.note, 'a', 'A') FROM sensors AS s"),
     (os.environ["DIFF_H1"], "SELECT REGEXP_REPLACE(note, 'a', 'b') FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT regexp_replace(note, 'a', 'b') FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT regexp_replace(note, 'a', 'b') FROM sensors WHERE id > 100"),
@@ -6531,6 +7305,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1, null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_get_expr(note, 1, ok) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT netmask('192.168.1.1/24') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT netmask(s.tag) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT netmask('10.0.0.1/8') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT netmask('1.2.3.4/16') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT netmask('1.2.3.4/1') FROM sensors LIMIT 1"),
@@ -6554,6 +7329,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT netmask(note) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT netmask(location) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, 0, 0, 0) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_distance_meters(s.flags, s.flags, s.flags, s.flags) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, 0, 0, 1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT geo_distance_meters(41.0, 2.0, 40.0, -3.0) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT GEO_DISTANCE_METERS(0, 0, 0, 1) FROM sensors LIMIT 1"),
@@ -6569,6 +7345,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT geo_distance_meters(0, b, 0, 1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT geo_distance_meters(score, 0, score, 1) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(s.id, s.id, s.id, s.id, s.id) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 100000) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, 0, 0, 1, 111320) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, 0, 0, 0, 0) FROM sensors LIMIT 1"),
@@ -6583,6 +7360,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, score, 0, 1, 30000) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT geo_within_radius_latlon(0, score, 0, 1, 20000) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT within_radius(s.id, s.id, s.id, s.id, s.id) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 3, 4, 4) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 0, 0, 0) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 3, 4, -1) FROM sensors LIMIT 1"),
@@ -6595,6 +7373,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT within_radius(0, score, 0, 1, 2) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT within_box(0, 0, -1, -1, 1, 1) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT within_box(s.id, s.id, s.id, s.id, s.id, s.id) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT within_box(2, 0, -1, -1, 1, 1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT within_box(1, 1, -1, -1, 1, 1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT within_box(0, 0, 0, 0, 0, 0) FROM sensors LIMIT 1"),
@@ -6607,6 +7386,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT within_box(0, score, -1, -2, 1, 2) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT within_box(id, id, 0, 0, 1, 1) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT make_geohash(2.0, 41.0, 20) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT make_geohash(s.reading, s.reading, 5) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT make_geohash(0, 0, 5) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT make_geohash(0, 0, 1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT make_geohash(0, 0, 10) FROM sensors LIMIT 1"),
@@ -6642,6 +7422,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT make_geohash(-0.0, 0, 5) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT typeof(make_geohash(2.0, 41.0, 20)) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_uuid(1, 2) FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT to_uuid(s.id, s.id) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT to_uuid(0, 0) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_uuid(-1, -1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_uuid(null, 1) FROM sensors LIMIT 1"),
@@ -6680,6 +7461,8 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT json_extract('', '$.a') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT json_extract('not json', '$.a') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT json_extract(tag, '$') FROM sensors LIMIT 1"),
+    (os.environ["DIFF_H1"], "SELECT json_extract(s.tag, '$') FROM sensors AS s ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT json_extract('123abc', '$') FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT typeof(json_extract('{\"a\":1}', '$.a')) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT json_extract('{\"a\":1}', '$.a', 1) FROM sensors"),
     (os.environ["DIFF_H1"], "SELECT to_char(null) FROM sensors LIMIT 1"),
@@ -6689,6 +7472,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT to_char(from_base64(null)) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_char(from_base64('YWI')) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT to_char(from_base64('YWI=')) FROM sensors WHERE id = 1"),
+    (os.environ["DIFF_H1"], "SELECT to_char(from_base64(s.tag)) FROM sensors AS s WHERE s.id = 1"),
     (os.environ["DIFF_H1"], "SELECT to_char(from_base64('YWI=')) FROM sensors WHERE id > 100"),
     (os.environ["DIFF_H1"], "SELECT to_char(from_base64('YWI=')) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT to_char(from_base64('MDEyMzQ1Njc4OWFiY2RlZg==')) FROM sensors LIMIT 1"),
@@ -6700,6 +7484,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_catalog.version() FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.version()) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_userbyid(s.flags) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_userbyid(0) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_userbyid(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_userbyid(-1) FROM sensors LIMIT 1"),
@@ -6711,6 +7496,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.pg_get_userbyid(1)) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(s.flags) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(0) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(-1) FROM sensors LIMIT 1"),
@@ -6722,6 +7508,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.pg_table_is_visible(1)) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.age(1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.age(s.id) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.age(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.age(-1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.age('2') FROM sensors LIMIT 1"),
@@ -6754,6 +7541,7 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_is_in_recovery() FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.pg_is_in_recovery()) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(s.flags) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(0) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(null) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(-1) FROM sensors LIMIT 1"),
@@ -6765,6 +7553,8 @@ queries = [
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors LIMIT 0"),
     (os.environ["DIFF_H1"], "SELECT typeof(pg_catalog.pg_get_partkeydef(1)) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_expr(note, 1) FROM sensors"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_expr(s.note, s.flags) FROM sensors AS s ORDER BY s.ts"),
+    (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_expr(s.note, s.flags, s.ok) FROM sensors AS s ORDER BY s.ts"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.PG_GET_EXPR(note, 1) FROM sensors LIMIT 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_expr(note, 1) FROM sensors WHERE id = 1"),
     (os.environ["DIFF_H1"], "SELECT pg_catalog.pg_get_expr(note, 1) FROM sensors WHERE id > 100"),
@@ -7227,6 +8017,36 @@ queries = [
     (os.environ["DIFF_H2"], "SELECT pg_catalog.pg_get_partkeydef(1) FROM days"),
     (os.environ["DIFF_H2"], "SELECT pg_catalog.pg_get_expr(note, 1) FROM days"),
 ]
+with open(os.path.join(os.environ["DIFF_H1"], "select_expr_arithmetic_queries.tsv"), encoding="utf-8") as manifest:
+    queries.extend(
+        (os.environ["DIFF_H1"], line.rstrip("\n").split("\t", 1)[1])
+        for line in manifest
+    )
+with open(os.path.join(os.environ["DIFF_H1"], "select_expr_arithmetic_matrix_queries.tsv"), encoding="utf-8") as manifest:
+    queries.extend(
+        (os.environ["DIFF_H1"], line.rstrip("\n").split("\t", 1)[1])
+        for line in manifest
+    )
+with open(os.path.join(os.environ["DIFF_H1"], "select_expr_arithmetic_edge_queries.tsv"), encoding="utf-8") as manifest:
+    queries.extend(
+        (os.environ["DIFF_H1"], line.rstrip("\n").split("\t", 1)[1])
+        for line in manifest
+    )
+with open(os.path.join(os.environ["DIFF_H1"], "select_expr_arithmetic_temporal_matrix_queries.tsv"), encoding="utf-8") as manifest:
+    queries.extend(
+        (os.environ["DIFF_H1"], line.rstrip("\n").split("\t", 1)[1])
+        for line in manifest
+    )
+with open(os.path.join(os.environ["DIFF_H1"], "group_by_arithmetic_queries.tsv"), encoding="utf-8") as manifest:
+    queries.extend(
+        (os.environ["DIFF_H1"], line.rstrip("\n").split("\t", 1)[1])
+        for line in manifest
+    )
+with open(os.path.join(os.environ["DIFF_H1"], "group_by_multi_queries.tsv"), encoding="utf-8") as manifest:
+    queries.extend(
+        (os.environ["DIFF_H1"], line.rstrip("\n").split("\t", 1)[1])
+        for line in manifest
+    )
 bin_path = os.environ["DIFF_BIN"]
 for root, sql in queries:
     url = http + "?" + urllib.parse.urlencode({"query": sql})
@@ -7237,6 +8057,598 @@ for root, sql in queries:
     if payload["count"] != len(data_rows):
         raise SystemExit(f"live count mismatch for {sql}: reference {payload['count']} rust {len(data_rows)}")
 print(f"live-reference: {len(queries)} queries matched row counts against {http}")
+group_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_arithmetic_queries.tsv")
+group_captures = os.path.join(os.environ["DIFF_H1"], "group_by_arithmetic_oracle.jsonl")
+with open(group_manifest, encoding="utf-8") as manifest:
+    group_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(group_captures, encoding="utf-8") as captures:
+    expected_groups = [json.loads(line) for line in captures]
+if len(group_cases) != len(expected_groups):
+    raise SystemExit("GROUP BY manifest and oracle captures differ in length")
+for (name, sql), expected in zip(group_cases, expected_groups):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live GROUP BY mismatch for {name} field {field}")
+print(f"live-reference-full: {len(group_cases)} GROUP BY queries match columns, dataset, and count")
+error_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_arithmetic_errors_queries.tsv")
+error_captures = os.path.join(os.environ["DIFF_H1"], "group_by_arithmetic_errors_oracle.jsonl")
+with open(error_manifest, encoding="utf-8") as manifest:
+    error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(error_captures, encoding="utf-8") as captures:
+    expected_errors = [json.loads(line) for line in captures]
+if len(error_cases) != len(expected_errors):
+    raise SystemExit("GROUP BY error manifest and oracle captures differ in length")
+for (name, sql, _, _), expected in zip(error_cases, expected_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live error mismatch for {name} field {field}: {payload.get(field)!r} != {expected.get(field)!r}")
+print(f"live-reference-errors: {len(error_cases)} GROUP BY errors match message and position")
+multi_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_multi_queries.tsv")
+multi_captures = os.path.join(os.environ["DIFF_H1"], "group_by_multi_oracle.jsonl")
+with open(multi_manifest, encoding="utf-8") as manifest:
+    multi_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(multi_captures, encoding="utf-8") as captures:
+    expected_multi = [json.loads(line) for line in captures]
+if len(multi_cases) != len(expected_multi):
+    raise SystemExit("multi-key GROUP BY manifest and oracle captures differ in length")
+for (name, sql), expected in zip(multi_cases, expected_multi):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live multi-key GROUP BY mismatch for {name} field {field}")
+print(f"live-reference-full: {len(multi_cases)} multi-key GROUP BY queries match columns, dataset, and count")
+multi_error_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_multi_errors_queries.tsv")
+multi_error_captures = os.path.join(os.environ["DIFF_H1"], "group_by_multi_errors_oracle.jsonl")
+with open(multi_error_manifest, encoding="utf-8") as manifest:
+    multi_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(multi_error_captures, encoding="utf-8") as captures:
+    expected_multi_errors = [json.loads(line) for line in captures]
+if len(multi_error_cases) != len(expected_multi_errors):
+    raise SystemExit("multi-key GROUP BY error manifest and oracle captures differ in length")
+for (name, sql, _, _), expected in zip(multi_error_cases, expected_multi_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live multi-key GROUP BY error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(multi_error_cases)} multi-key GROUP BY errors match message and position")
+multi_aggregate_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_multi_aggregate_queries.tsv")
+multi_aggregate_captures = os.path.join(os.environ["DIFF_H1"], "group_by_multi_aggregate_oracle.jsonl")
+with open(multi_aggregate_manifest, encoding="utf-8") as manifest:
+    multi_aggregate_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(multi_aggregate_captures, encoding="utf-8") as captures:
+    expected_multi_aggregates = [json.loads(line) for line in captures]
+if len(multi_aggregate_cases) != len(expected_multi_aggregates):
+    raise SystemExit("multi-aggregate GROUP BY manifest and oracle captures differ in length")
+for (name, sql), expected in zip(multi_aggregate_cases, expected_multi_aggregates):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live multi-aggregate GROUP BY mismatch for {name} field {field}")
+print(f"live-reference-full: {len(multi_aggregate_cases)} multi-aggregate GROUP BY queries match columns, dataset, and count")
+multi_aggregate_error_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_multi_aggregate_errors_queries.tsv")
+multi_aggregate_error_captures = os.path.join(os.environ["DIFF_H1"], "group_by_multi_aggregate_errors_oracle.jsonl")
+with open(multi_aggregate_error_manifest, encoding="utf-8") as manifest:
+    multi_aggregate_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(multi_aggregate_error_captures, encoding="utf-8") as captures:
+    expected_multi_aggregate_errors = [json.loads(line) for line in captures]
+if len(multi_aggregate_error_cases) != len(expected_multi_aggregate_errors):
+    raise SystemExit("multi-aggregate GROUP BY error manifest and oracle captures differ in length")
+for (name, sql, _, _), expected in zip(multi_aggregate_error_cases, expected_multi_aggregate_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live multi-aggregate GROUP BY error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(multi_aggregate_error_cases)} multi-aggregate GROUP BY errors match message and position")
+special_aggregate_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_multi_special_aggregates_queries.tsv")
+special_aggregate_captures = os.path.join(os.environ["DIFF_H1"], "group_by_multi_special_aggregates_oracle.jsonl")
+with open(special_aggregate_manifest, encoding="utf-8") as manifest:
+    special_aggregate_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(special_aggregate_captures, encoding="utf-8") as captures:
+    expected_special_aggregates = [json.loads(line) for line in captures]
+if len(special_aggregate_cases) != len(expected_special_aggregates):
+    raise SystemExit("special aggregate GROUP BY manifest and captures differ in length")
+for (name, sql), expected in zip(special_aggregate_cases, expected_special_aggregates):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live special aggregate GROUP BY mismatch for {name} field {field}")
+print(f"live-reference-full: {len(special_aggregate_cases)} special aggregate GROUP BY queries match columns, dataset, and count")
+special_error_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_multi_special_aggregate_errors_queries.tsv")
+special_error_captures = os.path.join(os.environ["DIFF_H1"], "group_by_multi_special_aggregate_errors_oracle.jsonl")
+with open(special_error_manifest, encoding="utf-8") as manifest:
+    special_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(special_error_captures, encoding="utf-8") as captures:
+    expected_special_errors = [json.loads(line) for line in captures]
+if len(special_error_cases) != len(expected_special_errors):
+    raise SystemExit("special aggregate GROUP BY error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(special_error_cases, expected_special_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live special aggregate GROUP BY error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(special_error_cases)} special aggregate GROUP BY errors match message and position")
+weighted_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_multi_weighted_aggregates_queries.tsv")
+weighted_captures = os.path.join(os.environ["DIFF_H1"], "group_by_multi_weighted_aggregates_oracle.jsonl")
+with open(weighted_manifest, encoding="utf-8") as manifest:
+    weighted_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(weighted_captures, encoding="utf-8") as captures:
+    expected_weighted = [json.loads(line) for line in captures]
+if len(weighted_cases) != len(expected_weighted):
+    raise SystemExit("weighted aggregate GROUP BY manifest and captures differ in length")
+for (name, sql), expected in zip(weighted_cases, expected_weighted):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live weighted aggregate GROUP BY mismatch for {name} field {field}")
+print(f"live-reference-full: {len(weighted_cases)} weighted/pair aggregate GROUP BY queries match columns, dataset, and count")
+weighted_error_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_multi_weighted_aggregate_errors_queries.tsv")
+weighted_error_captures = os.path.join(os.environ["DIFF_H1"], "group_by_multi_weighted_aggregate_errors_oracle.jsonl")
+with open(weighted_error_manifest, encoding="utf-8") as manifest:
+    weighted_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(weighted_error_captures, encoding="utf-8") as captures:
+    expected_weighted_errors = [json.loads(line) for line in captures]
+if len(weighted_error_cases) != len(expected_weighted_errors):
+    raise SystemExit("weighted aggregate GROUP BY error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(weighted_error_cases, expected_weighted_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live weighted aggregate GROUP BY error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(weighted_error_cases)} weighted aggregate GROUP BY errors match message and position")
+keys_only_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_keys_only_queries.tsv")
+keys_only_captures = os.path.join(os.environ["DIFF_H1"], "group_by_keys_only_oracle.jsonl")
+with open(keys_only_manifest, encoding="utf-8") as manifest:
+    keys_only_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(keys_only_captures, encoding="utf-8") as captures:
+    expected_keys_only = [json.loads(line) for line in captures]
+if len(keys_only_cases) != len(expected_keys_only):
+    raise SystemExit("key-only GROUP BY manifest and captures differ in length")
+for (name, sql), expected in zip(keys_only_cases, expected_keys_only):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live key-only GROUP BY mismatch for {name} field {field}")
+print(f"live-reference-full: {len(keys_only_cases)} key-only GROUP BY queries match columns, dataset, and count")
+keys_only_error_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_keys_only_errors_queries.tsv")
+keys_only_error_captures = os.path.join(os.environ["DIFF_H1"], "group_by_keys_only_errors_oracle.jsonl")
+with open(keys_only_error_manifest, encoding="utf-8") as manifest:
+    keys_only_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(keys_only_error_captures, encoding="utf-8") as captures:
+    expected_keys_only_errors = [json.loads(line) for line in captures]
+if len(keys_only_error_cases) != len(expected_keys_only_errors):
+    raise SystemExit("key-only GROUP BY error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(keys_only_error_cases, expected_keys_only_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live key-only GROUP BY error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(keys_only_error_cases)} key-only GROUP BY errors match message and position")
+scalar_keys_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_keys_scalar_queries.tsv")
+scalar_keys_captures = os.path.join(os.environ["DIFF_H1"], "group_by_keys_scalar_oracle.jsonl")
+with open(scalar_keys_manifest, encoding="utf-8") as manifest:
+    scalar_key_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(scalar_keys_captures, encoding="utf-8") as captures:
+    expected_scalar_keys = [json.loads(line) for line in captures]
+if len(scalar_key_cases) != len(expected_scalar_keys):
+    raise SystemExit("scalar key GROUP BY manifest and captures differ in length")
+for (name, sql), expected in zip(scalar_key_cases, expected_scalar_keys):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live scalar key GROUP BY mismatch for {name} field {field}")
+print(f"live-reference-full: {len(scalar_key_cases)} scalar key GROUP BY queries match columns, dataset, and count")
+function_keys_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_keys_function_queries.tsv")
+function_keys_captures = os.path.join(os.environ["DIFF_H1"], "group_by_keys_function_oracle.jsonl")
+with open(function_keys_manifest, encoding="utf-8") as manifest:
+    function_key_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(function_keys_captures, encoding="utf-8") as captures:
+    expected_function_keys = [json.loads(line) for line in captures]
+if len(function_key_cases) != len(expected_function_keys):
+    raise SystemExit("function key GROUP BY manifest and captures differ in length")
+for (name, sql), expected in zip(function_key_cases, expected_function_keys):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live function key GROUP BY mismatch for {name} field {field}")
+print(f"live-reference-full: {len(function_key_cases)} function key GROUP BY queries match columns, dataset, and count")
+function_key_error_manifest = os.path.join(os.environ["DIFF_H1"], "group_by_keys_function_errors_queries.tsv")
+function_key_error_captures = os.path.join(os.environ["DIFF_H1"], "group_by_keys_function_errors_oracle.jsonl")
+with open(function_key_error_manifest, encoding="utf-8") as manifest:
+    function_key_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(function_key_error_captures, encoding="utf-8") as captures:
+    expected_function_key_errors = [json.loads(line) for line in captures]
+if len(function_key_error_cases) != len(expected_function_key_errors):
+    raise SystemExit("function key GROUP BY error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(function_key_error_cases, expected_function_key_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live function key GROUP BY error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(function_key_error_cases)} function key GROUP BY errors match message and position")
+not_projection_manifest = os.path.join(os.environ["DIFF_H1"], "not_projection_queries.tsv")
+not_projection_captures = os.path.join(os.environ["DIFF_H1"], "not_projection_oracle.jsonl")
+with open(not_projection_manifest, encoding="utf-8") as manifest:
+    not_projection_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(not_projection_captures, encoding="utf-8") as captures:
+    expected_not_projections = [json.loads(line) for line in captures]
+if len(not_projection_cases) != len(expected_not_projections):
+    raise SystemExit("NOT projection manifest and captures differ in length")
+for (name, sql), expected in zip(not_projection_cases, expected_not_projections):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live NOT projection mismatch for {name} field {field}")
+print(f"live-reference-full: {len(not_projection_cases)} NOT projection queries match columns, dataset, and count")
+not_projection_error_manifest = os.path.join(os.environ["DIFF_H1"], "not_projection_errors_queries.tsv")
+not_projection_error_captures = os.path.join(os.environ["DIFF_H1"], "not_projection_errors_oracle.jsonl")
+with open(not_projection_error_manifest, encoding="utf-8") as manifest:
+    not_projection_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(not_projection_error_captures, encoding="utf-8") as captures:
+    expected_not_projection_errors = [json.loads(line) for line in captures]
+if len(not_projection_error_cases) != len(expected_not_projection_errors):
+    raise SystemExit("NOT projection error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(not_projection_error_cases, expected_not_projection_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live NOT projection error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(not_projection_error_cases)} NOT projection errors match message and position")
+not_projection_nested_manifest = os.path.join(os.environ["DIFF_H1"], "not_projection_nested_queries.tsv")
+not_projection_nested_captures = os.path.join(os.environ["DIFF_H1"], "not_projection_nested_oracle.jsonl")
+with open(not_projection_nested_manifest, encoding="utf-8") as manifest:
+    not_projection_nested_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(not_projection_nested_captures, encoding="utf-8") as captures:
+    expected_not_projection_nested = [json.loads(line) for line in captures]
+if len(not_projection_nested_cases) != len(expected_not_projection_nested):
+    raise SystemExit("nested NOT projection manifest and captures differ in length")
+for (name, sql), expected in zip(not_projection_nested_cases, expected_not_projection_nested):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live nested NOT projection mismatch for {name} field {field}")
+print(f"live-reference-full: {len(not_projection_nested_cases)} nested NOT projection queries match columns, dataset, and count")
+not_projection_nested_error_manifest = os.path.join(os.environ["DIFF_H1"], "not_projection_nested_errors_queries.tsv")
+not_projection_nested_error_captures = os.path.join(os.environ["DIFF_H1"], "not_projection_nested_errors_oracle.jsonl")
+with open(not_projection_nested_error_manifest, encoding="utf-8") as manifest:
+    not_projection_nested_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(not_projection_nested_error_captures, encoding="utf-8") as captures:
+    expected_not_projection_nested_errors = [json.loads(line) for line in captures]
+if len(not_projection_nested_error_cases) != len(expected_not_projection_nested_errors):
+    raise SystemExit("nested NOT projection error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(not_projection_nested_error_cases, expected_not_projection_nested_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live nested NOT projection error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(not_projection_nested_error_cases)} nested NOT projection errors match message and position")
+not_projection_boolean_manifest = os.path.join(os.environ["DIFF_H1"], "not_projection_boolean_queries.tsv")
+not_projection_boolean_captures = os.path.join(os.environ["DIFF_H1"], "not_projection_boolean_oracle.jsonl")
+with open(not_projection_boolean_manifest, encoding="utf-8") as manifest:
+    not_projection_boolean_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(not_projection_boolean_captures, encoding="utf-8") as captures:
+    expected_not_projection_boolean = [json.loads(line) for line in captures]
+if len(not_projection_boolean_cases) != len(expected_not_projection_boolean):
+    raise SystemExit("boolean NOT projection manifest and captures differ in length")
+for (name, sql), expected in zip(not_projection_boolean_cases, expected_not_projection_boolean):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live boolean NOT projection mismatch for {name} field {field}")
+print(f"live-reference-full: {len(not_projection_boolean_cases)} boolean NOT projection queries match columns, dataset, and count")
+not_projection_boolean_error_manifest = os.path.join(os.environ["DIFF_H1"], "not_projection_boolean_errors_queries.tsv")
+not_projection_boolean_error_captures = os.path.join(os.environ["DIFF_H1"], "not_projection_boolean_errors_oracle.jsonl")
+with open(not_projection_boolean_error_manifest, encoding="utf-8") as manifest:
+    not_projection_boolean_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(not_projection_boolean_error_captures, encoding="utf-8") as captures:
+    expected_not_projection_boolean_errors = [json.loads(line) for line in captures]
+if len(not_projection_boolean_error_cases) != len(expected_not_projection_boolean_errors):
+    raise SystemExit("boolean NOT projection error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(not_projection_boolean_error_cases, expected_not_projection_boolean_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live boolean NOT projection error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(not_projection_boolean_error_cases)} boolean NOT projection errors match message and position")
+boolean_projection_manifest = os.path.join(os.environ["DIFF_H1"], "boolean_projection_queries.tsv")
+boolean_projection_captures = os.path.join(os.environ["DIFF_H1"], "boolean_projection_oracle.jsonl")
+with open(boolean_projection_manifest, encoding="utf-8") as manifest:
+    boolean_projection_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(boolean_projection_captures, encoding="utf-8") as captures:
+    expected_boolean_projections = [json.loads(line) for line in captures]
+if len(boolean_projection_cases) != len(expected_boolean_projections):
+    raise SystemExit("boolean projection manifest and captures differ in length")
+for (name, sql), expected in zip(boolean_projection_cases, expected_boolean_projections):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live boolean projection mismatch for {name} field {field}")
+print(f"live-reference-full: {len(boolean_projection_cases)} boolean projection queries match columns, dataset, and count")
+boolean_projection_error_manifest = os.path.join(os.environ["DIFF_H1"], "boolean_projection_errors_queries.tsv")
+boolean_projection_error_captures = os.path.join(os.environ["DIFF_H1"], "boolean_projection_errors_oracle.jsonl")
+with open(boolean_projection_error_manifest, encoding="utf-8") as manifest:
+    boolean_projection_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(boolean_projection_error_captures, encoding="utf-8") as captures:
+    expected_boolean_projection_errors = [json.loads(line) for line in captures]
+if len(boolean_projection_error_cases) != len(expected_boolean_projection_errors):
+    raise SystemExit("boolean projection error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(boolean_projection_error_cases, expected_boolean_projection_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live boolean projection error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(boolean_projection_error_cases)} boolean projection errors match message and position")
+boolean_predicate_manifest = os.path.join(os.environ["DIFF_H1"], "boolean_projection_predicates_queries.tsv")
+boolean_predicate_captures = os.path.join(os.environ["DIFF_H1"], "boolean_projection_predicates_oracle.jsonl")
+with open(boolean_predicate_manifest, encoding="utf-8") as manifest:
+    boolean_predicate_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(boolean_predicate_captures, encoding="utf-8") as captures:
+    expected_boolean_predicates = [json.loads(line) for line in captures]
+if len(boolean_predicate_cases) != len(expected_boolean_predicates):
+    raise SystemExit("boolean predicate manifest and captures differ in length")
+for (name, sql), expected in zip(boolean_predicate_cases, expected_boolean_predicates):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live boolean predicate projection mismatch for {name} field {field}")
+print(f"live-reference-full: {len(boolean_predicate_cases)} boolean predicate projections match columns, dataset, and count")
+boolean_predicate_error_manifest = os.path.join(os.environ["DIFF_H1"], "boolean_projection_predicates_errors_queries.tsv")
+boolean_predicate_error_captures = os.path.join(os.environ["DIFF_H1"], "boolean_projection_predicates_errors_oracle.jsonl")
+with open(boolean_predicate_error_manifest, encoding="utf-8") as manifest:
+    boolean_predicate_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(boolean_predicate_error_captures, encoding="utf-8") as captures:
+    expected_boolean_predicate_errors = [json.loads(line) for line in captures]
+if len(boolean_predicate_error_cases) != len(expected_boolean_predicate_errors):
+    raise SystemExit("boolean predicate error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(boolean_predicate_error_cases, expected_boolean_predicate_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live QuestDB error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live boolean predicate error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(boolean_predicate_error_cases)} boolean predicate projection errors match message and position")
+regex_java_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_extensions_queries.tsv")
+regex_java_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_extensions_oracle.jsonl")
+with open(regex_java_manifest, encoding="utf-8") as manifest:
+    regex_java_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_captures, encoding="utf-8") as captures:
+    expected_regex_java = [json.loads(line) for line in captures]
+if len(regex_java_cases) != len(expected_regex_java):
+    raise SystemExit("Java regex extension manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_cases, expected_regex_java):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java regex extension mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regex_java_cases)} Java regex extension queries match columns, dataset, and count")
+regex_java_additional_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_additional_queries.tsv")
+regex_java_additional_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_additional_oracle.jsonl")
+with open(regex_java_additional_manifest, encoding="utf-8") as manifest:
+    regex_java_additional_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_additional_captures, encoding="utf-8") as captures:
+    expected_regex_java_additional = [json.loads(line) for line in captures]
+if len(regex_java_additional_cases) != len(expected_regex_java_additional):
+    raise SystemExit("additional Java regex manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_additional_cases, expected_regex_java_additional):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live additional Java regex mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regex_java_additional_cases)} additional Java regex queries match columns, dataset, and count")
+regex_java_class_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_classes_queries.tsv")
+regex_java_class_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_classes_oracle.jsonl")
+with open(regex_java_class_manifest, encoding="utf-8") as manifest:
+    regex_java_class_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_class_captures, encoding="utf-8") as captures:
+    expected_regex_java_classes = [json.loads(line) for line in captures]
+if len(regex_java_class_cases) != len(expected_regex_java_classes):
+    raise SystemExit("Java regex class manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_class_cases, expected_regex_java_classes):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java regex class mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regex_java_class_cases)} Java regex class queries match columns, dataset, and count")
+regex_java_error_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_additional_errors_queries.tsv")
+regex_java_error_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_additional_errors_oracle.jsonl")
+with open(regex_java_error_manifest, encoding="utf-8") as manifest:
+    regex_java_error_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_error_captures, encoding="utf-8") as captures:
+    expected_regex_java_errors = [json.loads(line) for line in captures]
+if len(regex_java_error_cases) != len(expected_regex_java_errors):
+    raise SystemExit("additional Java regex error manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_error_cases, expected_regex_java_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live Java regex error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java regex error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(regex_java_error_cases)} additional Java regex errors match message and position")
+regex_java_newline_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_newline_queries.tsv")
+regex_java_newline_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_newline_oracle.jsonl")
+with open(regex_java_newline_manifest, encoding="utf-8") as manifest:
+    regex_java_newline_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_newline_captures, encoding="utf-8") as captures:
+    expected_regex_java_newline = [json.loads(line) for line in captures]
+if len(regex_java_newline_cases) != len(expected_regex_java_newline):
+    raise SystemExit("Java regex newline manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_newline_cases, expected_regex_java_newline):
+    sql = sql.replace("__LF__", "\n")
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java regex newline anchor mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regex_java_newline_cases)} Java regex newline anchors match columns, dataset, and count")
+regexp_replace_manifest = os.path.join(os.environ["DIFF_H1"], "regexp_replace_queries.tsv")
+regexp_replace_captures = os.path.join(os.environ["DIFF_H1"], "regexp_replace_oracle.jsonl")
+with open(regexp_replace_manifest, encoding="utf-8") as manifest:
+    regexp_replace_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regexp_replace_captures, encoding="utf-8") as captures:
+    expected_regexp_replace = [json.loads(line) for line in captures]
+if len(regexp_replace_cases) != len(expected_regexp_replace):
+    raise SystemExit("regexp_replace manifest and captures differ in length")
+for (name, sql), expected in zip(regexp_replace_cases, expected_regexp_replace):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live regexp_replace mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regexp_replace_cases)} regexp_replace queries match columns, dataset, and count")
+regexp_replace_error_manifest = os.path.join(os.environ["DIFF_H1"], "regexp_replace_errors_queries.tsv")
+regexp_replace_error_captures = os.path.join(os.environ["DIFF_H1"], "regexp_replace_errors_oracle.jsonl")
+with open(regexp_replace_error_manifest, encoding="utf-8") as manifest:
+    regexp_replace_error_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regexp_replace_error_captures, encoding="utf-8") as captures:
+    expected_regexp_replace_errors = [json.loads(line) for line in captures]
+if len(regexp_replace_error_cases) != len(expected_regexp_replace_errors):
+    raise SystemExit("regexp_replace error manifest and captures differ in length")
+for (name, sql), expected in zip(regexp_replace_error_cases, expected_regexp_replace_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live regexp_replace error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position", "errorPos"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live regexp_replace error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(regexp_replace_error_cases)} regexp_replace errors match message and position")
+where_regex_error_manifest = os.path.join(os.environ["DIFF_H1"], "where_regex_invalid_patterns_queries.tsv")
+where_regex_error_captures = os.path.join(os.environ["DIFF_H1"], "where_regex_invalid_patterns_oracle.jsonl")
+with open(where_regex_error_manifest, encoding="utf-8") as manifest:
+    where_regex_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(where_regex_error_captures, encoding="utf-8") as captures:
+    expected_where_regex_errors = [json.loads(line) for line in captures]
+if len(where_regex_error_cases) != len(expected_where_regex_errors):
+    raise SystemExit("WHERE regex error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(where_regex_error_cases, expected_where_regex_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live QuestDB WHERE regex error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live WHERE regex error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(where_regex_error_cases)} WHERE regex errors match message and position")
 PY
 else
   echo "live-reference: NOT RUNNING at $HTTP"

@@ -1,0 +1,4 @@
+bad_key	SELECT location, id, count(), sum(flags) FROM sensors GROUP BY location	column must appear in GROUP BY clause or aggregate function	17
+bad_order_key	SELECT location, count(), sum(flags) FROM sensors GROUP BY location ORDER BY id	ORDER BY expressions must appear in select list. Invalid column: id	77
+bad_types	SELECT location, sum(note), count() FROM sensors GROUP BY location	inconvertible value: `alpha` [STRING -> DOUBLE]	-
+aggregate_in_group_by	SELECT haversine_dist_deg(reading, score, ts) AS distance FROM sensors GROUP BY haversine_dist_deg(reading, score, ts) ORDER BY distance	aggregate functions are not allowed in GROUP BY	80

@@ -1,0 +1,5 @@
+id * 2	sum(flags)
+NULL	0
+-2	42
+2	10
+4	NULL

@@ -305,12 +305,21 @@ pub fn unix_days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
 #[derive(Debug)]
 pub struct Error {
     pub message: String,
+    pub position: Option<usize>,
 }
 
 impl Error {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            position: None,
+        }
+    }
+
+    pub fn at(message: impl Into<String>, position: usize) -> Self {
+        Self {
+            message: message.into(),
+            position: Some(position),
         }
     }
 }

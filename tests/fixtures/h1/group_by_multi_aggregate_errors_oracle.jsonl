@@ -1,0 +1,4 @@
+{"query":"SELECT location, id, count(), sum(flags) FROM sensors GROUP BY location","error":"column must appear in GROUP BY clause or aggregate function","position":17}
+{"query":"SELECT location, count(), sum(flags) FROM sensors GROUP BY location ORDER BY id","error":"ORDER BY expressions must appear in select list. Invalid column: id","position":77}
+{"query":"SELECT location, sum(note), count() FROM sensors GROUP BY location","error":"inconvertible value: `alpha` [STRING -> DOUBLE]","position":0}
+{"query":"SELECT haversine_dist_deg(reading, score, ts) AS distance FROM sensors GROUP BY haversine_dist_deg(reading, score, ts) ORDER BY distance","error":"aggregate functions are not allowed in GROUP BY","position":80}

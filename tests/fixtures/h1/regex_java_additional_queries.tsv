@@ -1,0 +1,12 @@
+quoted_filter	SELECT id, note FROM sensors WHERE note ~ '^\Qalpha\E$' ORDER BY id
+quoted_replace	SELECT regexp_replace('a.b+c', '\Qa.b+c\E', 'X') FROM sensors LIMIT 1
+quoted_class_replace	SELECT regexp_replace('a', '[\Qa\E]', 'X') FROM sensors LIMIT 1
+horizontal_class	SELECT id, note FROM sensors WHERE note ~ '^[\H]+$' ORDER BY id
+horizontal_class_union	SELECT id, note FROM sensors WHERE note ~ '^[a\H]+$' ORDER BY id
+horizontal_complement_class	SELECT id, note FROM sensors WHERE note ~ '^[^\H]*$' ORDER BY id
+anchor_upper_Z	SELECT id, note FROM sensors WHERE note ~ '\Z' ORDER BY id
+anchor_lower_z	SELECT id, note FROM sensors WHERE note ~ '\z' ORDER BY id
+basic_latin_block	SELECT id, note FROM sensors WHERE note ~ '\p{InBasic_Latin}+' ORDER BY id
+greek_script_property	SELECT id, note FROM sensors WHERE note ~ '\p{sc=Greek}+' ORDER BY id
+quoted_projection	SELECT note ~ '^\Qalpha\E$' FROM sensors ORDER BY id
+horizontal_projection	SELECT note ~ '^[\H]+$' FROM sensors ORDER BY id

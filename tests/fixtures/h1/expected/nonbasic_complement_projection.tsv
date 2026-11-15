@@ -1,0 +1,5 @@
+note ~ '[\P{InBasic_Latin}]+'
+false
+true
+false
+false

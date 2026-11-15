@@ -1,2 +1,2 @@
-ilike(tag, 'v%')
+tag ilike 'v%'
 true

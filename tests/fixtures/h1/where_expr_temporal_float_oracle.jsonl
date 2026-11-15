@@ -1,0 +1,15 @@
+{"query":"select id from sensors where score * 16777217 = 20971520.0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where score * 16777217 > 20971520.0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where cast(id as float) + 1 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where cast(id as int) + 1 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where ts + 1 > ts order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where ts - ts = 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where day + 1 > day order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[-1]],"count":3}
+{"query":"select id from sensors where day - day = 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[-1]],"count":3}
+{"query":"select id from sensors where day + 1.0 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[-1]],"count":3}
+{"query":"select id from sensors where day + ts > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[-1]],"count":3}
+{"query":"select id from sensors where ts - day > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[-1]],"count":3}
+{"query":"select id from sensors where day - ts > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where 1 + ts > ts order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where ts * 2 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where day * 2 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}

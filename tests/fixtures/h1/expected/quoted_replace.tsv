@@ -1,0 +1,2 @@
+regexp_replace('a.b+c', '\Qa.b+c\E', 'X')
+X

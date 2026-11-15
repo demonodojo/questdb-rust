@@ -1,0 +1,2 @@
+regexp_replace('AβΩa', '[\P{InBasic_Latin}]', 'X')
+AXXa

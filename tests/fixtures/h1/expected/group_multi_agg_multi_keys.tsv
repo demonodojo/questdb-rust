@@ -1,0 +1,4 @@
+location	ok	count()	sum(flags)	avg(score)
+NULL	false	1	NULL	NULL
+madrid	true	2	10	0.625
+東京	false	1	42	-1.5

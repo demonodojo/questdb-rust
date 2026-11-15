@@ -1,0 +1,4 @@
+city	min_id	max_id	wavg	n
+NULL	NULL	NULL	NULL	1
+madrid	NULL	1	1.25	2
+東京	-1	-1	-1.5	1

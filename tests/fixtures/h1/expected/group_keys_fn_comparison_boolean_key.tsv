@@ -1,0 +1,3 @@
+ok	is_true	not_false	is_null
+false	false	false	false
+true	true	true	false

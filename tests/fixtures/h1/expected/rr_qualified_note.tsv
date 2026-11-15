@@ -1,0 +1,5 @@
+regexp_replace(s.note, 'a', 'A')
+AlphA
+NULL
+
+βetA

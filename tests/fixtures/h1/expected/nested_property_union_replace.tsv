@@ -1,0 +1,2 @@
+regexp_replace('aAβΩ', '[a[\p{InGreek}]]', 'X')
+XAXX

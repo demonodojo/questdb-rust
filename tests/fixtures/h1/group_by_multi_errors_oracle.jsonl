@@ -1,0 +1,3 @@
+{"query":"SELECT flags, count() FROM sensors GROUP BY id, location","error":"column must appear in GROUP BY clause or aggregate function","position":7}
+{"query":"SELECT id, location, count() FROM sensors GROUP BY id, location ORDER BY flags","error":"ORDER BY expressions must appear in select list. Invalid column: flags","position":73}
+{"query":"SELECT id, location, count() FROM sensors GROUP BY id, location ORDER BY missing","error":"Invalid column: missing","position":73}

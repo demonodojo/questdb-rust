@@ -1,0 +1,5 @@
+int_type	SELECT id, ok AND flags AS v FROM sensors	expression type mismatch, expected: BOOLEAN, actual: INT	18
+long_type	SELECT id, ok AND id AS v FROM sensors	expression type mismatch, expected: BOOLEAN, actual: LONG	18
+string_type	SELECT id, ok OR note AS v FROM sensors	expression type mismatch, expected: BOOLEAN, actual: STRING	17
+char_type	SELECT id, ok AND 'x' AS v FROM sensors	expression type mismatch, expected: BOOLEAN, actual: CHAR	18
+missing	SELECT id, ok AND missing AS v FROM sensors	Invalid column: missing	18

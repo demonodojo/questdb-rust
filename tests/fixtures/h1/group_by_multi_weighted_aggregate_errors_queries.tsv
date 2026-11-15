@@ -1,0 +1,3 @@
+arg_type_error	SELECT location, arg_min(note, score), count() FROM sensors GROUP BY location	inconvertible value: `alpha` [STRING -> DOUBLE]	0
+weighted_type_error	SELECT location, weighted_avg(note, flags), count() FROM sensors GROUP BY location	inconvertible value: `alpha` [STRING -> DOUBLE]	0
+bit_type_error	SELECT location, bit_and(note), count() FROM sensors GROUP BY location	inconvertible value: `alpha` [STRING -> LONG]	0

@@ -1,0 +1,6 @@
+bool_left	SELECT ok + id FROM sensors LIMIT 0	there is no matching operator `+` with the argument types: BOOLEAN + LONG	10
+bool_right	SELECT id + ok FROM sensors LIMIT 0	there is no matching operator `+` with the argument types: LONG + BOOLEAN	10
+unknown_left	SELECT missing + 1 FROM sensors LIMIT 0	Invalid column: missing	7
+unknown_right	SELECT id + missing FROM sensors LIMIT 0	Invalid column: missing	12
+runtime_text	SELECT note + id FROM sensors LIMIT 1	inconvertible value: `alpha` [STRING -> LONG]	0
+boolean_combo	SELECT ok * flags FROM sensors LIMIT 0	there is no matching operator `*` with the argument types: BOOLEAN * INT	10

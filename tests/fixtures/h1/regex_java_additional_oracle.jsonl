@@ -1,0 +1,12 @@
+{"query":"SELECT id, note FROM sensors WHERE note ~ '^\\Qalpha\\E$' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[1,"alpha"]],"count":1}
+{"query":"SELECT regexp_replace('a.b+c', '\\Qa.b+c\\E', 'X') FROM sensors LIMIT 1","columns":[{"name":"regexp_replace('a.b+c', '\\Qa.b+c\\E', 'X')","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('a', '[\\Qa\\E]', 'X') FROM sensors LIMIT 1","columns":[{"name":"regexp_replace('a', '[\\Qa\\E]', 'X')","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '^[\\H]+$' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[-1,"βeta"],[1,"alpha"]],"count":2}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '^[a\\H]+$' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[-1,"βeta"],[1,"alpha"]],"count":2}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '^[^\\H]*$' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[null,""]],"count":1}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '\\Z' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[null,""],[-1,"βeta"],[1,"alpha"]],"count":3}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '\\z' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[null,""],[-1,"βeta"],[1,"alpha"]],"count":3}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '\\p{InBasic_Latin}+' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[-1,"βeta"],[1,"alpha"]],"count":2}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '\\p{sc=Greek}+' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[-1,"βeta"]],"count":1}
+{"query":"SELECT note ~ '^\\Qalpha\\E$' FROM sensors ORDER BY id","columns":[{"name":"note ~ '^\\Qalpha\\E$'","type":"BOOLEAN"}],"timestamp":-1,"dataset":[[false],[false],[true],[false]],"count":4}
+{"query":"SELECT note ~ '^[\\H]+$' FROM sensors ORDER BY id","columns":[{"name":"note ~ '^[\\H]+$'","type":"BOOLEAN"}],"timestamp":-1,"dataset":[[false],[true],[true],[false]],"count":4}

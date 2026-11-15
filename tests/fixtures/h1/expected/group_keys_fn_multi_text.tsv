@@ -1,0 +1,4 @@
+lower(location)	ok
+NULL	false
+madrid	true
+東京	false

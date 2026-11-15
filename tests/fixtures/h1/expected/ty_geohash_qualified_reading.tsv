@@ -1,0 +1,5 @@
+typeof(make_geohash(s.reading, 41.0, 5))
+GEOHASH(1c)
+GEOHASH(1c)
+GEOHASH(1c)
+GEOHASH(1c)

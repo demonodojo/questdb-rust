@@ -1,0 +1,6 @@
+in_type	SELECT ok AND id IN ('x') FROM sensors	cannot compare LONG with type CHAR	21
+like_dynamic	SELECT ok OR note LIKE id FROM sensors	there is no matching operator `like` with the argument types: STRING like LONG	18
+regex_bad	SELECT ok OR note ~ '[' FROM sensors	Unclosed character class near index 0\n[\n^	21
+regex_not_bad	SELECT ok AND note !~ '[' AS v FROM sensors	Unclosed character class near index 0\n[\n^	23
+regex_paren_bad	SELECT ok OR (note ~ '[') AS v FROM sensors	Unclosed character class near index 0\n[\n^	22
+missing	SELECT ok AND missing IN (1) FROM sensors	Invalid column: missing	14

@@ -1,4 +1,4 @@
-ilike(note, 'A%')
+note ilike 'A%'
 true
 false
 false

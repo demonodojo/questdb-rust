@@ -1,0 +1,123 @@
+{"query":"select id from sensors where b + code > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where b - code < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where b * code < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where b / code > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where b % code != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null]],"count":3}
+{"query":"select id from sensors where flags + id > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where flags - id > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where flags * id < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where flags / id > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where flags % id != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2],[null]],"count":2}
+{"query":"select id from sensors where id + score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where id - score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where id * score < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where id / score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where id % score < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where score + reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where score - reading < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where score * reading < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where score / reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where score % reading < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where flags != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[-1]],"count":3}
+{"query":"select id from sensors where reading != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where b + flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where b - flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where b * flags < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where b / flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where b % flags != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where b + id > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where id - b > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2]],"count":1}
+{"query":"select id from sensors where b * id < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where id / b > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where id % b != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null]],"count":3}
+{"query":"select id from sensors where b + score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where b - score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where b * score < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where b / score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where b % score != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where b + reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where b - reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where b * reading < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where b / reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where b % reading != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2],[null],[-1]],"count":3}
+{"query":"select id from sensors where code + flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where code - flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where code * flags < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where code / flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where code % flags != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where code + id > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where code - id > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where code * id < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where code / id > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where code % id != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[null]],"count":1}
+{"query":"select id from sensors where code + score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where score - code > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[null]],"count":1}
+{"query":"select id from sensors where code * score < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where score / code > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where score % code != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[-1]],"count":3}
+{"query":"select id from sensors where code + reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where code - reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where code * reading < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where code / reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where code % reading != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where flags + score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where flags - score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where flags * score < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where flags / score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where flags % score != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2],[null]],"count":2}
+{"query":"select id from sensors where flags + reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where reading - flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where flags * reading < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where reading / flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where reading % flags != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null]],"count":3}
+{"query":"select id from sensors where id + reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where id - reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where id * reading < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where id / reading > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where id % reading != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where code - b > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where code / b > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[-1]],"count":3}
+{"query":"select id from sensors where code % b != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where flags - b > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[-1]],"count":3}
+{"query":"select id from sensors where flags / b > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where flags % b != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where score - b > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[null]],"count":1}
+{"query":"select id from sensors where score / b > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where score % b != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[-1]],"count":3}
+{"query":"select id from sensors where reading - b > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[null]],"count":1}
+{"query":"select id from sensors where reading / b > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where reading % b != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where flags - code > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[-1]],"count":3}
+{"query":"select id from sensors where flags / code > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where flags % code != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where id - code > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2]],"count":1}
+{"query":"select id from sensors where id / code > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where id % code != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null]],"count":3}
+{"query":"select id from sensors where reading - code > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[null]],"count":1}
+{"query":"select id from sensors where reading / code > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where reading % code != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where id - flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where id / flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where id % flags != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where score - flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where score / flags > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where score % flags != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where score - id > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where score / id > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where score % id != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where reading - id > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where reading / id > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where reading % id != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null]],"count":3}
+{"query":"select id from sensors where reading - score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where reading / score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where reading % score != 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null]],"count":3}
+{"query":"select id from sensors where b - 2147483647 - 1 - b = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where code - 2147483647 - 1 - code = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where flags - 2147483647 - 1 - flags = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where id + flags - flags - 9223372036854775807 - 1 - id = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where b + code - code - 2147483647 - 1 - b = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where b + flags - flags - 2147483647 - 1 - b = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where code + flags - flags - 2147483647 - 1 - code = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where id + b - b - 9223372036854775807 - 1 - id = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where id + code - code - 9223372036854775807 - 1 - id = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where id + flags - flags - 9223372036854775807 - 1 - id = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}

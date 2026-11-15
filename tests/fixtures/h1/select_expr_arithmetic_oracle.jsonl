@@ -1,0 +1,28 @@
+{"query":"SELECT id + 1 FROM sensors ORDER BY ts","columns":[{"name":"id + 1","type":"LONG"}],"timestamp":-1,"dataset":[[2],[3],[null],[0]],"count":4}
+{"query":"SELECT id - 1 FROM sensors ORDER BY ts","columns":[{"name":"id - 1","type":"LONG"}],"timestamp":-1,"dataset":[[0],[1],[null],[-2]],"count":4}
+{"query":"SELECT id * 2 FROM sensors ORDER BY ts","columns":[{"name":"id * 2","type":"LONG"}],"timestamp":-1,"dataset":[[2],[4],[null],[-2]],"count":4}
+{"query":"SELECT id / 2 FROM sensors ORDER BY ts","columns":[{"name":"id / 2","type":"LONG"}],"timestamp":-1,"dataset":[[0],[1],[null],[0]],"count":4}
+{"query":"SELECT id % 2 FROM sensors ORDER BY ts","columns":[{"name":"id % 2","type":"LONG"}],"timestamp":-1,"dataset":[[1],[0],[null],[-1]],"count":4}
+{"query":"SELECT id + reading * 2 FROM sensors ORDER BY ts","columns":[{"name":"id + reading * 2","type":"DOUBLE"}],"timestamp":-1,"dataset":[[4.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT (id + reading) * 2 FROM sensors ORDER BY ts","columns":[{"name":"(id + reading) * 2","type":"DOUBLE"}],"timestamp":-1,"dataset":[[5.0],[null],[null],[-2.0]],"count":4}
+{"query":"SELECT reading + score FROM sensors ORDER BY ts","columns":[{"name":"reading + score","type":"DOUBLE"}],"timestamp":-1,"dataset":[[2.75],[null],[0.0],[-1.5]],"count":4}
+{"query":"SELECT id / 0 FROM sensors ORDER BY ts","columns":[{"name":"id / 0","type":"LONG"}],"timestamp":-1,"dataset":[[null],[null],[null],[null]],"count":4}
+{"query":"SELECT day + 1 FROM sensors ORDER BY ts","columns":[{"name":"day + 1","type":"TIMESTAMP"}],"timestamp":-1,"dataset":[["2020-01-02T00:00:00.000001Z"],[null],["1970-01-01T00:00:00.000001Z"],["2020-06-15T12:30:00.000001Z"]],"count":4}
+{"query":"SELECT day - 1 FROM sensors ORDER BY ts","columns":[{"name":"day - 1","type":"TIMESTAMP"}],"timestamp":-1,"dataset":[["2020-01-01T23:59:59.999999Z"],[null],["1969-12-31T23:59:59.999999Z"],["2020-06-15T12:29:59.999999Z"]],"count":4}
+{"query":"SELECT day - flags FROM sensors ORDER BY ts","columns":[{"name":"day - flags","type":"LONG"}],"timestamp":-1,"dataset":[[1577923199990],[null],[0],[1592224199958]],"count":4}
+{"query":"SELECT day + ts FROM sensors ORDER BY ts","columns":[{"name":"day + ts","type":"TIMESTAMP"}],"timestamp":-1,"dataset":[["2070-01-02T03:04:05.000000Z"],[null],["2020-01-02T03:04:07.000000Z"],["2070-06-16T15:34:08.000000Z"]],"count":4}
+{"query":"SELECT ts + day FROM sensors ORDER BY ts","columns":[{"name":"ts + day","type":"TIMESTAMP"}],"timestamp":-1,"dataset":[["2020-01-20T09:22:48.200000Z"],[null],["2020-01-02T03:04:07.000000Z"],["2020-01-20T13:21:12.200000Z"]],"count":4}
+{"query":"SELECT s.id + s.reading * 2 FROM sensors AS s ORDER BY s.ts","columns":[{"name":"s.id + s.reading * 2","type":"DOUBLE"}],"timestamp":-1,"dataset":[[4.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT '2' + id FROM sensors ORDER BY ts","columns":[{"name":"'2' + id","type":"LONG"}],"timestamp":-1,"dataset":[[3],[4],[null],[1]],"count":4}
+{"query":"SELECT id + '2' FROM sensors ORDER BY ts","columns":[{"name":"id + '2'","type":"LONG"}],"timestamp":-1,"dataset":[[3],[4],[null],[1]],"count":4}
+{"query":"SELECT typeof(day - 1) FROM sensors LIMIT 1","columns":[{"name":"typeof(day - 1)","type":"STRING"}],"timestamp":-1,"dataset":[["TIMESTAMP"]],"count":1}
+{"query":"SELECT typeof(day - flags) FROM sensors LIMIT 1","columns":[{"name":"typeof(day - flags)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id + 1 AS id_plus FROM sensors ORDER BY ts","columns":[{"name":"id_plus","type":"LONG"}],"timestamp":-1,"dataset":[[2],[3],[null],[0]],"count":4}
+{"query":"SELECT id::float + id::long FROM sensors ORDER BY ts","columns":[{"name":"id::DOUBLE + id::long","type":"DOUBLE"}],"timestamp":-1,"dataset":[[2.0],[4.0],[null],[-2.0]],"count":4}
+{"query":"SELECT -id + reading FROM sensors ORDER BY ts","columns":[{"name":"-(id) + reading","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.5],[null],[null],[1.0]],"count":4}
+{"query":"SELECT ~id + flags FROM sensors ORDER BY ts","columns":[{"name":"~(id) + flags","type":"LONG"}],"timestamp":-1,"dataset":[[8],[null],[null],[42]],"count":4}
+{"query":"SELECT abs(id) + reading FROM sensors ORDER BY ts","columns":[{"name":"abs(id) + reading","type":"DOUBLE"}],"timestamp":-1,"dataset":[[2.5],[null],[null],[1.0]],"count":4}
+{"query":"SELECT id + abs(score) FROM sensors ORDER BY ts","columns":[{"name":"id + abs(score)","type":"DOUBLE"}],"timestamp":-1,"dataset":[[2.25],[null],[null],[0.5]],"count":4}
+{"query":"SELECT round(reading, 1) * id FROM sensors ORDER BY ts","columns":[{"name":"round(reading, 1) * id","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.5],[null],[null],[0.0]],"count":4}
+{"query":"SELECT sqrt(id) + score FROM sensors ORDER BY ts","columns":[{"name":"sqrt(id) + score","type":"DOUBLE"}],"timestamp":-1,"dataset":[[2.25],[null],[null],[null]],"count":4}
+{"query":"SELECT typeof(-id + reading) FROM sensors ORDER BY ts LIMIT 1","columns":[{"name":"typeof(-(id) + reading)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}

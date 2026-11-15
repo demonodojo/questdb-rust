@@ -1,0 +1,3 @@
+{"query":"SELECT location, arg_min(note, score), count() FROM sensors GROUP BY location","error":"inconvertible value: `alpha` [STRING -> DOUBLE]","position":0}
+{"query":"SELECT location, weighted_avg(note, flags), count() FROM sensors GROUP BY location","error":"inconvertible value: `alpha` [STRING -> DOUBLE]","position":0}
+{"query":"SELECT location, bit_and(note), count() FROM sensors GROUP BY location","error":"inconvertible value: `alpha` [STRING -> LONG]","position":0}

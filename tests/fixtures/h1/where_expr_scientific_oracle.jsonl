@@ -1,0 +1,12 @@
+{"query":"select id from sensors where reading * 1e999 > 0 order by ts","error":"invalid constant: 1e999","position":39}
+{"query":"select id from sensors where reading * 1e-999 > 0 order by ts","error":"invalid constant: 1e-999","position":39}
+{"query":"select id from sensors where reading * 1e > 0 order by ts","error":"invalid constant: 1e","position":39}
+{"query":"select id from sensors where reading * 1e+ > 0 order by ts","error":"invalid constant: 1e+","position":39}
+{"query":"select id from sensors where reading * -1e999 > 0 order by ts","error":"invalid constant: 1e999","position":40}
+{"query":"select id from sensors where reading < 1.7976931348623157e308 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[-1]],"count":3}
+{"query":"select id from sensors where reading > 4.9e-324 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where reading > 1e999 order by ts","error":"invalid constant: 1e999","position":39}
+{"query":"select id from sensors where reading > 1e-999 order by ts","error":"invalid constant: 1e-999","position":39}
+{"query":"select id from sensors where reading > 1e order by ts","error":"invalid constant: 1e","position":39}
+{"query":"select id from sensors where 1e999 < reading order by ts","error":"invalid constant: 1e999","position":29}
+{"query":"select id from sensors where reading * 1e+2 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}

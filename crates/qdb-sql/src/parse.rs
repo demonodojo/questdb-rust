@@ -14,6 +14,7 @@ pub enum CmpOp {
 pub struct OrderBy {
     pub column: String,
     pub descending: bool,
+    pub position: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -21,8 +22,8 @@ pub struct Query {
     pub columns: SelectList,
     pub table: String,
     pub filter: Option<Filter>,
-    /// One `GROUP BY` column. Several columns are rejected.
-    pub group_by: Option<String>,
+    /// One or more expressions evaluated as the grouping key.
+    pub group_by: Option<Vec<GroupByExpr>>,
     pub order_by: Vec<OrderBy>,
     /// `LIMIT` bounds after the single-argument form is rewritten.
     /// `LIMIT n` with `n >= 0` is `[0, n)`. A negative `n` is `[n, 0)`.
@@ -151,6 +152,8 @@ pub enum AggFunc {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AggregateExpr {
     pub func: AggFunc,
+    /// Byte position of the aggregate call in the SELECT or ORDER BY expression.
+    pub position: usize,
     /// Result column name, such as `count()`, `min(id)` or `MAX(note)`.
     pub label: String,
     /// `None` for `count()` and `count(*)`. Every other aggregate names a column.
@@ -242,29 +245,62 @@ pub enum AggregateExtra {
 }
 
 /// One grouping column plus one aggregate, in select-list order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GroupedSelect {
-    /// Column spelling from the select list, used as the result header.
-    pub key: String,
-    pub aggregate: AggregateExpr,
-    /// Position of the key in the output row.
-    pub key_at: usize,
+    /// Grouping expressions selected as columns, in SELECT order.
+    pub keys: Vec<GroupedSelectKey>,
+    pub aggregates: Vec<AggregateExpr>,
+    /// SELECT-list order of keys and aggregates.
+    pub select_order: Vec<GroupedSelectItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupByExpr {
+    pub source: String,
+    pub position: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupedSelectKey {
+    pub label: String,
+    pub operand: FilterOperand,
+    pub position: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnExpr {
+    pub name: String,
+    pub label: String,
+    pub position: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectionList {
+    pub items: Vec<Proj>,
+    pub positions: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupedSelectItem {
+    Key(usize),
+    Aggregate(usize),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum SelectList {
     Star,
-    Columns(Vec<String>),
-    Aggregate(AggregateExpr),
+    Columns(Vec<ColumnExpr>),
+    Aggregate(Box<AggregateExpr>),
     Grouped(GroupedSelect),
     /// A select list that contains `concat(...)`. Plain columns may sit beside it.
-    Projection(Vec<Proj>),
+    Projection(ProjectionList),
 }
 
 /// One select-list value. A column name is stored lowercased; `concat` keeps its label.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Proj {
     Column(String),
+    Arithmetic(ArithmeticExpr),
     Concat(ConcatExpr),
     Length(LengthExpr),
     Lower(LowerExpr),
@@ -386,6 +422,8 @@ pub enum Proj {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LengthExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
     pub bytes: bool,
 }
@@ -393,12 +431,16 @@ pub struct LengthExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LowerExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpperExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -445,6 +487,9 @@ pub struct ReplaceExpr {
 pub struct RegexpReplaceExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
+    /// Byte position of the function name and each argument in the SQL text.
+    pub position: usize,
+    pub arg_positions: Vec<usize>,
 }
 
 /// `starts_with(text, prefix)` returns a boolean.
@@ -465,6 +510,8 @@ pub struct GlobExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IlikeExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after label rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
     pub negated: bool,
 }
@@ -473,6 +520,8 @@ pub struct IlikeExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LikeExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after label rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
     pub negated: bool,
     pub regex: bool,
@@ -532,6 +581,8 @@ pub struct QuoteIdentExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SizePrettyExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -574,6 +625,8 @@ pub struct RoundHalfEvenExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoalesceExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -581,6 +634,8 @@ pub struct CoalesceExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NullIfExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -588,6 +643,8 @@ pub struct NullIfExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CastExpr {
     pub label: String,
+    /// Original cast spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub column: String,
     pub type_name: String,
     /// `true` for `column::type`. `false` for `cast(column AS type)`.
@@ -598,6 +655,8 @@ pub struct CastExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DateAddExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -605,6 +664,8 @@ pub struct DateAddExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DateDiffExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -612,6 +673,8 @@ pub struct DateDiffExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct YearExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -619,6 +682,8 @@ pub struct YearExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonthExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -626,6 +691,8 @@ pub struct MonthExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DayExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -633,6 +700,8 @@ pub struct DayExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HourExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -640,6 +709,8 @@ pub struct HourExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MinuteExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -647,6 +718,8 @@ pub struct MinuteExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecondExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -654,6 +727,8 @@ pub struct SecondExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MillisExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -661,6 +736,8 @@ pub struct MillisExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MicrosExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -668,6 +745,8 @@ pub struct MicrosExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NanosExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -675,6 +754,8 @@ pub struct NanosExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToUtcExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -682,6 +763,8 @@ pub struct ToUtcExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToTimezoneExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -689,6 +772,8 @@ pub struct ToTimezoneExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToPgDateExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -696,6 +781,8 @@ pub struct ToPgDateExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DayOfWeekExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -703,6 +790,8 @@ pub struct DayOfWeekExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WeekOfYearExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -717,6 +806,8 @@ pub struct DateTruncExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimestampFloorExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -724,6 +815,8 @@ pub struct TimestampFloorExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimestampCeilExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -731,6 +824,8 @@ pub struct TimestampCeilExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IsLeapYearExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -738,6 +833,8 @@ pub struct IsLeapYearExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaysInMonthExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -745,6 +842,8 @@ pub struct DaysInMonthExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToStrExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -752,6 +851,8 @@ pub struct ToStrExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IsEndOfMonthExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -759,6 +860,8 @@ pub struct IsEndOfMonthExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DayOfWeekSundayFirstExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -766,6 +869,8 @@ pub struct DayOfWeekSundayFirstExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToTimestampExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -773,6 +878,8 @@ pub struct ToTimestampExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToDateExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -780,6 +887,8 @@ pub struct ToDateExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Md5Expr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -787,6 +896,8 @@ pub struct Md5Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sha1Expr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -794,6 +905,8 @@ pub struct Sha1Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sha256Expr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
 }
 
@@ -801,6 +914,8 @@ pub struct Sha256Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: String,
     pub part: String,
     pub arg: ConcatArg,
 }
@@ -907,6 +1022,8 @@ pub struct CotExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MakeGeohashExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -914,6 +1031,8 @@ pub struct MakeGeohashExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToUuidExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -921,6 +1040,8 @@ pub struct ToUuidExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsonExtractExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -935,6 +1056,8 @@ pub struct FromBase64Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToCharExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
     pub base64: Option<FromBase64Expr>,
 }
@@ -943,18 +1066,28 @@ pub struct ToCharExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeofExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
+    /// Arithmetic argument whose static result type is being inspected.
+    pub arithmetic: Option<Box<str>>,
     pub geohash: Option<MakeGeohashExpr>,
-    pub uuid: Option<ToUuidExpr>,
-    pub json: Option<JsonExtractExpr>,
-    pub to_char: Option<ToCharExpr>,
+    pub uuid: Option<Box<ToUuidExpr>>,
+    pub json: Option<Box<JsonExtractExpr>>,
+    pub to_char: Option<Box<ToCharExpr>>,
 }
 
 /// `not(value)`. Extra arguments are ignored; the last one is negated.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NotExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
+    /// Byte offset of the NOT expression in the query.
+    pub position: usize,
     pub args: Vec<ConcatArg>,
+    /// A prefix `NOT` expression parsed with the filter grammar.
+    pub filter: Option<Box<Filter>>,
 }
 
 /// `power(base, exponent)`.
@@ -996,6 +1129,8 @@ pub struct WmidExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BetweenExpr {
     pub label: String,
+    /// Original expression spelling, preserved for grouped-source diagnostics.
+    pub source_label: String,
     pub args: Vec<ConcatArg>,
     pub negated: bool,
 }
@@ -1004,6 +1139,8 @@ pub struct BetweenExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InListExpr {
     pub label: String,
+    /// Original expression spelling, preserved for grouped-source diagnostics.
+    pub source_label: String,
     pub value: String,
     pub args: Vec<ConcatArg>,
 }
@@ -1063,6 +1200,7 @@ pub enum AndRight {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AndExpr {
     pub label: String,
+    pub source_label: String,
     pub left: String,
     pub right: AndRight,
     pub op: BoolOp,
@@ -1093,10 +1231,21 @@ pub struct AddExpr {
     pub op: ArithOp,
 }
 
+/// A full arithmetic expression projected as one SELECT column.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArithmeticExpr {
+    pub label: String,
+    pub source: String,
+    pub position: usize,
+    pub operand: FilterOperand,
+}
+
 /// `value = other` compares a column with one constant or another column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EqExpr {
     pub label: String,
+    /// Original comparison spelling, preserved for grouped-source diagnostics after aliases.
+    pub source_label: String,
     pub value: String,
     pub op: CmpOp,
     pub literal: Scalar,
@@ -1118,6 +1267,128 @@ fn eq_literal_label(literal: &Scalar) -> String {
         Scalar::Text(text) => format!("'{}'", text.replace('\'', "''")),
         Scalar::Char(unit) => format!("'{}'", char::from_u32(u32::from(*unit)).unwrap_or('\u{0}')),
         other => format!("{other:?}"),
+    }
+}
+
+fn filter_expression_label(filter: &Filter) -> String {
+    match filter {
+        Filter::BooleanColumn { column } => column.clone(),
+        Filter::BooleanLiteral(Some(value)) => value.to_string(),
+        Filter::BooleanLiteral(None) => "NULL".to_string(),
+        Filter::NonBooleanLiteral { value, .. } => eq_literal_label(value),
+        Filter::Compare {
+            column,
+            op,
+            literal,
+        } => format!(
+            "{column} {} {}",
+            cmp_op_label(*op),
+            eq_literal_label(literal)
+        ),
+        Filter::CompareColumns { left, op, right } => {
+            format!("{left} {} {right}", cmp_op_label(*op))
+        }
+        Filter::CompareExpressions { left, op, right } => format!(
+            "{} {} {}",
+            filter_operand_label(left),
+            cmp_op_label(*op),
+            filter_operand_label(right)
+        ),
+        Filter::Between {
+            column,
+            low,
+            high,
+            negated,
+        } => format!(
+            "{column} {}between {} and {}",
+            if *negated { "not " } else { "" },
+            eq_literal_label(low),
+            eq_literal_label(high)
+        ),
+        Filter::InList {
+            column,
+            items,
+            negated,
+        } => format!(
+            "{column} {}in ({})",
+            if *negated { "not " } else { "" },
+            items
+                .iter()
+                .map(eq_literal_label)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Filter::Like {
+            column,
+            pattern,
+            case_insensitive,
+            negated,
+        } => format!(
+            "{column} {}{}like {}",
+            if *negated { "not " } else { "" },
+            if *case_insensitive { "i" } else { "" },
+            concat_arg_label(pattern)
+        ),
+        Filter::Regex {
+            column,
+            pattern,
+            negated,
+            ..
+        } => format!(
+            "{column} {} {}",
+            if *negated { "!~" } else { "~" },
+            concat_arg_label(pattern)
+        ),
+        Filter::Not(inner) => format!("not({})", filter_expression_label(inner)),
+        Filter::And(left, right) => format!(
+            "{} and {}",
+            filter_expression_label(left),
+            filter_expression_label(right)
+        ),
+        Filter::Or(left, right) => format!(
+            "{} or {}",
+            filter_expression_label(left),
+            filter_expression_label(right)
+        ),
+    }
+}
+
+fn cmp_op_label(op: CmpOp) -> &'static str {
+    match op {
+        CmpOp::Eq => "=",
+        CmpOp::NotEq => "<>",
+        CmpOp::Lt => "<",
+        CmpOp::Gt => ">",
+        CmpOp::LtEq => "<=",
+        CmpOp::GtEq => ">=",
+    }
+}
+
+fn filter_operand_label(operand: &FilterOperand) -> String {
+    match operand {
+        FilterOperand::Literal(value) => eq_literal_label(value),
+        FilterOperand::Projection(projection) => match projection.as_ref() {
+            Proj::Column(name) => name.clone(),
+            Proj::Arithmetic(expression) => expression.label.clone(),
+            Proj::Like(expression) => expression.label.clone(),
+            Proj::Ilike(expression) => expression.label.clone(),
+            Proj::Not(expression) => expression.label.clone(),
+            Proj::And(expression) => expression.label.clone(),
+            _ => "<expression>".to_string(),
+        },
+        FilterOperand::Arithmetic(expression) => format!(
+            "{} {} {}",
+            filter_operand_label(&expression.left),
+            expression.op.spelling(),
+            filter_operand_label(&expression.right)
+        ),
+    }
+}
+
+fn concat_arg_label(arg: &ConcatArg) -> String {
+    match arg {
+        ConcatArg::Column(name) => name.clone(),
+        ConcatArg::Literal(value) => eq_literal_label(value),
     }
 }
 
@@ -1211,6 +1482,8 @@ pub struct PgIsInRecoveryExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormatTypeExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -1218,6 +1491,8 @@ pub struct FormatTypeExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CurrentSettingExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -1225,6 +1500,8 @@ pub struct CurrentSettingExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgGetPartKeyDefExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -1232,6 +1509,8 @@ pub struct PgGetPartKeyDefExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgGetUserByIdExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
     pub qualified: bool,
 }
@@ -1240,6 +1519,8 @@ pub struct PgGetUserByIdExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgTableIsVisibleExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
     pub qualified: bool,
 }
@@ -1248,6 +1529,8 @@ pub struct PgTableIsVisibleExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgAgeExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
     pub qualified: bool,
 }
@@ -1256,6 +1539,8 @@ pub struct PgAgeExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgGetExprExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -1263,6 +1548,8 @@ pub struct PgGetExprExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetmaskExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -1270,6 +1557,8 @@ pub struct NetmaskExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeoDistanceExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -1277,6 +1566,8 @@ pub struct GeoDistanceExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeoWithinExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -1284,6 +1575,8 @@ pub struct GeoWithinExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WithinRadiusExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -1291,6 +1584,8 @@ pub struct WithinRadiusExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WithinBoxExpr {
     pub label: String,
+    /// Original call spelling, preserved for source positions after alias rewriting.
+    pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
 }
 
@@ -1321,11 +1616,74 @@ pub enum ConcatArg {
     Literal(Scalar),
 }
 
+type ParsedCallArgsWithPositions = (Vec<String>, Vec<ConcatArg>, Vec<usize>);
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct Filter {
-    pub column: String,
-    pub op: CmpOp,
-    pub literal: Scalar,
+pub enum FilterOperand {
+    Projection(Box<Proj>),
+    Literal(Scalar),
+    Arithmetic(Box<FilterArithmetic>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FilterArithmetic {
+    pub left: FilterOperand,
+    pub op: ArithOp,
+    pub right: FilterOperand,
+    pub position: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Filter {
+    BooleanColumn {
+        column: String,
+    },
+    BooleanLiteral(Option<bool>),
+    NonBooleanLiteral {
+        value: Scalar,
+        position: usize,
+    },
+    Compare {
+        column: String,
+        op: CmpOp,
+        literal: Scalar,
+    },
+    CompareColumns {
+        left: String,
+        op: CmpOp,
+        right: String,
+    },
+    CompareExpressions {
+        left: FilterOperand,
+        op: CmpOp,
+        right: FilterOperand,
+    },
+    Between {
+        column: String,
+        low: Scalar,
+        high: Scalar,
+        negated: bool,
+    },
+    InList {
+        column: String,
+        items: Vec<Scalar>,
+        negated: bool,
+    },
+    Like {
+        column: String,
+        pattern: ConcatArg,
+        case_insensitive: bool,
+        negated: bool,
+    },
+    Regex {
+        column: String,
+        pattern: ConcatArg,
+        negated: bool,
+        position: usize,
+    },
+    Not(Box<Filter>),
+    And(Box<Filter>, Box<Filter>),
+    Or(Box<Filter>, Box<Filter>),
 }
 
 fn strip_table_alias(name: &str, alias: &str) -> String {
@@ -1341,14 +1699,356 @@ fn strip_alias_refs(
     columns: &mut SelectList,
     filter: &mut Option<Filter>,
     order_by: &mut [OrderBy],
-    group_by: &mut Option<String>,
+    group_by: &mut Option<Vec<GroupByExpr>>,
     alias: &str,
 ) {
     match columns {
         SelectList::Projection(items) => {
-            for item in items {
+            for item in &mut items.items {
                 if let Proj::Column(name) = item {
                     *name = strip_table_alias(name, alias);
+                }
+                if let Proj::PgGetUserById(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::PgTableIsVisible(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::PgAge(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::PgGetExpr(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::PgGetPartKeyDef(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::CurrentSetting(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::FormatType(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Netmask(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::GeoDistance(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::GeoWithin(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::WithinRadius(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::WithinBox(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::MakeGeohash(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::ToUuid(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Md5(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Sha1(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Sha256(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Floor(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Ceil(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Sign(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Sqrt(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Sin(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Cos(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Tan(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Asin(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Acos(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Atan(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Atan2(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Degrees(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Radians(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Cot(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Power(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Ln(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Log(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Exp(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Not(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                    if let Some(filter) = &mut expr.filter {
+                        strip_filter_alias(filter, alias);
+                    }
+                }
+                if let Proj::Mid(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Spread(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::SpreadBps(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Wmid(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Cast(expr) = item {
+                    expr.column = strip_table_alias(&expr.column, alias);
+                }
+                if let Proj::Between(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::InList(expr) = item {
+                    expr.value = strip_table_alias(&expr.value, alias);
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Eq(expr) = item {
+                    expr.value = strip_table_alias(&expr.value, alias);
+                    if let Some(other) = &mut expr.other {
+                        *other = strip_table_alias(other, alias);
+                    }
+                }
+                if let Proj::Add(expr) = item {
+                    expr.value = strip_table_alias(&expr.value, alias);
+                    if let Some(other) = &mut expr.other {
+                        *other = strip_table_alias(other, alias);
+                    }
+                }
+                if let Proj::Arithmetic(expr) = item {
+                    strip_filter_operand_alias(&mut expr.operand, alias);
+                }
+                if let Proj::Neg(expr) = item {
+                    expr.value = strip_table_alias(&expr.value, alias);
+                }
+                if let Proj::BitNot(expr) = item {
+                    expr.value = strip_table_alias(&expr.value, alias);
+                }
+                if let Proj::And(expr) = item {
+                    expr.left = strip_table_alias(&expr.left, alias);
+                    if let AndRight::Column(name) = &mut expr.right {
+                        *name = strip_table_alias(name, alias);
+                    }
+                }
+                if let Proj::ToChar(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                    if let Some(base64) = &mut expr.base64 {
+                        for arg in &mut base64.args {
+                            if let ConcatArg::Column(name) = arg {
+                                *name = strip_table_alias(name, alias);
+                            }
+                        }
+                    }
                 }
                 if let Proj::Length(expr) = item {
                     for arg in &mut expr.args {
@@ -1392,27 +2092,621 @@ fn strip_alias_refs(
                         }
                     }
                 }
+                if let Proj::Trim(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::StartsWith(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Glob(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Ilike(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Like(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Switch(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Bar(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::TimestampSequence(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Pad(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::DateAdd(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::DateDiff(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Year(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Month(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Day(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Hour(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Minute(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Second(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Millis(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Micros(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Nanos(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::DayOfWeek(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::DayOfWeekSundayFirst(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::WeekOfYear(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::DateTrunc(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::TimestampFloor(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::TimestampCeil(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::IsLeapYear(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::DaysInMonth(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::IsEndOfMonth(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::ToUtc(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::ToTimezone(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::ToPgDate(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::ToDate(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::ToStr(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::ToTimestamp(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Extract(expr) = item {
+                    if let ConcatArg::Column(name) = &mut expr.arg {
+                        *name = strip_table_alias(name, alias);
+                    }
+                }
+                if let Proj::Typeof(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                    if let Some(json) = &mut expr.json {
+                        for arg in &mut json.args {
+                            if let ConcatArg::Column(name) = arg {
+                                *name = strip_table_alias(name, alias);
+                            }
+                        }
+                    }
+                    if let Some(uuid) = &mut expr.uuid {
+                        for arg in &mut uuid.args {
+                            if let ConcatArg::Column(name) = arg {
+                                *name = strip_table_alias(name, alias);
+                            }
+                        }
+                    }
+                    if let Some(geohash) = &mut expr.geohash {
+                        for arg in &mut geohash.args {
+                            if let ConcatArg::Column(name) = arg {
+                                *name = strip_table_alias(name, alias);
+                            }
+                        }
+                    }
+                    if let Some(to_char) = &mut expr.to_char {
+                        for arg in &mut to_char.args {
+                            if let ConcatArg::Column(name) = arg {
+                                *name = strip_table_alias(name, alias);
+                            }
+                        }
+                        if let Some(base64) = &mut to_char.base64 {
+                            for arg in &mut base64.args {
+                                if let ConcatArg::Column(name) = arg {
+                                    *name = strip_table_alias(name, alias);
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Proj::JsonExtract(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Replace(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::RegexpReplace(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::StrPos(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::SplitPart(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::QuoteIdent(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::SizePretty(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Abs(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Round(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::RoundDown(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::RoundUp(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::RoundHalfEven(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Greatest(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Least(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::Coalesce(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
+                if let Proj::NullIf(expr) = item {
+                    for arg in &mut expr.args {
+                        if let ConcatArg::Column(name) = arg {
+                            *name = strip_table_alias(name, alias);
+                        }
+                    }
+                }
             }
         }
         SelectList::Columns(names) => {
-            for name in names {
-                *name = strip_table_alias(name, alias);
+            for column in names {
+                column.name = strip_table_alias(&column.name, alias);
+                column.label = strip_table_alias(&column.label, alias);
             }
         }
         SelectList::Grouped(grouped) => {
-            grouped.key = strip_table_alias(&grouped.key, alias);
+            for key in &mut grouped.keys {
+                key.label = strip_table_alias(&key.label, alias);
+                strip_filter_operand_alias(&mut key.operand, alias);
+            }
+            for aggregate in &mut grouped.aggregates {
+                for column in [
+                    &mut aggregate.column,
+                    &mut aggregate.separator_column,
+                    &mut aggregate.pair,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    *column = strip_table_alias(column, alias);
+                }
+                if let Some(AggregateExtra::Column(column)) = &mut aggregate.extra {
+                    *column = strip_table_alias(column, alias);
+                }
+            }
         }
         SelectList::Star | SelectList::Aggregate(_) => {}
     }
     if let Some(filter) = filter {
-        filter.column = strip_table_alias(&filter.column, alias);
+        strip_filter_alias(filter, alias);
     }
     for order in order_by.iter_mut() {
         order.column = strip_table_alias(&order.column, alias);
     }
-    if let Some(name) = group_by {
-        *name = strip_table_alias(name, alias);
+    if let Some(keys) = group_by {
+        for key in keys {
+            key.source = strip_alias_from_expression(&key.source, alias);
+        }
     }
+}
+
+fn strip_alias_from_expression(source: &str, alias: &str) -> String {
+    let bytes = source.as_bytes();
+    let alias_bytes = alias.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut pos = 0usize;
+    let mut quoted = false;
+    while pos < bytes.len() {
+        if bytes[pos] == b'\'' {
+            output.push(bytes[pos]);
+            if quoted && bytes.get(pos + 1) == Some(&b'\'') {
+                output.push(b'\'');
+                pos += 2;
+                continue;
+            }
+            quoted = !quoted;
+            pos += 1;
+            continue;
+        }
+        if !quoted
+            && bytes
+                .get(pos..pos + alias_bytes.len())
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(alias_bytes))
+            && bytes.get(pos + alias_bytes.len()) == Some(&b'.')
+        {
+            pos += alias_bytes.len() + 1;
+            continue;
+        }
+        output.push(bytes[pos]);
+        pos += 1;
+    }
+    String::from_utf8(output).expect("alias stripping preserves UTF-8")
+}
+
+fn strip_filter_alias(filter: &mut Filter, alias: &str) {
+    match filter {
+        Filter::BooleanColumn { column }
+        | Filter::Compare { column, .. }
+        | Filter::Between { column, .. }
+        | Filter::InList { column, .. } => {
+            *column = strip_table_alias(column, alias);
+        }
+        Filter::CompareColumns { left, right, .. } => {
+            *left = strip_table_alias(left, alias);
+            *right = strip_table_alias(right, alias);
+        }
+        Filter::CompareExpressions { left, right, .. } => {
+            if let FilterOperand::Projection(expr) = left {
+                strip_filter_expr_alias(expr, alias);
+            }
+            if let FilterOperand::Projection(expr) = right {
+                strip_filter_expr_alias(expr, alias);
+            }
+            if let FilterOperand::Arithmetic(expr) = left {
+                strip_filter_arithmetic_alias(expr, alias);
+            }
+            if let FilterOperand::Arithmetic(expr) = right {
+                strip_filter_arithmetic_alias(expr, alias);
+            }
+        }
+        Filter::Like {
+            column, pattern, ..
+        } => {
+            *column = strip_table_alias(column, alias);
+            if let ConcatArg::Column(name) = pattern {
+                *name = strip_table_alias(name, alias);
+            }
+        }
+        Filter::Regex {
+            column, pattern, ..
+        } => {
+            *column = strip_table_alias(column, alias);
+            if let ConcatArg::Column(name) = pattern {
+                *name = strip_table_alias(name, alias);
+            }
+        }
+        Filter::BooleanLiteral(_) | Filter::NonBooleanLiteral { .. } => {}
+        Filter::Not(inner) => strip_filter_alias(inner, alias),
+        Filter::And(left, right) | Filter::Or(left, right) => {
+            strip_filter_alias(left, alias);
+            strip_filter_alias(right, alias);
+        }
+    }
+}
+
+fn strip_filter_expr_alias(expr: &mut Proj, alias: &str) {
+    match expr {
+        Proj::Column(name) => *name = strip_table_alias(name, alias),
+        Proj::Add(expr) => {
+            expr.value = strip_table_alias(&expr.value, alias);
+            if let Some(other) = &mut expr.other {
+                *other = strip_table_alias(other, alias);
+            }
+        }
+        Proj::Abs(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Length(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Lower(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Upper(expr) => strip_concat_aliases(&mut expr.args, alias),
+        _ => {}
+    }
+}
+
+fn strip_concat_aliases(args: &mut [ConcatArg], alias: &str) {
+    for arg in args {
+        if let ConcatArg::Column(name) = arg {
+            *name = strip_table_alias(name, alias);
+        }
+    }
+}
+
+fn strip_filter_arithmetic_alias(expr: &mut FilterArithmetic, alias: &str) {
+    strip_filter_operand_alias(&mut expr.left, alias);
+    strip_filter_operand_alias(&mut expr.right, alias);
+}
+
+fn strip_filter_operand_alias(operand: &mut FilterOperand, alias: &str) {
+    match operand {
+        FilterOperand::Projection(proj) => strip_filter_expr_alias(proj, alias),
+        FilterOperand::Arithmetic(inner) => strip_filter_arithmetic_alias(inner, alias),
+        FilterOperand::Literal(_) => {}
+    }
+}
+
+fn validate_between_order_by(columns: &SelectList, order_by: &[OrderBy]) -> Result<(), Error> {
+    if order_by.is_empty() {
+        return Ok(());
+    }
+    let (selected_columns, between_columns): (Vec<&str>, Vec<&str>) = match columns {
+        SelectList::Projection(items) => (
+            items
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    Proj::Column(name) => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect(),
+            items
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    Proj::Between(expr) => match expr.args.first() {
+                        Some(ConcatArg::Column(name)) => Some(name.as_str()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect(),
+        ),
+        SelectList::Columns(names) => (
+            names.iter().map(|column| column.name.as_str()).collect(),
+            Vec::new(),
+        ),
+        _ => (Vec::new(), Vec::new()),
+    };
+
+    for column in between_columns {
+        let is_selected = selected_columns
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(column));
+        let orders_by_operand = order_by
+            .iter()
+            .any(|order| order.column.eq_ignore_ascii_case(column));
+        if !is_selected && !orders_by_operand {
+            return Err(Error::new(format!("Invalid column: {column}")));
+        }
+    }
+    Ok(())
 }
 
 pub fn parse_query(sql: &str) -> Result<Query, Error> {
@@ -1469,22 +2763,40 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
     let mut group_by = None;
     if parser.eat_keyword("group") {
         parser.expect_keyword("by")?;
-        let mut column = parser.ident()?;
-        parser.skip();
-        if parser.eat(b'.') {
-            column.push('.');
-            column.push_str(&parser.ident()?);
+        let mut keys = Vec::new();
+        loop {
             parser.skip();
+            let start = parser.pos;
+            let end = group_by_expr_end(parser.src, start);
+            let raw = std::str::from_utf8(&parser.src[start..end])
+                .map_err(|_| Error::new("invalid UTF-8 in GROUP BY expression"))?;
+            let expression = raw.trim();
+            if expression.is_empty() {
+                return Err(Error::new("expected GROUP BY expression"));
+            }
+            let leading = raw.len() - raw.trim_start().len();
+            if let Some(offset) = aggregate_call_offset(expression.as_bytes()) {
+                return Err(Error::at(
+                    "aggregate functions are not allowed in GROUP BY",
+                    start + leading + offset,
+                ));
+            }
+            keys.push(GroupByExpr {
+                source: expression.to_string(),
+                position: start + leading,
+            });
+            parser.pos = end;
+            if !parser.eat(b',') {
+                break;
+            }
         }
-        if parser.peek() == Some(b',') {
-            return Err(Error::new("unsupported: multiple GROUP BY columns"));
-        }
-        group_by = Some(column);
+        group_by = Some(keys);
     }
     if parser.eat_keyword("order") {
         parser.expect_keyword("by")?;
         loop {
             parser.skip();
+            let position = parser.pos;
             let column = if parser.starts_concat_call() {
                 parser.parse_concat()?.label
             } else if parser.starts_length_call() {
@@ -1736,7 +3048,11 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
             } else {
                 false
             };
-            order_by.push(OrderBy { column, descending });
+            order_by.push(OrderBy {
+                column,
+                descending,
+                position,
+            });
             parser.skip();
             if !parser.eat(b',') {
                 break;
@@ -1770,6 +3086,20 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
     } else if let Some(alias) = table_alias {
         join[0].left_alias = alias;
     }
+    if let Some(group_expr) = group_by.as_ref().and_then(|items| {
+        items.iter().find_map(|item| {
+            let source = item.source.to_ascii_lowercase();
+            group_by_between_keyword(&item.source)
+                .map(|offset| (item, offset))
+                .or_else(|| source.starts_with("between(").then_some((item, 0)))
+        })
+    }) {
+        return Err(Error::at(
+            "literal expected",
+            group_expr.0.position + group_expr.1,
+        ));
+    }
+    validate_between_order_by(&columns, &order_by)?;
     Ok(Query {
         columns,
         table,
@@ -1781,6 +3111,888 @@ pub fn parse_query(sql: &str) -> Result<Query, Error> {
         generate_series,
         join,
     })
+}
+
+fn parse_filter_projection(source: &str) -> Result<Proj, Error> {
+    let sql = format!("SELECT {source} FROM __filter_expression");
+    let query = parse_query(&sql)?;
+    match query.columns {
+        SelectList::Columns(mut columns) if columns.len() == 1 => {
+            Ok(Proj::Column(columns.remove(0).name))
+        }
+        SelectList::Projection(mut projections) if projections.items.len() == 1 => {
+            Ok(projections.items.remove(0))
+        }
+        _ => Err(Error::new("unsupported expression in WHERE comparison")),
+    }
+}
+
+fn parse_boolean_projection(source: &str, position: usize) -> Result<NotExpr, Error> {
+    let mut parser = Parser {
+        src: source.as_bytes(),
+        pos: 0,
+    };
+    let filter = parser.parse_filter()?;
+    parser.skip();
+    if parser.pos != parser.src.len() {
+        return Err(Error::new("unsupported boolean projection expression"));
+    }
+    let label = filter_expression_label(&filter).replace("NULL", "null");
+    Ok(NotExpr {
+        label,
+        source_label: source.trim().into(),
+        position,
+        args: Vec::new(),
+        filter: Some(Box::new(filter)),
+    })
+}
+
+fn is_boolean_projection(source: &str) -> bool {
+    let mut expression = source.trim();
+    while let Some(inner) = unwrapped_filter_expr(expression) {
+        expression = inner.trim();
+    }
+    has_top_level_boolean_operator(expression.as_bytes())
+}
+
+fn top_level_cmp(src: &[u8], start: usize) -> Option<(usize, CmpOp)> {
+    let mut pos = start;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    while pos < src.len() {
+        match src[pos] {
+            b'\'' => {
+                if quoted && src.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            b'=' if !quoted && depth == 0 => return Some((pos, CmpOp::Eq)),
+            b'!' if !quoted && depth == 0 && src.get(pos + 1) == Some(&b'=') => {
+                return Some((pos, CmpOp::NotEq));
+            }
+            b'<' if !quoted && depth == 0 => {
+                return Some((
+                    pos,
+                    if src.get(pos + 1) == Some(&b'=') {
+                        CmpOp::LtEq
+                    } else if src.get(pos + 1) == Some(&b'>') {
+                        CmpOp::NotEq
+                    } else {
+                        CmpOp::Lt
+                    },
+                ));
+            }
+            b'>' if !quoted && depth == 0 => {
+                return Some((
+                    pos,
+                    if src.get(pos + 1) == Some(&b'=') {
+                        CmpOp::GtEq
+                    } else {
+                        CmpOp::Gt
+                    },
+                ));
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    None
+}
+
+fn top_level_boolean_operator_count(source: &[u8]) -> usize {
+    let mut pos = 0;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut count = 0;
+    let mut between_and_pending = false;
+    while pos < source.len() {
+        match source[pos] {
+            b'\'' => {
+                if quoted && source.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            byte if !quoted && depth == 0 && (byte.is_ascii_alphabetic() || byte == b'_') => {
+                let start = pos;
+                pos += 1;
+                while matches!(source.get(pos), Some(byte) if byte.is_ascii_alphanumeric() || *byte == b'_')
+                {
+                    pos += 1;
+                }
+                let word = &source[start..pos];
+                let before_is_ident = start > 0
+                    && (source[start - 1].is_ascii_alphanumeric() || source[start - 1] == b'_');
+                let after_is_ident = matches!(source.get(pos), Some(byte) if byte.is_ascii_alphanumeric() || *byte == b'_');
+                if !before_is_ident && !after_is_ident {
+                    if word.eq_ignore_ascii_case(b"between") {
+                        between_and_pending = true;
+                    } else if word.eq_ignore_ascii_case(b"and") && between_and_pending {
+                        between_and_pending = false;
+                    } else if word.eq_ignore_ascii_case(b"and") || word.eq_ignore_ascii_case(b"or")
+                    {
+                        count += 1;
+                    }
+                }
+                continue;
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    count
+}
+
+fn has_top_level_boolean_operator(source: &[u8]) -> bool {
+    top_level_boolean_operator_count(source) > 0
+}
+
+fn filter_expr_end(src: &[u8], start: usize) -> usize {
+    let mut pos = start;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    while pos < src.len() {
+        match src[pos] {
+            b'\'' => {
+                if quoted && src.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => {
+                if depth == 0 {
+                    return pos;
+                }
+                depth -= 1;
+            }
+            b';' if !quoted && depth == 0 => return pos,
+            _ if !quoted && depth == 0 => {
+                for keyword in ["and", "or", "group", "order", "limit"] {
+                    let end = pos + keyword.len();
+                    if src
+                        .get(pos..end)
+                        .is_some_and(|word| word.eq_ignore_ascii_case(keyword.as_bytes()))
+                        && (pos == start || src[pos - 1].is_ascii_whitespace())
+                        && (end == src.len() || src[end].is_ascii_whitespace())
+                    {
+                        return pos;
+                    }
+                }
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    pos
+}
+
+pub(crate) fn parse_filter_operand(source: &str, position: usize) -> Result<FilterOperand, Error> {
+    let leading = source.len() - source.trim_start().len();
+    let source = source.trim();
+    let position = position + leading;
+    if let Some(inner) = unwrapped_filter_expr(source) {
+        return parse_filter_operand(inner, position + 1);
+    }
+    let mut literal_parser = Parser {
+        src: source.as_bytes(),
+        pos: 0,
+    };
+    let numeric_start = source
+        .strip_prefix('-')
+        .unwrap_or(source)
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_digit);
+    match literal_parser.parse_literal() {
+        Ok(value) => {
+            literal_parser.skip();
+            if literal_parser.pos == source.len() {
+                return Ok(FilterOperand::Literal(value));
+            }
+        }
+        Err(_) if numeric_start => {
+            let literal_start = usize::from(source.starts_with('-'));
+            return Err(Error::at(
+                format!("invalid constant: {}", &source[literal_start..]),
+                position + literal_start,
+            ));
+        }
+        Err(_) => {}
+    }
+    if let Some((pos, op)) = top_level_arithmetic(source.as_bytes()) {
+        let left = parse_filter_operand(&source[..pos], position)?;
+        let right = parse_filter_operand(&source[pos + 1..], position + pos + 1)?;
+        return Ok(FilterOperand::Arithmetic(Box::new(FilterArithmetic {
+            left,
+            op,
+            right,
+            position: position + pos,
+        })));
+    }
+    Ok(FilterOperand::Projection(Box::new(
+        parse_filter_projection(source)?,
+    )))
+}
+
+fn apply_projection_alias(item: &mut Proj, alias: &str) {
+    match item {
+        Proj::Concat(expr) => expr.label = alias.to_string(),
+        Proj::Length(expr) => expr.label = alias.to_string(),
+        Proj::Lower(expr) => expr.label = alias.to_string(),
+        Proj::Upper(expr) => expr.label = alias.to_string(),
+        Proj::SizePretty(expr) => expr.label = alias.to_string(),
+        Proj::Typeof(expr) => {
+            if expr.source_label.is_empty() {
+                expr.source_label = expr.label.clone().into();
+            }
+            expr.label = alias.to_string();
+        }
+        Proj::Not(expr) => {
+            expr.label = alias.to_string();
+        }
+        Proj::And(expr) => {
+            if expr.source_label.is_empty() {
+                expr.source_label = expr.label.clone();
+            }
+            expr.label = alias.to_string();
+        }
+        Proj::Between(expr) => {
+            if expr.source_label.is_empty() {
+                expr.source_label = expr.label.clone();
+            }
+            expr.label = alias.to_string();
+        }
+        Proj::Eq(expr) => {
+            if expr.source_label.is_empty() {
+                expr.source_label = expr.label.clone();
+            }
+            expr.label = alias.to_string();
+        }
+        Proj::InList(expr) => {
+            if expr.source_label.is_empty() {
+                expr.source_label = expr.label.clone();
+            }
+            expr.label = alias.to_string();
+        }
+        Proj::CurrentSchema(expr) => expr.label = alias.to_string(),
+        Proj::CurrentDatabase(expr) => expr.label = alias.to_string(),
+        Proj::CurrentUser(expr) => expr.label = alias.to_string(),
+        Proj::SessionUser(expr) => expr.label = alias.to_string(),
+        Proj::CurrentCatalog(expr) => expr.label = alias.to_string(),
+        Proj::Version(expr) => expr.label = alias.to_string(),
+        Proj::PgIsInRecovery(expr) => expr.label = alias.to_string(),
+        Proj::FormatType(expr) => expr.label = alias.to_string(),
+        Proj::CurrentSetting(expr) => expr.label = alias.to_string(),
+        Proj::PgGetPartKeyDef(expr) => expr.label = alias.to_string(),
+        Proj::PgGetExpr(expr) => expr.label = alias.to_string(),
+        Proj::PgGetUserById(expr) => expr.label = alias.to_string(),
+        Proj::PgTableIsVisible(expr) => expr.label = alias.to_string(),
+        Proj::PgAge(expr) => expr.label = alias.to_string(),
+        Proj::Netmask(expr) => expr.label = alias.to_string(),
+        Proj::GeoDistance(expr) => expr.label = alias.to_string(),
+        Proj::GeoWithin(expr) => expr.label = alias.to_string(),
+        Proj::WithinRadius(expr) => expr.label = alias.to_string(),
+        Proj::WithinBox(expr) => expr.label = alias.to_string(),
+        Proj::MakeGeohash(expr) => expr.label = alias.to_string(),
+        Proj::Side(expr) => expr.label = alias.to_string(),
+        Proj::Substr(expr) => expr.label = alias.to_string(),
+        Proj::Trim(expr) => expr.label = alias.to_string(),
+        Proj::Replace(expr) => expr.label = alias.to_string(),
+        Proj::RegexpReplace(expr) => expr.label = alias.to_string(),
+        Proj::Pad(expr) => expr.label = alias.to_string(),
+        Proj::StartsWith(expr) => expr.label = alias.to_string(),
+        Proj::SplitPart(expr) => expr.label = alias.to_string(),
+        Proj::QuoteIdent(expr) => expr.label = alias.to_string(),
+        Proj::Glob(expr) => expr.label = alias.to_string(),
+        Proj::Ilike(expr) => expr.label = alias.to_string(),
+        Proj::Like(expr) => expr.label = alias.to_string(),
+        Proj::Switch(expr) => expr.label = alias.to_string(),
+        Proj::Bar(expr) => expr.label = alias.to_string(),
+        Proj::StrPos(expr) => expr.label = alias.to_string(),
+        Proj::Mid(expr) => expr.label = alias.to_string(),
+        Proj::Spread(expr) => expr.label = alias.to_string(),
+        Proj::SpreadBps(expr) => expr.label = alias.to_string(),
+        Proj::Wmid(expr) => expr.label = alias.to_string(),
+        Proj::Round(expr) => expr.label = alias.to_string(),
+        Proj::Floor(expr) => expr.label = alias.to_string(),
+        Proj::Ceil(expr) => expr.label = alias.to_string(),
+        Proj::Sqrt(expr) => expr.label = alias.to_string(),
+        Proj::Power(expr) => expr.label = alias.to_string(),
+        Proj::Sign(expr) => expr.label = alias.to_string(),
+        Proj::Ln(expr) => expr.label = alias.to_string(),
+        Proj::Log(expr) => expr.label = alias.to_string(),
+        Proj::Exp(expr) => expr.label = alias.to_string(),
+        Proj::Sin(expr) => expr.label = alias.to_string(),
+        Proj::Cos(expr) => expr.label = alias.to_string(),
+        Proj::Tan(expr) => expr.label = alias.to_string(),
+        Proj::Asin(expr) => expr.label = alias.to_string(),
+        Proj::Acos(expr) => expr.label = alias.to_string(),
+        Proj::Atan(expr) => expr.label = alias.to_string(),
+        Proj::Atan2(expr) => expr.label = alias.to_string(),
+        Proj::Degrees(expr) => expr.label = alias.to_string(),
+        Proj::Radians(expr) => expr.label = alias.to_string(),
+        Proj::Cot(expr) => expr.label = alias.to_string(),
+        Proj::Pi(expr) => expr.label = alias.to_string(),
+        Proj::Greatest(expr) => expr.label = alias.to_string(),
+        Proj::Least(expr) => expr.label = alias.to_string(),
+        Proj::RoundDown(expr) => expr.label = alias.to_string(),
+        Proj::RoundUp(expr) => expr.label = alias.to_string(),
+        Proj::RoundHalfEven(expr) => expr.label = alias.to_string(),
+        Proj::Coalesce(expr) => expr.label = alias.to_string(),
+        Proj::NullIf(expr) => expr.label = alias.to_string(),
+        Proj::Cast(expr) => expr.label = alias.to_string(),
+        Proj::Year(expr) => expr.label = alias.to_string(),
+        Proj::Month(expr) => expr.label = alias.to_string(),
+        Proj::Day(expr) => expr.label = alias.to_string(),
+        Proj::Hour(expr) => expr.label = alias.to_string(),
+        Proj::Minute(expr) => expr.label = alias.to_string(),
+        Proj::Second(expr) => expr.label = alias.to_string(),
+        Proj::Millis(expr) => expr.label = alias.to_string(),
+        Proj::Micros(expr) => expr.label = alias.to_string(),
+        Proj::Nanos(expr) => expr.label = alias.to_string(),
+        Proj::DateAdd(expr) => expr.label = alias.to_string(),
+        Proj::DateDiff(expr) => expr.label = alias.to_string(),
+        Proj::IsLeapYear(expr) => expr.label = alias.to_string(),
+        Proj::DaysInMonth(expr) => expr.label = alias.to_string(),
+        Proj::ToStr(expr) => expr.label = alias.to_string(),
+        Proj::IsEndOfMonth(expr) => expr.label = alias.to_string(),
+        Proj::DayOfWeek(expr) => {
+            if expr.source_label.is_empty() {
+                expr.source_label = expr.label.clone();
+            }
+            expr.label = alias.to_string();
+        }
+        Proj::WeekOfYear(expr) => {
+            if expr.source_label.is_empty() {
+                expr.source_label = expr.label.clone();
+            }
+            expr.label = alias.to_string();
+        }
+        Proj::DayOfWeekSundayFirst(expr) => expr.label = alias.to_string(),
+        Proj::Md5(expr) => expr.label = alias.to_string(),
+        Proj::Sha1(expr) => expr.label = alias.to_string(),
+        Proj::Sha256(expr) => expr.label = alias.to_string(),
+        Proj::ToUuid(expr) => expr.label = alias.to_string(),
+        Proj::JsonExtract(expr) => expr.label = alias.to_string(),
+        Proj::ToChar(expr) => expr.label = alias.to_string(),
+        Proj::ToTimestamp(expr) => expr.label = alias.to_string(),
+        Proj::ToDate(expr) => expr.label = alias.to_string(),
+        Proj::ToUtc(expr) => expr.label = alias.to_string(),
+        Proj::ToTimezone(expr) => expr.label = alias.to_string(),
+        Proj::ToPgDate(expr) => expr.label = alias.to_string(),
+        Proj::Extract(expr) => expr.label = alias.to_string(),
+        Proj::TimestampFloor(expr) => expr.label = alias.to_string(),
+        Proj::TimestampCeil(expr) => expr.label = alias.to_string(),
+        Proj::Abs(expr) => expr.label = alias.to_string(),
+        Proj::DateTrunc(expr) => expr.label = alias.to_string(),
+        Proj::Arithmetic(expr) => expr.label = alias.to_string(),
+        Proj::Column(_) => {}
+        _ => {}
+    }
+}
+
+fn select_item_end(source: &[u8], start: usize) -> usize {
+    let mut pos = start;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    while pos < source.len() {
+        match source[pos] {
+            b'\'' => {
+                if quoted && source.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            b',' if !quoted && depth == 0 => return pos,
+            _ if !quoted && depth == 0 && source[pos..].len() >= 4 => {
+                let from = &source[pos..pos + 4];
+                if from.eq_ignore_ascii_case(b"from")
+                    && (pos == start || source[pos - 1].is_ascii_whitespace())
+                    && source
+                        .get(pos + 4)
+                        .is_none_or(|byte| byte.is_ascii_whitespace())
+                {
+                    return pos;
+                }
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    source.len()
+}
+
+fn group_by_expr_end(source: &[u8], start: usize) -> usize {
+    let mut pos = start;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    while pos < source.len() {
+        match source[pos] {
+            b'\'' => {
+                if quoted && source.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            b',' if !quoted && depth == 0 => return pos,
+            b';' if !quoted && depth == 0 => return pos,
+            _ if !quoted && depth == 0 => {
+                for keyword in ["order", "limit"] {
+                    let end = pos + keyword.len();
+                    if source
+                        .get(pos..end)
+                        .is_some_and(|word| word.eq_ignore_ascii_case(keyword.as_bytes()))
+                        && pos > start
+                        && source[pos - 1].is_ascii_whitespace()
+                        && source
+                            .get(end)
+                            .is_none_or(|byte| byte.is_ascii_whitespace())
+                    {
+                        return pos;
+                    }
+                }
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    pos
+}
+
+fn group_by_between_keyword(source: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut pos = 0;
+    let mut depth = 0usize;
+    let mut quote = None;
+    while pos < bytes.len() {
+        let byte = bytes[pos];
+        if let Some(delimiter) = quote {
+            if byte == delimiter {
+                if bytes.get(pos + 1) == Some(&delimiter) {
+                    pos += 2;
+                    continue;
+                }
+                quote = None;
+            }
+            pos += 1;
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+            pos += 1;
+            continue;
+        }
+        if byte == b'(' {
+            depth += 1;
+            pos += 1;
+            continue;
+        }
+        if byte == b')' {
+            depth = depth.saturating_sub(1);
+            pos += 1;
+            continue;
+        }
+        let end = pos + b"between".len();
+        if depth == 0
+            && bytes
+                .get(pos..end)
+                .is_some_and(|word| word.eq_ignore_ascii_case(b"between"))
+        {
+            let before = pos.checked_sub(1).and_then(|index| bytes.get(index));
+            let after = bytes.get(end);
+            let is_identifier = |byte: Option<&u8>| {
+                byte.is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+            };
+            if !is_identifier(before) && !is_identifier(after) && after != Some(&b'(') {
+                return Some(pos);
+            }
+        }
+        pos += 1;
+    }
+    None
+}
+
+fn aggregate_call_offset(source: &[u8]) -> Option<usize> {
+    let mut parser = Parser {
+        src: source,
+        pos: 0,
+    };
+    let mut single_quoted = false;
+    let mut double_quoted = false;
+    while let Some(&byte) = source.get(parser.pos) {
+        if byte == b'\'' && !double_quoted {
+            if single_quoted && source.get(parser.pos + 1) == Some(&b'\'') {
+                parser.pos += 2;
+                continue;
+            }
+            single_quoted = !single_quoted;
+            parser.pos += 1;
+            continue;
+        }
+        if byte == b'"' && !single_quoted {
+            if double_quoted && source.get(parser.pos + 1) == Some(&b'"') {
+                parser.pos += 2;
+                continue;
+            }
+            double_quoted = !double_quoted;
+            parser.pos += 1;
+            continue;
+        }
+        if !single_quoted && !double_quoted && (byte.is_ascii_alphabetic() || byte == b'_') {
+            if parser.starts_aggregate_call() {
+                return Some(parser.pos);
+            }
+            parser.pos += 1;
+            while source
+                .get(parser.pos)
+                .is_some_and(|next| next.is_ascii_alphanumeric() || *next == b'_')
+            {
+                parser.pos += 1;
+            }
+        } else {
+            parser.pos += 1;
+        }
+    }
+    None
+}
+
+fn normalize_typeof_cast_labels(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut pos = 0usize;
+    let mut quoted = false;
+    while pos < bytes.len() {
+        if bytes[pos] == b'\'' {
+            output.push(bytes[pos]);
+            if quoted && bytes.get(pos + 1) == Some(&b'\'') {
+                output.push(b'\'');
+                pos += 2;
+                continue;
+            }
+            quoted = !quoted;
+            pos += 1;
+            continue;
+        }
+        if !quoted && bytes.get(pos..pos + 2) == Some(b"::") {
+            output.extend_from_slice(b"::");
+            pos += 2;
+            let start = pos;
+            while matches!(bytes.get(pos), Some(byte) if byte.is_ascii_alphanumeric() || *byte == b'_')
+            {
+                pos += 1;
+            }
+            let type_name = &bytes[start..pos];
+            if type_name.eq_ignore_ascii_case(b"float") {
+                output.extend_from_slice(b"DOUBLE");
+            } else {
+                output.extend_from_slice(type_name);
+            }
+            continue;
+        }
+        output.push(bytes[pos]);
+        pos += 1;
+    }
+    String::from_utf8(output).expect("cast label normalization preserves UTF-8")
+}
+
+fn normalize_select_arithmetic_label(source: &str) -> String {
+    let source = normalize_typeof_cast_labels(source);
+    let bytes = source.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len() + 8);
+    let mut pos = 0usize;
+    let mut quoted = false;
+    while pos < bytes.len() {
+        if bytes[pos] == b'\'' {
+            output.push(bytes[pos]);
+            if quoted && bytes.get(pos + 1) == Some(&b'\'') {
+                output.push(b'\'');
+                pos += 2;
+                continue;
+            }
+            quoted = !quoted;
+            pos += 1;
+            continue;
+        }
+        if !quoted && matches!(bytes[pos], b'-' | b'~') {
+            let previous = output
+                .iter()
+                .rev()
+                .copied()
+                .find(|byte| !byte.is_ascii_whitespace());
+            let unary =
+                previous.is_none_or(|byte| matches!(byte, b'(' | b'+' | b'-' | b'*' | b'/' | b'%'));
+            let mut end = pos + 1;
+            while matches!(bytes.get(end), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+                end += 1;
+            }
+            if unary
+                && matches!(bytes.get(end), Some(byte) if byte.is_ascii_alphabetic() || *byte == b'_')
+            {
+                let mut ident_end = end + 1;
+                while matches!(bytes.get(ident_end), Some(byte) if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.'))
+                {
+                    ident_end += 1;
+                }
+                output.push(bytes[pos]);
+                output.push(b'(');
+                output.extend_from_slice(&bytes[end..ident_end]);
+                output.push(b')');
+                pos = ident_end;
+                continue;
+            }
+        }
+        output.push(bytes[pos]);
+        pos += 1;
+    }
+    String::from_utf8(output).expect("SQL source is UTF-8")
+}
+
+fn split_select_alias(item: &str) -> (&str, Option<&str>) {
+    let bytes = item.as_bytes();
+    let mut pos = 0usize;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    while pos + 2 <= bytes.len() {
+        match bytes[pos] {
+            b'\'' => {
+                if quoted && bytes.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            b'a' | b'A'
+                if !quoted
+                    && depth == 0
+                    && bytes[pos + 1].eq_ignore_ascii_case(&b's')
+                    && (pos == 0 || bytes[pos - 1].is_ascii_whitespace())
+                    && bytes.get(pos + 2).is_some_and(u8::is_ascii_whitespace) =>
+            {
+                let expression = item[..pos].trim_end();
+                let alias = item[pos + 2..].trim();
+                if !expression.is_empty() && !alias.is_empty() {
+                    return (expression, Some(alias));
+                }
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    (item, None)
+}
+
+fn unwrapped_filter_expr(source: &str) -> Option<&str> {
+    let bytes = source.as_bytes();
+    if bytes.first() != Some(&b'(') || bytes.last() != Some(&b')') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\'' => {
+                if quoted && bytes.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 && pos + 1 != bytes.len() {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    (depth == 0 && !quoted).then(|| &source[1..source.len() - 1])
+}
+
+fn top_level_arithmetic(src: &[u8]) -> Option<(usize, ArithOp)> {
+    let mut pos = 0usize;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut best: Option<(usize, u8, ArithOp)> = None;
+    while pos < src.len() {
+        match src[pos] {
+            b'\'' => {
+                if quoted && src.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            op @ (b'+' | b'-' | b'*' | b'/' | b'%') if !quoted && depth == 0 => {
+                if matches!(op, b'+' | b'-')
+                    && pos > 0
+                    && matches!(src[pos - 1], b'e' | b'E')
+                    && pos > 1
+                    && src[pos - 2].is_ascii_digit()
+                {
+                    pos += 1;
+                    continue;
+                }
+                let previous = src[..pos]
+                    .iter()
+                    .rposition(|byte| !byte.is_ascii_whitespace())
+                    .map(|index| src[index]);
+                let next = src[pos + 1..]
+                    .iter()
+                    .position(|byte| !byte.is_ascii_whitespace())
+                    .map(|offset| src[pos + 1 + offset]);
+                let unary = previous
+                    .is_none_or(|byte| matches!(byte, b'(' | b'+' | b'-' | b'*' | b'/' | b'%'))
+                    || next.is_none();
+                if !unary {
+                    let (priority, arith) = match op {
+                        b'+' => (1, ArithOp::Add),
+                        b'-' => (1, ArithOp::Sub),
+                        b'*' => (2, ArithOp::Mul),
+                        b'/' => (2, ArithOp::Div),
+                        b'%' => (2, ArithOp::Mod),
+                        _ => unreachable!(),
+                    };
+                    if best.is_none_or(|(best_pos, best_priority, _)| {
+                        priority < best_priority || (priority == best_priority && pos > best_pos)
+                    }) {
+                        best = Some((pos, priority, arith));
+                    }
+                }
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    best.map(|(pos, _, op)| (pos, op))
+}
+
+fn needs_extended_filter_expr(source: &str) -> bool {
+    let mut pos = 0usize;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut arithmetic_count = 0usize;
+    let mut has_call = false;
+    let bytes = source.as_bytes();
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\'' => {
+                if quoted && bytes.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => {
+                if pos > 0
+                    && (bytes[pos - 1].is_ascii_alphanumeric()
+                        || matches!(bytes[pos - 1], b'_' | b'.'))
+                    && !is_in_operator_before(bytes, pos)
+                {
+                    has_call = true;
+                }
+                depth += 1;
+            }
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            op @ (b'+' | b'-' | b'*' | b'/' | b'%') if !quoted => {
+                if matches!(op, b'+' | b'-')
+                    && pos > 0
+                    && matches!(bytes[pos - 1], b'e' | b'E')
+                    && pos > 1
+                    && bytes[pos - 2].is_ascii_digit()
+                {
+                    pos += 1;
+                    continue;
+                }
+                let previous = bytes[..pos]
+                    .iter()
+                    .rposition(|byte| !byte.is_ascii_whitespace())
+                    .map(|index| bytes[index]);
+                if previous.is_some_and(|byte| {
+                    !matches!(byte, b'(' | b',' | b'+' | b'-' | b'*' | b'/' | b'%')
+                }) {
+                    let _ = op;
+                    arithmetic_count += 1;
+                }
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    has_call
+        || arithmetic_count > 0
+        || contains_scientific_literal(bytes)
+        || (unwrapped_filter_expr(source).is_some() && arithmetic_count > 0)
+}
+
+fn contains_scientific_literal(bytes: &[u8]) -> bool {
+    let mut pos = 0usize;
+    let mut quoted = false;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\'' => {
+                if quoted && bytes.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            byte if !quoted && byte.is_ascii_digit() => {
+                let mut end = pos + 1;
+                while matches!(bytes.get(end), Some(byte) if byte.is_ascii_digit()) {
+                    end += 1;
+                }
+                if bytes.get(end) == Some(&b'.') {
+                    end += 1;
+                    while matches!(bytes.get(end), Some(byte) if byte.is_ascii_digit()) {
+                        end += 1;
+                    }
+                }
+                if matches!(bytes.get(end), Some(b'e' | b'E')) {
+                    return true;
+                }
+                pos = end;
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    false
+}
+
+fn is_in_operator_before(src: &[u8], paren_pos: usize) -> bool {
+    let mut end = paren_pos;
+    while end > 0 && src[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0 && (src[start - 1].is_ascii_alphanumeric() || src[start - 1] == b'_') {
+        start -= 1;
+    }
+    src.get(start..end)
+        .is_some_and(|word| word.eq_ignore_ascii_case(b"in"))
 }
 
 fn long_sequence_count(args: &[ConcatArg]) -> Result<i64, Error> {
@@ -2047,6 +4259,7 @@ fn series_f64(arg: &ConcatArg, place: &str) -> Result<f64, Error> {
 
 enum SelectPiece {
     Column(String),
+    Arithmetic(ArithmeticExpr),
     Aggregate(AggregateExpr),
     Concat(ConcatExpr),
     Length(LengthExpr),
@@ -2364,6 +4577,16 @@ impl<'a> Parser<'a> {
         Ok(name)
     }
 
+    fn qualified_ident_spelling(&mut self) -> Result<String, Error> {
+        let mut name = self.ident_spelling()?;
+        self.skip();
+        if self.eat(b'.') {
+            name.push('.');
+            name.push_str(&self.ident_spelling()?);
+        }
+        Ok(name)
+    }
+
     fn ident(&mut self) -> Result<String, Error> {
         self.ident_raw()
             .ok_or_else(|| Error::new(format!("expected identifier near `{}`", self.rest())))
@@ -2374,15 +4597,48 @@ impl<'a> Parser<'a> {
         if self.eat(b'*') {
             return Ok(SelectList::Star);
         }
-        if !self.starts_value() && !self.starts_unary_minus() && !self.starts_tilde() {
+        let first_item_end = select_item_end(self.src, self.pos);
+        let first_item = std::str::from_utf8(&self.src[self.pos..first_item_end]).unwrap_or("");
+        if !self.starts_value()
+            && !self.starts_unary_minus()
+            && !self.starts_tilde()
+            && top_level_arithmetic(first_item.trim().as_bytes()).is_none()
+        {
             return Err(Error::new(
                 "unsupported: SELECT list must name columns or `*`",
             ));
         }
         let mut pieces = Vec::new();
+        let mut piece_positions = Vec::new();
+        let mut piece_aliases = Vec::new();
         loop {
             self.skip();
-            if self.starts_named_call("generate_series") {
+            let item_position = self.pos;
+            let item_end = select_item_end(self.src, self.pos);
+            let item = std::str::from_utf8(&self.src[self.pos..item_end])
+                .unwrap_or("")
+                .trim();
+            let (expression, alias) = split_select_alias(item);
+            if is_boolean_projection(expression) {
+                pieces.push(SelectPiece::Not(parse_boolean_projection(
+                    expression, self.pos,
+                )?));
+                self.pos = item_end;
+            } else if top_level_arithmetic(expression.as_bytes()).is_some() {
+                let operand = parse_filter_operand(expression, self.pos)?;
+                if !matches!(operand, FilterOperand::Arithmetic(_)) {
+                    return Err(Error::new("unsupported: expected arithmetic expression"));
+                }
+                pieces.push(SelectPiece::Arithmetic(ArithmeticExpr {
+                    label: alias
+                        .map(str::to_string)
+                        .unwrap_or_else(|| normalize_select_arithmetic_label(expression)),
+                    source: expression.to_string(),
+                    position: self.pos,
+                    operand,
+                }));
+                self.pos = item_end;
+            } else if self.starts_named_call("generate_series") {
                 let (label, _) = self.parse_generate_series_call()?;
                 return Err(Error::new(format!(
                     "cursor function cannot be used as a column [column={label}]"
@@ -2693,10 +4949,18 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::Add(self.parse_bitxor(name)?));
                 } else if self.starts_add() {
                     pieces.push(SelectPiece::Add(self.parse_add(name)?));
+                } else if self.peek() == Some(b'(') {
+                    return Err(Error::new(format!("unsupported: function `{name}`")));
                 } else {
                     pieces.push(SelectPiece::Column(name));
+                    if alias.is_some() {
+                        self.pos = item_end;
+                    }
                 }
             }
+            self.pos = item_end;
+            piece_positions.push(item_position);
+            piece_aliases.push(alias.map(str::to_string));
             self.skip();
             if !self.eat(b',') {
                 break;
@@ -2793,6 +5057,7 @@ impl<'a> Parser<'a> {
                     | SelectPiece::InList(_)
                     | SelectPiece::Eq(_)
                     | SelectPiece::Add(_)
+                    | SelectPiece::Arithmetic(_)
                     | SelectPiece::Neg(_)
                     | SelectPiece::BitNot(_)
                     | SelectPiece::And(_)
@@ -2827,7 +5092,15 @@ impl<'a> Parser<'a> {
                     | SelectPiece::Least(_)
             )
         });
-        if counts > 0 && projected {
+        if counts > 0
+            && projected
+            && pieces.iter().any(|piece| {
+                !matches!(
+                    piece,
+                    SelectPiece::Column(_) | SelectPiece::Arithmetic(_) | SelectPiece::Aggregate(_)
+                )
+            })
+        {
             return Err(Error::new(
                 "unsupported: aggregate mixed with other select expressions",
             ));
@@ -2927,6 +5200,7 @@ impl<'a> Parser<'a> {
                     SelectPiece::InList(expr) => items.push(Proj::InList(expr)),
                     SelectPiece::Eq(expr) => items.push(Proj::Eq(expr)),
                     SelectPiece::Add(expr) => items.push(Proj::Add(expr)),
+                    SelectPiece::Arithmetic(expr) => items.push(Proj::Arithmetic(expr)),
                     SelectPiece::Neg(expr) => items.push(Proj::Neg(expr)),
                     SelectPiece::BitNot(expr) => items.push(Proj::BitNot(expr)),
                     SelectPiece::And(expr) => items.push(Proj::And(expr)),
@@ -2964,19 +5238,31 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            return Ok(SelectList::Projection(items));
+            for (item, alias) in items.iter_mut().zip(&piece_aliases) {
+                if let Some(alias) = alias {
+                    apply_projection_alias(item, alias);
+                }
+            }
+            return Ok(SelectList::Projection(ProjectionList {
+                items,
+                positions: piece_positions,
+            }));
         }
         if counts == 0 {
             let mut columns = Vec::with_capacity(pieces.len());
-            for piece in pieces {
+            for (index, piece) in pieces.into_iter().enumerate() {
                 let SelectPiece::Column(name) = piece else {
                     return Err(Error::new("internal: column piece"));
                 };
-                columns.push(name.to_ascii_lowercase());
+                columns.push(ColumnExpr {
+                    name: name.to_ascii_lowercase(),
+                    label: piece_aliases[index].clone().unwrap_or_else(|| name.clone()),
+                    position: piece_positions[index],
+                });
             }
             return Ok(SelectList::Columns(columns));
         }
-        if counts != 1 || pieces.len() > 2 {
+        if counts == 0 {
             return Err(Error::new(
                 "unsupported: aggregate mixed with other select expressions",
             ));
@@ -2985,18 +5271,46 @@ impl<'a> Parser<'a> {
             let Some(SelectPiece::Aggregate(aggregate)) = pieces.pop() else {
                 return Err(Error::new("internal: aggregate piece"));
             };
-            return Ok(SelectList::Aggregate(aggregate));
+            let mut aggregate = aggregate;
+            if let Some(alias) = piece_aliases.first().and_then(Option::as_ref) {
+                aggregate.label.clone_from(alias);
+            }
+            return Ok(SelectList::Aggregate(Box::new(aggregate)));
         }
-        let mut key = None;
-        let mut key_at = 0;
-        let mut aggregate = None;
-        for (index, piece) in pieces.into_iter().enumerate() {
+        let mut keys = Vec::new();
+        let mut select_order = Vec::new();
+        let mut aggregates = Vec::new();
+        for (select_index, piece) in pieces.into_iter().enumerate() {
             match piece {
                 SelectPiece::Column(name) => {
-                    key_at = index;
-                    key = Some(name);
+                    let key_index = keys.len();
+                    let operand = FilterOperand::Projection(Box::new(Proj::Column(
+                        name.to_ascii_lowercase(),
+                    )));
+                    keys.push(GroupedSelectKey {
+                        label: piece_aliases[select_index].clone().unwrap_or(name),
+                        operand,
+                        position: piece_positions[select_index],
+                    });
+                    select_order.push(GroupedSelectItem::Key(key_index));
                 }
-                SelectPiece::Aggregate(expr) => aggregate = Some(expr),
+                SelectPiece::Arithmetic(expr) => {
+                    let key_index = keys.len();
+                    keys.push(GroupedSelectKey {
+                        label: expr.label,
+                        operand: expr.operand,
+                        position: expr.position,
+                    });
+                    select_order.push(GroupedSelectItem::Key(key_index));
+                }
+                SelectPiece::Aggregate(mut expr) => {
+                    if let Some(alias) = &piece_aliases[select_index] {
+                        expr.label.clone_from(alias);
+                    }
+                    let aggregate_index = aggregates.len();
+                    aggregates.push(expr);
+                    select_order.push(GroupedSelectItem::Aggregate(aggregate_index));
+                }
                 SelectPiece::Concat(_)
                 | SelectPiece::Length(_)
                 | SelectPiece::Lower(_)
@@ -3117,15 +5431,15 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        let (Some(key), Some(aggregate)) = (key, aggregate) else {
+        if aggregates.is_empty() {
             return Err(Error::new(
                 "unsupported: aggregate mixed with other select expressions",
             ));
-        };
+        }
         Ok(SelectList::Grouped(GroupedSelect {
-            key,
-            aggregate,
-            key_at,
+            keys,
+            aggregates,
+            select_order,
         }))
     }
 
@@ -3379,8 +5693,10 @@ impl<'a> Parser<'a> {
                     .to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(CurrentSettingExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3407,8 +5723,10 @@ impl<'a> Parser<'a> {
                     .to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(PgGetUserByIdExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
             qualified,
         })
@@ -3436,8 +5754,10 @@ impl<'a> Parser<'a> {
                     .to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(PgTableIsVisibleExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
             qualified,
         })
@@ -3463,8 +5783,10 @@ impl<'a> Parser<'a> {
                 "function `pg_catalog.age` requires arguments: pg_catalog.age(LONG)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(PgAgeExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
             qualified,
         })
@@ -3496,8 +5818,10 @@ impl<'a> Parser<'a> {
                 "function `{reported}` requires arguments: {reported}(INT)"
             )));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(PgGetPartKeyDefExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3597,8 +5921,10 @@ impl<'a> Parser<'a> {
                 "function `{reported}` requires arguments"
             )));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(PgGetExprExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3615,8 +5941,10 @@ impl<'a> Parser<'a> {
                 "function `netmask` requires arguments".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(NetmaskExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3633,8 +5961,10 @@ impl<'a> Parser<'a> {
                 "function `geo_distance_meters` requires arguments: geo_distance_meters(DOUBLE, DOUBLE, DOUBLE, DOUBLE)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(GeoDistanceExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3651,8 +5981,10 @@ impl<'a> Parser<'a> {
                 "function `geo_within_radius_latlon` requires arguments: geo_within_radius_latlon(DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(GeoWithinExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3669,8 +6001,10 @@ impl<'a> Parser<'a> {
                 "function `within_radius` requires arguments: within_radius(DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(WithinRadiusExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3687,8 +6021,10 @@ impl<'a> Parser<'a> {
                 "function `within_box` requires arguments: within_box(DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(WithinBoxExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3705,8 +6041,10 @@ impl<'a> Parser<'a> {
                 "function `make_geohash` requires arguments: make_geohash(DOUBLE, DOUBLE, INT constant)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(MakeGeohashExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3723,8 +6061,10 @@ impl<'a> Parser<'a> {
                 "function `to_uuid` requires arguments: to_uuid(LONG, LONG)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(ToUuidExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3741,8 +6081,10 @@ impl<'a> Parser<'a> {
                 "function `json_extract` requires arguments".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(JsonExtractExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3764,8 +6106,10 @@ impl<'a> Parser<'a> {
                     "unsupported: expected ')' after to_char".to_string(),
                 ));
             }
+            let label = format!("{name}({})", inner.label);
             return Ok(ToCharExpr {
-                label: format!("{name}({})", inner.label),
+                source_label: label.clone().into(),
+                label,
                 args: Vec::new(),
                 base64: Some(inner),
             });
@@ -3776,8 +6120,10 @@ impl<'a> Parser<'a> {
                 "function `to_char` requires arguments: to_char(BINARY)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(ToCharExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
             base64: None,
         })
@@ -3823,8 +6169,10 @@ impl<'a> Parser<'a> {
                 "function `format_type` requires arguments: format_type(INT, INT)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(FormatTypeExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -3927,6 +6275,7 @@ impl<'a> Parser<'a> {
         }
         let mut expr = self.parse_between_op(name)?;
         expr.label = format!("not({})", expr.label);
+        expr.source_label = expr.source_label.replacen(" between ", " not between ", 1);
         expr.negated = true;
         Ok(expr)
     }
@@ -3948,8 +6297,10 @@ impl<'a> Parser<'a> {
             ));
         }
         let (high_label, high) = self.parse_call_arg(true)?;
+        let source_label = format!("{name} between {low_label} and {high_label}");
         Ok(BetweenExpr {
             label: format!("{name} between ({low_label}, {high_label})"),
+            source_label,
             args: vec![ConcatArg::Column(name), low, high],
             negated: false,
         })
@@ -3958,8 +6309,15 @@ impl<'a> Parser<'a> {
     fn parse_between(&mut self) -> Result<BetweenExpr, Error> {
         let name = self.ident_spelling()?;
         let (labels, args) = self.parse_call_args(&name, true)?;
+        let label = if labels.len() == 3 {
+            format!("{} between ({}, {})", labels[0], labels[1], labels[2])
+        } else {
+            format!("{name}({})", labels.join(", "))
+        };
+        let source_label = format!("{name}({})", labels.join(", "));
         Ok(BetweenExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            label,
+            source_label,
             args,
             negated: false,
         })
@@ -3989,8 +6347,10 @@ impl<'a> Parser<'a> {
             }
             return Err(Error::new("unsupported: expected ')' after in".to_string()));
         }
+        let source_label = format!("{name} in ({})", labels.join(", "));
         Ok(InListExpr {
-            label: format!("{name} in ({})", labels.join(", ")),
+            label: source_label.clone(),
+            source_label,
             value: name,
             args,
         })
@@ -4008,12 +6368,19 @@ impl<'a> Parser<'a> {
                 op.spelling()
             )));
         }
-        let spelling = self.ident_spelling()?;
+        let mut spelling = self.ident_spelling()?;
         let right = match spelling.to_ascii_lowercase().as_str() {
             "null" => AndRight::Literal(Scalar::Null),
             "true" => AndRight::Literal(Scalar::Boolean(true)),
             "false" => AndRight::Literal(Scalar::Boolean(false)),
-            _ => AndRight::Column(spelling),
+            _ => {
+                self.skip();
+                if self.eat(b'.') {
+                    spelling.push('.');
+                    spelling.push_str(&self.ident_spelling()?);
+                }
+                AndRight::Column(spelling)
+            }
         };
         let right_label = match &right {
             AndRight::Literal(Scalar::Null) => "null".to_string(),
@@ -4024,6 +6391,7 @@ impl<'a> Parser<'a> {
         };
         Ok(AndExpr {
             label: format!("{left} {} {right_label}", op.spelling()),
+            source_label: format!("{left} {} {right_label}", op.spelling()),
             left,
             right,
             op,
@@ -4052,7 +6420,7 @@ impl<'a> Parser<'a> {
                 "unsupported: expected '~' before column".to_string(),
             ));
         }
-        let name = self.ident_spelling()?;
+        let name = self.qualified_ident()?;
         Ok(BitNotExpr {
             label: format!("~({name})"),
             value: name,
@@ -4081,7 +6449,7 @@ impl<'a> Parser<'a> {
                 "unsupported: expected '-' before column".to_string(),
             ));
         }
-        let name = self.ident_spelling()?;
+        let name = self.qualified_ident()?;
         Ok(NegExpr {
             label: format!("-({name})"),
             value: name,
@@ -4355,6 +6723,7 @@ impl<'a> Parser<'a> {
         }
         Ok(EqExpr {
             label: format!("{name} != NULL"),
+            source_label: String::new(),
             value: name,
             op: CmpOp::NotEq,
             literal: Scalar::Null,
@@ -4377,6 +6746,7 @@ impl<'a> Parser<'a> {
         }
         Ok(EqExpr {
             label: format!("{name} = NULL"),
+            source_label: String::new(),
             value: name,
             op: CmpOp::Eq,
             literal: Scalar::Null,
@@ -4431,6 +6801,7 @@ impl<'a> Parser<'a> {
         let column = self.ident_spelling()?;
         Ok(EqExpr {
             label: format!("{name} = {column}"),
+            source_label: String::new(),
             value: name,
             op: CmpOp::Eq,
             literal: Scalar::Null,
@@ -4485,6 +6856,7 @@ impl<'a> Parser<'a> {
         let column = self.ident_spelling()?;
         Ok(EqExpr {
             label: format!("{name} <> {column}"),
+            source_label: String::new(),
             value: name,
             op: CmpOp::NotEq,
             literal: Scalar::Null,
@@ -4539,6 +6911,7 @@ impl<'a> Parser<'a> {
         let column = self.ident_spelling()?;
         Ok(EqExpr {
             label: format!("{name} < {column}"),
+            source_label: String::new(),
             value: name,
             op: CmpOp::Lt,
             literal: Scalar::Null,
@@ -4593,6 +6966,7 @@ impl<'a> Parser<'a> {
         let column = self.ident_spelling()?;
         Ok(EqExpr {
             label: format!("{name} > {column}"),
+            source_label: String::new(),
             value: name,
             op: CmpOp::Gt,
             literal: Scalar::Null,
@@ -4647,6 +7021,7 @@ impl<'a> Parser<'a> {
         let column = self.ident_spelling()?;
         Ok(EqExpr {
             label: format!("{name} >= {column}"),
+            source_label: String::new(),
             value: name,
             op: CmpOp::GtEq,
             literal: Scalar::Null,
@@ -4701,6 +7076,7 @@ impl<'a> Parser<'a> {
         let column = self.ident_spelling()?;
         Ok(EqExpr {
             label: format!("{name} <= {column}"),
+            source_label: String::new(),
             value: name,
             op: CmpOp::LtEq,
             literal: Scalar::Null,
@@ -4755,6 +7131,7 @@ impl<'a> Parser<'a> {
         let column = self.ident_spelling()?;
         Ok(EqExpr {
             label: format!("{name} != {column}"),
+            source_label: String::new(),
             value: name,
             op: CmpOp::NotEq,
             literal: Scalar::Null,
@@ -4781,6 +7158,7 @@ impl<'a> Parser<'a> {
         let literal = self.parse_literal()?;
         Ok(EqExpr {
             label: format!("{name} {spelling} {}", eq_literal_label(&literal)),
+            source_label: String::new(),
             value: name,
             op,
             literal,
@@ -4915,22 +7293,79 @@ impl<'a> Parser<'a> {
         while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
             pos += 1;
         }
-        matches!(
-            self.src.get(pos),
-            Some(byte) if byte.is_ascii_alphabetic() || *byte == b'_'
-        )
+        if matches!(self.src.get(pos), Some(byte) if byte.is_ascii_alphabetic() || *byte == b'_') {
+            return true;
+        }
+        if self.src.get(pos) != Some(&b'(') {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut quoted = false;
+        let mut cursor = pos;
+        while cursor < self.src.len() {
+            match self.src[cursor] {
+                b'\'' => {
+                    if quoted && self.src.get(cursor + 1) == Some(&b'\'') {
+                        cursor += 2;
+                        continue;
+                    }
+                    quoted = !quoted;
+                }
+                b'(' if !quoted => depth += 1,
+                b')' if !quoted => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        let inner = std::str::from_utf8(&self.src[pos + 1..cursor])
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        return inner.bytes().any(|byte| b"=<>!~&|".contains(&byte))
+                            || [
+                                " and ",
+                                " or ",
+                                " is ",
+                                " in ",
+                                " like ",
+                                " ilike ",
+                                " between ",
+                            ]
+                            .iter()
+                            .any(|operator| inner.contains(operator));
+                    }
+                }
+                b',' if !quoted && depth == 1 => return false,
+                _ => {}
+            }
+            cursor += 1;
+        }
+        false
     }
 
     fn parse_not_prefix(&mut self) -> Result<NotExpr, Error> {
-        let _keyword = self.ident_spelling()?;
-        let value = self.ident_spelling()?;
+        self.skip();
+        let start = self.pos;
+        if !self.eat_keyword("not") {
+            return Err(Error::new("unsupported: expected NOT prefix"));
+        }
+        let inner = self.parse_filter_atom()?;
+        let mut filter = Filter::Not(Box::new(inner));
+        filter = self.parse_filter_and_tail(filter)?;
+        filter = self.parse_filter_or_tail(filter)?;
+        let source_label = std::str::from_utf8(&self.src[start..self.pos])
+            .map_err(|_| Error::new("unsupported expression after NOT"))?
+            .trim()
+            .to_string();
+        let label = filter_expression_label(&filter);
         Ok(NotExpr {
-            label: format!("not({value})"),
-            args: vec![ConcatArg::Column(value)],
+            source_label: source_label.into(),
+            label,
+            position: start,
+            args: Vec::new(),
+            filter: Some(Box::new(filter)),
         })
     }
 
     fn parse_not(&mut self) -> Result<NotExpr, Error> {
+        let position = self.pos;
         let _name = self.ident_spelling()?;
         let (labels, args) = self.parse_call_args("not", true)?;
         if args.is_empty() {
@@ -4939,9 +7374,13 @@ impl<'a> Parser<'a> {
             ));
         }
         let last = labels.last().map(String::as_str).unwrap_or("");
+        let label = format!("not({last})");
         Ok(NotExpr {
-            label: format!("not({last})"),
+            source_label: label.clone().into(),
+            label,
+            position,
             args,
+            filter: None,
         })
     }
 
@@ -4964,7 +7403,9 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: Vec::new(),
+                arithmetic: None,
                 geohash: Some(inner),
                 uuid: None,
                 json: None,
@@ -4984,9 +7425,11 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: Vec::new(),
+                arithmetic: None,
                 geohash: None,
-                uuid: Some(inner),
+                uuid: Some(Box::new(inner)),
                 json: None,
                 to_char: None,
             });
@@ -5004,10 +7447,12 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: Vec::new(),
+                arithmetic: None,
                 geohash: None,
                 uuid: None,
-                json: Some(inner),
+                json: Some(Box::new(inner)),
                 to_char: None,
             });
         }
@@ -5035,7 +7480,9 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: vec![ConcatArg::Literal(Scalar::Boolean(false))],
+                arithmetic: None,
                 geohash: None,
                 uuid: None,
                 json: None,
@@ -5066,7 +7513,9 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: vec![ConcatArg::Literal(Scalar::Text("database".to_string()))],
+                arithmetic: None,
                 geohash: None,
                 uuid: None,
                 json: None,
@@ -5097,7 +7546,9 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: vec![ConcatArg::Literal(Scalar::Text("schema".to_string()))],
+                arithmetic: None,
                 geohash: None,
                 uuid: None,
                 json: None,
@@ -5128,7 +7579,9 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: vec![ConcatArg::Literal(Scalar::Text("version".to_string()))],
+                arithmetic: None,
                 geohash: None,
                 uuid: None,
                 json: None,
@@ -5148,7 +7601,9 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: inner.args,
+                arithmetic: None,
                 geohash: None,
                 uuid: None,
                 json: None,
@@ -5168,7 +7623,9 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: inner.args,
+                arithmetic: None,
                 geohash: None,
                 uuid: None,
                 json: None,
@@ -5188,7 +7645,9 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: inner.args,
+                arithmetic: None,
                 geohash: None,
                 uuid: None,
                 json: None,
@@ -5208,7 +7667,9 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: inner.args,
+                arithmetic: None,
                 geohash: None,
                 uuid: None,
                 json: None,
@@ -5228,7 +7689,9 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: inner.args,
+                arithmetic: None,
                 geohash: None,
                 uuid: None,
                 json: None,
@@ -5248,12 +7711,17 @@ impl<'a> Parser<'a> {
             }
             return Ok(TypeofExpr {
                 label: format!("{name}({})", inner.label),
+                source_label: Box::default(),
                 args: Vec::new(),
+                arithmetic: None,
                 geohash: None,
                 uuid: None,
                 json: None,
-                to_char: Some(inner),
+                to_char: Some(Box::new(inner)),
             });
+        }
+        if let Some(expr) = self.parse_typeof_arithmetic_argument(&name)? {
+            return Ok(expr);
         }
         let (labels, args) = self.parse_call_args(&name, true)?;
         if args.is_empty() {
@@ -5261,12 +7729,70 @@ impl<'a> Parser<'a> {
         }
         Ok(TypeofExpr {
             label: format!("{name}({})", labels.join(", ")),
+            source_label: Box::default(),
             args,
+            arithmetic: None,
             geohash: None,
             uuid: None,
             json: None,
             to_char: None,
         })
+    }
+
+    fn parse_typeof_arithmetic_argument(
+        &mut self,
+        name: &str,
+    ) -> Result<Option<TypeofExpr>, Error> {
+        let saved = self.pos;
+        self.skip();
+        if !self.eat(b'(') {
+            self.pos = saved;
+            return Ok(None);
+        }
+        self.skip();
+        let start = self.pos;
+        let mut depth = 0usize;
+        let mut quoted = false;
+        let mut pos = start;
+        let end = loop {
+            let Some(&byte) = self.src.get(pos) else {
+                self.pos = saved;
+                return Ok(None);
+            };
+            match byte {
+                b'\'' => {
+                    if quoted && self.src.get(pos + 1) == Some(&b'\'') {
+                        pos += 2;
+                        continue;
+                    }
+                    quoted = !quoted;
+                }
+                b'(' if !quoted => depth += 1,
+                b')' if !quoted && depth == 0 => break pos,
+                b')' if !quoted => depth -= 1,
+                _ => {}
+            }
+            pos += 1;
+        };
+        let source = std::str::from_utf8(&self.src[start..end])
+            .map_err(|_| Error::new("invalid UTF-8 in typeof expression"))?
+            .trim();
+        if top_level_arithmetic(source.as_bytes()).is_none() {
+            self.pos = saved;
+            return Ok(None);
+        }
+        let _ = parse_filter_operand(source, 0)?;
+        self.pos = end + 1;
+        Ok(Some(TypeofExpr {
+            label: format!("{name}({})", normalize_select_arithmetic_label(source)),
+            source_label: String::new().into(),
+            args: Vec::new(),
+            arithmetic: Some(source.to_string().into_boxed_str()),
+            geohash: None,
+            uuid: None,
+            json: None,
+            to_char: None,
+        }))
     }
 
     fn argument_is_pg_age(&mut self) -> bool {
@@ -5703,6 +8229,7 @@ impl<'a> Parser<'a> {
         }
         Ok(ExtractExpr {
             label: format!("{name}({part_src}, {arg_label})"),
+            source_label: format!("{name}({part_src} FROM {arg_label})"),
             part,
             arg,
         })
@@ -5720,8 +8247,10 @@ impl<'a> Parser<'a> {
                 "function `sha256` requires arguments".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(Sha256Expr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5736,8 +8265,10 @@ impl<'a> Parser<'a> {
         if args.is_empty() {
             return Err(Error::new("function `sha1` requires arguments".to_string()));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(Sha1Expr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5752,8 +8283,10 @@ impl<'a> Parser<'a> {
         if args.is_empty() {
             return Err(Error::new("function `md5` requires arguments".to_string()));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(Md5Expr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5770,8 +8303,10 @@ impl<'a> Parser<'a> {
                 "function `to_date` requires arguments".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(ToDateExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5788,8 +8323,10 @@ impl<'a> Parser<'a> {
                 "function `to_timestamp` requires arguments".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(ToTimestampExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5806,8 +8343,10 @@ impl<'a> Parser<'a> {
                 "function `day_of_week_sunday_first` requires arguments: day_of_week_sunday_first(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(DayOfWeekSundayFirstExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5825,8 +8364,10 @@ impl<'a> Parser<'a> {
                     .to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(IsEndOfMonthExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5843,8 +8384,10 @@ impl<'a> Parser<'a> {
                 "function `to_str` requires arguments".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(ToStrExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5861,8 +8404,10 @@ impl<'a> Parser<'a> {
                 "function `days_in_month` requires arguments: days_in_month(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(DaysInMonthExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5879,8 +8424,10 @@ impl<'a> Parser<'a> {
                 "function `is_leap_year` requires arguments: is_leap_year(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(IsLeapYearExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5898,8 +8445,10 @@ impl<'a> Parser<'a> {
                     .to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(TimestampCeilExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5916,8 +8465,10 @@ impl<'a> Parser<'a> {
                 "function `timestamp_floor` requires arguments".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(TimestampFloorExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5953,8 +8504,10 @@ impl<'a> Parser<'a> {
                 "function `week_of_year` requires arguments: week_of_year(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(WeekOfYearExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -5971,8 +8524,10 @@ impl<'a> Parser<'a> {
                 "function `day_of_week` requires arguments: day_of_week(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(DayOfWeekExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6004,8 +8559,10 @@ impl<'a> Parser<'a> {
         if args.is_empty() {
             return Err(Error::new(format!("function `{fname}` requires arguments")));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(ToPgDateExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6019,8 +8576,10 @@ impl<'a> Parser<'a> {
                 "function `{fname}` requires arguments: {fname}(TIMESTAMP, STRING)"
             )));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(ToTimezoneExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6034,8 +8593,10 @@ impl<'a> Parser<'a> {
                 "function `{fname}` requires arguments: {fname}(TIMESTAMP, STRING)"
             )));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(ToUtcExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6062,6 +8623,7 @@ impl<'a> Parser<'a> {
         }
         Ok(NanosExpr {
             label: format!("{name}({})", labels.join(", ")),
+            source_label: format!("{name}({})", labels.join(", ")),
             args,
         })
     }
@@ -6074,8 +8636,10 @@ impl<'a> Parser<'a> {
                 "function `micros` requires arguments: micros(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(MicrosExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6092,8 +8656,10 @@ impl<'a> Parser<'a> {
                 "function `millis` requires arguments: millis(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(MillisExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6110,8 +8676,10 @@ impl<'a> Parser<'a> {
                 "function `second` requires arguments: second(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(SecondExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6128,8 +8696,10 @@ impl<'a> Parser<'a> {
                 "function `minute` requires arguments: minute(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(MinuteExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6146,8 +8716,10 @@ impl<'a> Parser<'a> {
                 "function `hour` requires arguments: hour(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(HourExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6164,8 +8736,10 @@ impl<'a> Parser<'a> {
                 "function `day` requires arguments: day(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(DayExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6182,8 +8756,10 @@ impl<'a> Parser<'a> {
                 "function `month` requires arguments: month(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(MonthExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6200,8 +8776,10 @@ impl<'a> Parser<'a> {
                 "function `year` requires arguments: year(TIMESTAMP)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(YearExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6219,8 +8797,10 @@ impl<'a> Parser<'a> {
                     .to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(DateDiffExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6237,8 +8817,10 @@ impl<'a> Parser<'a> {
                 "function `dateadd` requires arguments".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(DateAddExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6248,7 +8830,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cast(&mut self) -> Result<CastExpr, Error> {
-        let _name = self.ident_spelling()?;
+        let name = self.ident_spelling()?;
         self.skip();
         if !self.eat(b'(') {
             return Err(Error::new(
@@ -6279,6 +8861,7 @@ impl<'a> Parser<'a> {
         }
         Ok(CastExpr {
             label: format!("{column}::{type_name}"),
+            source_label: format!("{name}({column} AS {type_name})"),
             column,
             type_name,
             infix: false,
@@ -6306,6 +8889,7 @@ impl<'a> Parser<'a> {
         }
         Ok(CastExpr {
             label: format!("{name}::{type_name}"),
+            source_label: format!("{name}::{type_name}"),
             column: name,
             type_name,
             infix: true,
@@ -6324,8 +8908,10 @@ impl<'a> Parser<'a> {
                 "function `nullif` requires arguments".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(NullIfExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6342,8 +8928,10 @@ impl<'a> Parser<'a> {
                 "coalesce can be used with 2 or more arguments".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(CoalesceExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone(),
+            label,
             args,
         })
     }
@@ -6452,8 +9040,10 @@ impl<'a> Parser<'a> {
                 "function `size_pretty` requires arguments: size_pretty(LONG)".to_string(),
             ));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(SizePrettyExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -6636,6 +9226,7 @@ impl<'a> Parser<'a> {
         let (pattern_label, pattern) = self.parse_call_arg(true)?;
         Ok(LikeExpr {
             label: format!("{name} like {pattern_label}"),
+            source_label: format!("{name} like {pattern_label}"),
             args: vec![ConcatArg::Column(name), pattern],
             negated: false,
             regex: false,
@@ -6643,13 +9234,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_like(&mut self) -> Result<LikeExpr, Error> {
-        let _name = self.ident_spelling()?;
+        let name = self.ident_spelling()?;
         let (labels, args) = self.parse_call_args("like", true)?;
         if args.is_empty() {
             return Err(Error::new(
                 "too few arguments for 'like' [found=0,expected=2]",
             ));
         }
+        let source_label = format!("{}({})", name, labels.join(", "));
         let label = if labels.len() == 2 {
             format!("{} like {}", labels[0], labels[1])
         } else {
@@ -6657,6 +9249,7 @@ impl<'a> Parser<'a> {
         };
         Ok(LikeExpr {
             label,
+            source_label,
             args,
             negated: false,
             regex: false,
@@ -6684,6 +9277,7 @@ impl<'a> Parser<'a> {
         let (pattern_label, pattern) = self.parse_call_arg(true)?;
         Ok(LikeExpr {
             label: format!("{name} !~ {pattern_label}"),
+            source_label: format!("{name} !~ {pattern_label}"),
             args: vec![ConcatArg::Column(name), pattern],
             negated: true,
             regex: true,
@@ -6711,6 +9305,7 @@ impl<'a> Parser<'a> {
         let (pattern_label, pattern) = self.parse_call_arg(true)?;
         Ok(LikeExpr {
             label: format!("{name} ~ {pattern_label}"),
+            source_label: format!("{name} ~ {pattern_label}"),
             args: vec![ConcatArg::Column(name), pattern],
             negated: false,
             regex: true,
@@ -6749,6 +9344,7 @@ impl<'a> Parser<'a> {
         let (pattern_label, pattern) = self.parse_call_arg(true)?;
         Ok(IlikeExpr {
             label: format!("{name} ilike {pattern_label}"),
+            source_label: format!("{name} ilike {pattern_label}"),
             args: vec![ConcatArg::Column(name), pattern],
             negated: false,
         })
@@ -6762,8 +9358,19 @@ impl<'a> Parser<'a> {
                 "too few arguments for 'ilike' [found=0,expected=2]",
             ));
         }
+        let source_label = format!("{}({})", name, labels.join(", "));
+        let label = if labels.len() == 2 {
+            let value = match &args[0] {
+                ConcatArg::Column(column) => column.to_ascii_lowercase(),
+                _ => labels[0].clone(),
+            };
+            format!("{value} ilike {}", labels[1])
+        } else {
+            format!("ilike({})", labels.join(", "))
+        };
         Ok(IlikeExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            label,
+            source_label,
             args,
             negated: false,
         })
@@ -6823,8 +9430,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_regexp_replace(&mut self) -> Result<RegexpReplaceExpr, Error> {
+        let position = self.pos;
         let name = self.ident_spelling()?;
-        let (labels, args) = self.parse_call_args(&name, true)?;
+        let (labels, args, arg_positions) = self.parse_call_args_with_positions(&name, true)?;
         if args.is_empty() {
             return Err(Error::new(
                 "function `regexp_replace` requires arguments".to_string(),
@@ -6833,6 +9441,8 @@ impl<'a> Parser<'a> {
         Ok(RegexpReplaceExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
+            position,
+            arg_positions,
         })
     }
 
@@ -6906,8 +9516,10 @@ impl<'a> Parser<'a> {
                 name.to_ascii_lowercase()
             )));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(UpperExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -6921,8 +9533,10 @@ impl<'a> Parser<'a> {
                 name.to_ascii_lowercase()
             )));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(LowerExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
         })
     }
@@ -6942,8 +9556,10 @@ impl<'a> Parser<'a> {
             };
             return Err(Error::new(message));
         }
+        let label = format!("{name}({})", labels.join(", "));
         Ok(LengthExpr {
-            label: format!("{name}({})", labels.join(", ")),
+            source_label: label.clone().into(),
+            label,
             args,
             bytes,
         })
@@ -6954,6 +9570,15 @@ impl<'a> Parser<'a> {
         name: &str,
         numbers: bool,
     ) -> Result<(Vec<String>, Vec<ConcatArg>), Error> {
+        let (labels, args, _) = self.parse_call_args_with_positions(name, numbers)?;
+        Ok((labels, args))
+    }
+
+    fn parse_call_args_with_positions(
+        &mut self,
+        name: &str,
+        numbers: bool,
+    ) -> Result<ParsedCallArgsWithPositions, Error> {
         self.skip();
         if !self.eat(b'(') {
             return Err(Error::new(format!(
@@ -6963,11 +9588,14 @@ impl<'a> Parser<'a> {
         self.skip();
         if self.peek() == Some(b')') {
             self.pos += 1;
-            return Ok((Vec::new(), Vec::new()));
+            return Ok((Vec::new(), Vec::new(), Vec::new()));
         }
         let mut args = Vec::new();
         let mut labels = Vec::new();
+        let mut arg_positions = Vec::new();
         loop {
+            self.skip();
+            arg_positions.push(self.pos);
             let (label, arg) = self.parse_call_arg(numbers)?;
             labels.push(label);
             args.push(arg);
@@ -6982,7 +9610,7 @@ impl<'a> Parser<'a> {
                 "unsupported: expected ')' after {name}"
             )));
         }
-        Ok((labels, args))
+        Ok((labels, args, arg_positions))
     }
 
     fn parse_call_arg(&mut self, numbers: bool) -> Result<(String, ConcatArg), Error> {
@@ -7191,6 +9819,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_aggregate(&mut self) -> Result<AggregateExpr, Error> {
+        let position = self.pos;
         let name = self.ident_spelling()?;
         self.skip();
         if !self.eat(b'(') {
@@ -7203,7 +9832,7 @@ impl<'a> Parser<'a> {
         let column = if starred || self.peek() == Some(b')') {
             None
         } else {
-            Some(self.ident_spelling()?)
+            Some(self.qualified_ident_spelling()?)
         };
         let func = match name.to_ascii_lowercase().as_str() {
             "count" => AggFunc::Count,
@@ -7266,7 +9895,7 @@ impl<'a> Parser<'a> {
             _ => return Err(Error::new(format!("internal: aggregate `{name}`"))),
         };
         if func == AggFunc::Haversine {
-            return self.finish_haversine(name, column);
+            return self.finish_haversine(name, column, position);
         }
         if func != AggFunc::Count && starred {
             return Err(Error::new("too few arguments for '*' [found=0,expected=2]"));
@@ -7592,7 +10221,7 @@ impl<'a> Parser<'a> {
                 };
                 return Err(Error::new(message));
             }
-            pair = Some(self.ident_spelling()?);
+            pair = Some(self.qualified_ident_spelling()?);
             self.skip();
             if self.peek() == Some(b',') {
                 let mut provided = 2;
@@ -7621,7 +10250,7 @@ impl<'a> Parser<'a> {
                 .peek()
                 .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
             {
-                pair = Some(self.ident_spelling()?);
+                pair = Some(self.qualified_ident_spelling()?);
             } else {
                 return Err(Error::new(format!(
                     "unsupported: {} expects a column",
@@ -7900,6 +10529,7 @@ impl<'a> Parser<'a> {
         };
         Ok(AggregateExpr {
             func,
+            position,
             label,
             column,
             precision,
@@ -7919,6 +10549,7 @@ impl<'a> Parser<'a> {
         &mut self,
         name: String,
         lat: Option<String>,
+        position: usize,
     ) -> Result<AggregateExpr, Error> {
         let fname = "haversine_dist_deg";
         self.skip();
@@ -7963,6 +10594,7 @@ impl<'a> Parser<'a> {
         }
         Ok(AggregateExpr {
             func: AggFunc::Haversine,
+            position,
             label: format!("{name}({}, {}, {})", names[0], names[1], names[2]),
             column: Some(names[0].clone()),
             precision: None,
@@ -8101,13 +10733,389 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_filter(&mut self) -> Result<Filter, Error> {
-        let column = self.qualified_ident()?;
+        self.parse_filter_or()
+    }
+
+    fn parse_filter_or(&mut self) -> Result<Filter, Error> {
+        let filter = self.parse_filter_and()?;
+        self.parse_filter_or_tail(filter)
+    }
+
+    fn parse_filter_or_tail(&mut self, mut filter: Filter) -> Result<Filter, Error> {
+        while self.eat_keyword("or") {
+            let right = self.parse_filter_and()?;
+            filter = Filter::Or(Box::new(filter), Box::new(right));
+        }
+        Ok(filter)
+    }
+
+    fn parse_filter_and(&mut self) -> Result<Filter, Error> {
+        let filter = self.parse_filter_atom()?;
+        self.parse_filter_and_tail(filter)
+    }
+
+    fn parse_filter_and_tail(&mut self, mut filter: Filter) -> Result<Filter, Error> {
+        while self.eat_keyword("and") {
+            let right = self.parse_filter_atom()?;
+            filter = Filter::And(Box::new(filter), Box::new(right));
+        }
+        Ok(filter)
+    }
+
+    fn filter_function_ahead(&self) -> bool {
+        let mut pos = self.pos;
+        while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        loop {
+            if !matches!(self.src.get(pos), Some(byte) if byte.is_ascii_alphabetic() || *byte == b'_')
+            {
+                return false;
+            }
+            pos += 1;
+            while matches!(self.src.get(pos), Some(byte) if byte.is_ascii_alphanumeric() || *byte == b'_')
+            {
+                pos += 1;
+            }
+            while pos < self.src.len() && self.src[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if self.src.get(pos) == Some(&b'.') {
+                pos += 1;
+                continue;
+            }
+            return self.src.get(pos) == Some(&b'(');
+        }
+    }
+
+    fn parse_filter_function_comparison(&mut self) -> Result<Filter, Error> {
+        let start = self.pos;
+        let (op_pos, _) = top_level_cmp(self.src, start)
+            .ok_or_else(|| Error::new("unsupported: expected comparison after function"))?;
+        let left_text = std::str::from_utf8(&self.src[start..op_pos])
+            .map_err(|_| Error::new("unsupported expression in WHERE comparison"))?
+            .trim();
+        let left = FilterOperand::Projection(Box::new(parse_filter_projection(left_text)?));
+        self.pos = op_pos;
         let op = self.parse_op()?;
+        self.skip();
+        let right_start = self.pos;
+        let right_end = filter_expr_end(self.src, right_start);
+        let right_text = std::str::from_utf8(&self.src[right_start..right_end])
+            .map_err(|_| Error::new("unsupported expression in WHERE comparison"))?
+            .trim();
+        let first = right_text.as_bytes().first().copied();
+        let is_literal = matches!(first, Some(b'\'' | b'-' | b'0'..=b'9'))
+            || ["null", "true", "false"]
+                .iter()
+                .any(|keyword| right_text.eq_ignore_ascii_case(keyword));
+        let right = if is_literal {
+            let mut literal_parser = Parser {
+                src: right_text.as_bytes(),
+                pos: 0,
+            };
+            FilterOperand::Literal(literal_parser.parse_literal()?)
+        } else {
+            FilterOperand::Projection(Box::new(parse_filter_projection(right_text)?))
+        };
+        self.pos = right_end;
+        Ok(Filter::CompareExpressions { left, op, right })
+    }
+
+    fn parse_filter_atom(&mut self) -> Result<Filter, Error> {
+        self.skip();
+        if self.eat_keyword("not") {
+            return Ok(Filter::Not(Box::new(self.parse_filter_atom()?)));
+        }
+        if let Some(filter) = self.parse_extended_filter_comparison()? {
+            return Ok(filter);
+        }
+        if self.eat(b'(') {
+            let filter = self.parse_filter_or()?;
+            if !self.eat(b')') {
+                return Err(Error::new(format!(
+                    "unsupported: expected ')' in WHERE clause near `{}`",
+                    self.rest()
+                )));
+            }
+            return Ok(filter);
+        }
+        if self.eat_keyword("true") {
+            return Ok(Filter::BooleanLiteral(Some(true)));
+        }
+        if self.eat_keyword("false") {
+            return Ok(Filter::BooleanLiteral(Some(false)));
+        }
+        if self.eat_keyword("null") {
+            return Ok(Filter::BooleanLiteral(None));
+        }
+        if matches!(self.peek(), Some(b'\'' | b'-' | b'0'..=b'9')) {
+            let position = self.pos;
+            let value = self.parse_literal()?;
+            return Ok(Filter::NonBooleanLiteral { value, position });
+        }
+        if self.filter_function_ahead() {
+            return self.parse_filter_function_comparison();
+        }
+        let column = self.qualified_ident()?;
+        let checkpoint = self.pos;
+        let negated = self.eat_keyword("not");
+        if self.eat_keyword("is") {
+            let negated = self.eat_keyword("not");
+            self.expect_keyword("null")?;
+            return Ok(Filter::Compare {
+                column,
+                op: if negated { CmpOp::NotEq } else { CmpOp::Eq },
+                literal: Scalar::Null,
+            });
+        }
+        if self.eat_keyword("between") {
+            let low = self.parse_literal()?;
+            self.expect_keyword("and")?;
+            let high = self.parse_literal()?;
+            return Ok(Filter::Between {
+                column,
+                low,
+                high,
+                negated,
+            });
+        }
+        if self.eat_keyword("in") {
+            if !self.eat(b'(') {
+                return Err(Error::new("unsupported: expected '(' after in"));
+            }
+            self.skip();
+            if self.eat(b')') {
+                return Err(Error::new("too few arguments for 'in'"));
+            }
+            let mut items = Vec::new();
+            loop {
+                items.push(self.parse_literal()?);
+                self.skip();
+                if self.eat(b',') {
+                    continue;
+                }
+                if self.eat(b')') {
+                    break;
+                }
+                return Err(Error::new("unsupported: expected ')' after in"));
+            }
+            return Ok(Filter::InList {
+                column,
+                items,
+                negated,
+            });
+        }
+        if self.eat_keyword("like") {
+            let (_, pattern) = self.parse_call_arg(true)?;
+            return Ok(Filter::Like {
+                column,
+                pattern,
+                case_insensitive: false,
+                negated,
+            });
+        }
+        if self.eat_keyword("ilike") {
+            let (_, pattern) = self.parse_call_arg(true)?;
+            return Ok(Filter::Like {
+                column,
+                pattern,
+                case_insensitive: true,
+                negated,
+            });
+        }
+        if self.starts_not_regex() {
+            let operator_start = self.pos;
+            let expr = self.parse_not_regex(column.clone())?;
+            let pattern = expr.args[1].clone();
+            let position =
+                filter_regex_pattern_position(self.src, operator_start, self.pos, &pattern);
+            return Ok(Filter::Regex {
+                column,
+                pattern,
+                negated: true,
+                position,
+            });
+        }
+        if self.starts_regex_infix() {
+            let operator_start = self.pos;
+            let expr = self.parse_regex_op(column.clone())?;
+            let pattern = expr.args[1].clone();
+            let position =
+                filter_regex_pattern_position(self.src, operator_start, self.pos, &pattern);
+            return Ok(Filter::Regex {
+                column,
+                pattern,
+                negated: false,
+                position,
+            });
+        }
+        if negated {
+            self.pos = checkpoint;
+        }
+        self.skip();
+        if self.peek().is_none()
+            || matches!(self.peek(), Some(b')' | b',' | b';'))
+            || self.keyword_at(self.pos, "and").is_some()
+            || self.keyword_at(self.pos, "or").is_some()
+            || self.keyword_at(self.pos, "as").is_some()
+            || self.keyword_at(self.pos, "from").is_some()
+            || self.keyword_at(self.pos, "group").is_some()
+            || self.keyword_at(self.pos, "order").is_some()
+            || self.keyword_at(self.pos, "limit").is_some()
+        {
+            return Ok(Filter::BooleanColumn { column });
+        }
+        if self.starts_add() {
+            let left =
+                FilterOperand::Projection(Box::new(Proj::Add(self.parse_filter_add(column)?)));
+            let op = self.parse_op()?;
+            self.skip();
+            if self.filter_function_ahead() {
+                let right_end = filter_expr_end(self.src, self.pos);
+                let right_text = std::str::from_utf8(&self.src[self.pos..right_end])
+                    .map_err(|_| Error::new("unsupported expression in WHERE comparison"))?
+                    .trim();
+                let right =
+                    FilterOperand::Projection(Box::new(parse_filter_projection(right_text)?));
+                self.pos = right_end;
+                return Ok(Filter::CompareExpressions { left, op, right });
+            }
+            let right_column = matches!(self.peek(), Some(byte) if byte.is_ascii_alphabetic() || byte == b'_')
+                && self.keyword_at(self.pos, "true").is_none()
+                && self.keyword_at(self.pos, "false").is_none()
+                && self.keyword_at(self.pos, "null").is_none();
+            let right = if right_column {
+                let name = self.qualified_ident()?;
+                if self.starts_add() {
+                    FilterOperand::Projection(Box::new(Proj::Add(self.parse_filter_add(name)?)))
+                } else {
+                    FilterOperand::Projection(Box::new(Proj::Column(name)))
+                }
+            } else {
+                FilterOperand::Literal(self.parse_literal()?)
+            };
+            return Ok(Filter::CompareExpressions { left, op, right });
+        }
+        let op = self.parse_op()?;
+        self.skip();
+        let right_start = self.pos;
+        if self.filter_function_ahead() {
+            let right_end = filter_expr_end(self.src, right_start);
+            let right_text = std::str::from_utf8(&self.src[right_start..right_end])
+                .map_err(|_| Error::new("unsupported expression in WHERE comparison"))?
+                .trim();
+            let left = FilterOperand::Projection(Box::new(Proj::Column(column)));
+            let right = FilterOperand::Projection(Box::new(parse_filter_projection(right_text)?));
+            self.pos = right_end;
+            return Ok(Filter::CompareExpressions { left, op, right });
+        }
+        let right_is_column = matches!(self.peek(), Some(byte) if byte.is_ascii_alphabetic() || byte == b'_')
+            && self.keyword_at(self.pos, "true").is_none()
+            && self.keyword_at(self.pos, "false").is_none()
+            && self.keyword_at(self.pos, "null").is_none();
+        if right_is_column {
+            let right = self.qualified_ident()?;
+            if self.starts_add() {
+                let left = FilterOperand::Projection(Box::new(Proj::Column(column)));
+                let right =
+                    FilterOperand::Projection(Box::new(Proj::Add(self.parse_filter_add(right)?)));
+                return Ok(Filter::CompareExpressions { left, op, right });
+            }
+            self.skip();
+            if self.peek().is_none()
+                || matches!(self.peek(), Some(b')' | b';'))
+                || self.keyword_at(self.pos, "and").is_some()
+                || self.keyword_at(self.pos, "or").is_some()
+                || self.keyword_at(self.pos, "order").is_some()
+                || self.keyword_at(self.pos, "limit").is_some()
+            {
+                return Ok(Filter::CompareColumns {
+                    left: column,
+                    op,
+                    right,
+                });
+            }
+            self.pos = right_start;
+        }
         let literal = self.parse_literal()?;
-        Ok(Filter {
+        Ok(Filter::Compare {
             column,
             op,
             literal,
+        })
+    }
+
+    fn parse_extended_filter_comparison(&mut self) -> Result<Option<Filter>, Error> {
+        let start = self.pos;
+        let Some((cmp_pos, op)) = top_level_cmp(self.src, start) else {
+            return Ok(None);
+        };
+        if has_top_level_boolean_operator(&self.src[start..cmp_pos]) {
+            return Ok(None);
+        }
+        let left_text = std::str::from_utf8(&self.src[start..cmp_pos])
+            .map_err(|_| Error::new("unsupported expression in WHERE comparison"))?
+            .trim();
+        let cmp_width = match op {
+            CmpOp::NotEq | CmpOp::LtEq | CmpOp::GtEq => 2,
+            _ => 1,
+        };
+        let right_start = cmp_pos + cmp_width;
+        let right_end = filter_expr_end(self.src, right_start);
+        let right_text = std::str::from_utf8(&self.src[right_start..right_end])
+            .map_err(|_| Error::new("unsupported expression in WHERE comparison"))?
+            .trim();
+        if !needs_extended_filter_expr(left_text) && !needs_extended_filter_expr(right_text) {
+            return Ok(None);
+        }
+        let left_leading = self.src[start..cmp_pos]
+            .iter()
+            .take_while(|byte| byte.is_ascii_whitespace())
+            .count();
+        let right_leading = self.src[right_start..right_end]
+            .iter()
+            .take_while(|byte| byte.is_ascii_whitespace())
+            .count();
+        let left = parse_filter_operand(left_text, start + left_leading)?;
+        let right = parse_filter_operand(right_text, right_start + right_leading)?;
+        self.pos = cmp_pos;
+        let op = self.parse_op()?;
+        self.pos = right_end;
+        Ok(Some(Filter::CompareExpressions { left, op, right }))
+    }
+
+    fn parse_filter_add(&mut self, name: String) -> Result<AddExpr, Error> {
+        self.skip();
+        let op = if self.eat(b'-') {
+            ArithOp::Sub
+        } else if self.eat(b'+') {
+            ArithOp::Add
+        } else if self.eat(b'*') {
+            ArithOp::Mul
+        } else if self.eat(b'/') {
+            ArithOp::Div
+        } else if self.eat(b'%') {
+            ArithOp::Mod
+        } else {
+            return Err(Error::new("unsupported arithmetic expression in WHERE"));
+        };
+        self.skip();
+        let (literal, other) = if self.starts_add_column() {
+            (Scalar::Null, Some(self.qualified_ident()?))
+        } else {
+            (self.parse_literal()?, None)
+        };
+        let label = match &other {
+            Some(column) => format!("{name} {} {column}", op.spelling()),
+            None => format!("{name} {} {}", op.spelling(), eq_literal_label(&literal)),
+        };
+        Ok(AddExpr {
+            label,
+            value: name,
+            literal,
+            other,
+            op,
         })
     }
 
@@ -8278,19 +11286,61 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
             }
         }
+        if matches!(self.peek(), Some(b'e' | b'E')) {
+            float = true;
+            self.pos += 1;
+            if matches!(self.peek(), Some(b'+' | b'-')) {
+                self.pos += 1;
+            }
+            if !matches!(self.peek(), Some(byte) if byte.is_ascii_digit()) {
+                return Err(Error::new("unsupported: invalid scientific number"));
+            }
+            while matches!(self.peek(), Some(byte) if byte.is_ascii_digit()) {
+                self.pos += 1;
+            }
+        }
         let text = std::str::from_utf8(&self.src[start..self.pos]).unwrap();
         if float {
             let value: f64 = text
                 .parse()
                 .map_err(|_| Error::new(format!("invalid number `{text}`")))?;
+            let mantissa = text.split(['e', 'E']).next().unwrap_or(text);
+            if !value.is_finite()
+                || (value == 0.0 && mantissa.bytes().any(|byte| matches!(byte, b'1'..=b'9')))
+            {
+                return Err(Error::new(format!("invalid number `{text}`")));
+            }
             Ok(Scalar::Double(value))
         } else {
-            let value: i64 = text
-                .parse()
-                .map_err(|_| Error::new(format!("invalid integer `{text}`")))?;
-            Ok(Scalar::Long(value))
+            match text.parse::<i64>() {
+                Ok(i64::MIN) | Err(_) => text
+                    .parse::<f64>()
+                    .map(Scalar::Double)
+                    .map_err(|_| Error::new(format!("invalid number `{text}`"))),
+                Ok(value) => Ok(Scalar::Long(value)),
+            }
         }
     }
+}
+
+fn filter_regex_pattern_position(
+    source: &[u8],
+    operator_start: usize,
+    end: usize,
+    pattern: &ConcatArg,
+) -> usize {
+    let ConcatArg::Literal(Scalar::Text(pattern)) = pattern else {
+        return operator_start;
+    };
+    if pattern.is_empty() {
+        return operator_start;
+    }
+    let end = end.min(source.len());
+    let start = operator_start.min(end);
+    source[start..end]
+        .windows(pattern.len())
+        .position(|window| window == pattern.as_bytes())
+        .map_or(operator_start, |offset| start + offset)
 }
 
 fn single_limit(n: i64) -> Limit {
@@ -8340,6 +11390,7 @@ mod tests {
             vec![OrderBy {
                 column: "ts".to_string(),
                 descending: false,
+                position: 51,
             }]
         );
         let descending = parse_query("SELECT id FROM sensors ORDER BY location DESC, id").unwrap();
@@ -8349,10 +11400,12 @@ mod tests {
                 OrderBy {
                     column: "location".to_string(),
                     descending: true,
+                    position: 32,
                 },
                 OrderBy {
                     column: "id".to_string(),
                     descending: false,
+                    position: 47,
                 },
             ]
         );

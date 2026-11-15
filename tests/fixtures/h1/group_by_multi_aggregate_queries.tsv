@@ -1,0 +1,16 @@
+basic	SELECT location, count(), sum(flags), avg(score) FROM sensors GROUP BY location ORDER BY location
+aggregate_only	SELECT sum(flags), avg(score), min(id), max(id), count() FROM sensors GROUP BY location ORDER BY location
+select_order	SELECT max(id), location AS city, count(), min(score), sum(flags) FROM sensors GROUP BY location ORDER BY city
+filter_limit	SELECT location, min(id), max(id), count() FROM sensors WHERE id > 0 GROUP BY location ORDER BY max(id) DESC LIMIT 2
+distinct	SELECT location, count_distinct(note), count() FROM sensors GROUP BY location ORDER BY count_distinct(note) DESC
+aliases	SELECT location, sum(flags) AS total, avg(score) AS mean FROM sensors GROUP BY location ORDER BY total DESC
+subset	SELECT count(), sum(flags), avg(score) FROM sensors GROUP BY location ORDER BY count() DESC
+stats	SELECT location, variance(score), stddev(score), first(note), last(note) FROM sensors GROUP BY location ORDER BY location
+nulls	SELECT location, count(score), sum(score), min(score), max(score) FROM sensors GROUP BY location ORDER BY location
+limit_zero	SELECT location, count(), sum(flags), avg(score) FROM sensors GROUP BY location LIMIT 0
+arith_key	SELECT id + 1, count(), sum(flags), avg(score) FROM sensors GROUP BY id + 1 ORDER BY id + 1
+multi_keys	SELECT location, ok, count(), sum(flags), avg(score) FROM sensors GROUP BY location, ok ORDER BY location, ok
+order_unselected_aggregate	SELECT location, count(), sum(flags) FROM sensors GROUP BY location ORDER BY avg(score)
+single_aggregate_alias	SELECT sum(flags) AS total FROM sensors GROUP BY location ORDER BY total DESC
+haversine_location	SELECT location, haversine_dist_deg(reading, score, ts) AS distance, count() AS n FROM sensors GROUP BY location ORDER BY location
+haversine_single_row_groups	SELECT haversine_dist_deg(reading, score, ts) AS distance FROM sensors GROUP BY id ORDER BY distance

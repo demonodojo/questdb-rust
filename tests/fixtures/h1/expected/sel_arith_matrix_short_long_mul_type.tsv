@@ -1,0 +1,2 @@
+typeof(id::short * flags::long)
+LONG

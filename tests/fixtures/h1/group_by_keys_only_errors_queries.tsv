@@ -1,0 +1,2 @@
+ungrouped_select	SELECT id FROM sensors GROUP BY location	column must appear in GROUP BY clause or aggregate function	7
+ungrouped_order	SELECT location FROM sensors GROUP BY location ORDER BY id	ORDER BY expressions must appear in select list. Invalid column: id	56

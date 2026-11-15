@@ -1,0 +1,5 @@
+split_part(s.note, 'a', 1)	split_part(s.note, 'a', 2)
+	lph
+NULL	NULL
+	
+βet	

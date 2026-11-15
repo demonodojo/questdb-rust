@@ -1,0 +1,4 @@
+count()	sum(flags)	avg(score)
+2	10	0.625
+1	NULL	NULL
+1	42	-1.5

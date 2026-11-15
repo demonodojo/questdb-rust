@@ -1,0 +1,4 @@
+{"query":"SELECT location, covar_pop(note, id), count() FROM sensors GROUP BY location","error":"inconvertible value: `alpha` [STRING -> DOUBLE]","position":0}
+{"query":"SELECT location, string_agg(note, id), count() FROM sensors GROUP BY location","error":"there is no matching function `string_agg` with the argument types: (STRING, LONG)","position":17}
+{"query":"SELECT location, approx_percentile(score, 2.0), count() FROM sensors GROUP BY location","error":"percentile must be between 0.0 and 1.0","position":17}
+{"query":"SELECT location, string_distinct_agg(tag), count() FROM sensors GROUP BY location","error":"there is no matching function `string_distinct_agg` with the argument types: (VARCHAR)","position":17}

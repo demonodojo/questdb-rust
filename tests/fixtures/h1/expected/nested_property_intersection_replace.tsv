@@ -1,0 +1,2 @@
+regexp_replace('aAβΩ', '[\P{InBasic_Latin}&&[β]]', 'X')
+aAXΩ

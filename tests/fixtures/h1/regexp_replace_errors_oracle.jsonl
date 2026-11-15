@@ -1,0 +1,6 @@
+{"query":"SELECT regexp_replace('alpha', '(a)', '$2') FROM sensors LIMIT 1","columns":[{"name":"regexp_replace('alpha', '(a)', '$2')","type":"STRING"}],"timestamp":-1,"dataset":[[]],"count":1,"error":"regexp_replace failed [position=7, ex=No group 2]","errorPos":0}
+{"query":"SELECT regexp_replace('alpha', '(?<x>a)', '${missing}') FROM sensors LIMIT 1","columns":[{"name":"regexp_replace('alpha', '(?<x>a)', '${missing}')","type":"STRING"}],"timestamp":-1,"dataset":[[]],"count":1,"error":"regexp_replace failed [position=7, ex=No group with name {missing}]","errorPos":0}
+{"query":"SELECT regexp_replace('alpha', 'a', '\\') FROM sensors LIMIT 1","columns":[{"name":"regexp_replace('alpha', 'a', '\\')","type":"STRING"}],"timestamp":-1,"dataset":[[]],"count":1,"error":"regexp_replace failed [position=7, ex=character to be escaped is missing]","errorPos":0}
+{"query":"SELECT regexp_replace(note, '[', 'x') FROM sensors","error":"Unclosed character class near index 0\n[\n^","position":29}
+{"query":"SELECT regexp_replace(note, location, 'x') FROM sensors","error":"not implemented: dynamic pattern would be very slow to execute","position":28}
+{"query":"SELECT regexp_replace(note, 'a', location) FROM sensors","error":"not implemented: dynamic replacement would be slow to execute","position":33}

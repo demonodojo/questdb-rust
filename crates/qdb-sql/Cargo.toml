@@ -9,3 +9,5 @@ description = "Small SELECT subset over a read-only QuestDB table"
 [dependencies]
 qdb-storage = { path = "../qdb-storage" }
 qdb-types = { path = "../qdb-types" }
+fancy-regex = "0.19.2"
+regex = "1.12"

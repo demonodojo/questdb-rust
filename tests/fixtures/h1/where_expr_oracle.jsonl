@@ -1,0 +1,9 @@
+{"query":"select id from sensors where id + 1 > 2 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2]],"count":1}
+{"query":"select id from sensors where id > flags + 1 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where id + 1 > flags order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where id * 2 = flags order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where id + 1 > 1 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where id / 1 < 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where id + 1 > 2 or ok = true order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null]],"count":3}
+{"query":"select s.id from sensors s where s.id + 1 > 1 order by s.ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where id + null = 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}

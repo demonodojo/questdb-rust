@@ -1,0 +1,12 @@
+{"query":"select id from sensors where id + flags * 2 = code order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where id + 1 * 2 > 2 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where (id + flags) * 2 > 20 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where abs(id) + 1 > 2 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2]],"count":1}
+{"query":"select id from sensors where reading * 2 > 2 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where id + 1 + flags > 12 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where id + null * 2 = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where id + 1.5 > 2 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}
+{"query":"select id from sensors where score + score > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where flags + 1.5 > 2 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where id % 2 = 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2]],"count":1}
+{"query":"select id from sensors where note + 1 > 0 limit 0","error":"inconvertible value: `alpha` [STRING -> INT]","position":0}

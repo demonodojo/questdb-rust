@@ -1,0 +1,5 @@
+value_type	bool_type	null_type	inverse	null_inverse
+DOUBLE	BOOLEAN	NULL	false	true
+DOUBLE	BOOLEAN	NULL	false	true
+DOUBLE	BOOLEAN	NULL	true	true
+DOUBLE	BOOLEAN	NULL	true	true

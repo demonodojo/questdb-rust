@@ -1,0 +1,4 @@
+location	count()	sum(flags)
+東京	1	42
+madrid	2	10
+NULL	1	NULL

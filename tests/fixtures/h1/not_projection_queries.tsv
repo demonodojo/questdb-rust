@@ -1,0 +1,7 @@
+alias_boolean	SELECT id, NOT ok AS n FROM sensors ORDER BY id
+alias_comparison	SELECT id, NOT (id = 1) AS n FROM sensors ORDER BY id
+like_order	SELECT id, NOT (note LIKE 'a%') AS n FROM sensors ORDER BY n, id
+ilike_order	SELECT id, NOT (note ILIKE 'A%') AS n FROM sensors ORDER BY n, id
+regex	SELECT id, NOT (note ~ '^a') AS n FROM sensors ORDER BY id
+precedence	SELECT id, NOT ok AND id > 1 AS n FROM sensors ORDER BY id
+null	SELECT NOT NULL AS n FROM sensors LIMIT 1

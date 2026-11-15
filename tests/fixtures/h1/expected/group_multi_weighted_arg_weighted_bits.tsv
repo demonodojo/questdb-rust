@@ -1,0 +1,4 @@
+location	arg_min(id, flags)	arg_max(id, flags)	weighted_avg(score, flags)	weighted_stddev(score, flags)	bit_and(flags)	bit_or(flags)	bit_xor(flags)	count()
+NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	1
+madrid	NULL	1	1.25	NULL	0	10	10	2
+東京	-1	-1	-1.5	NULL	42	42	42	1

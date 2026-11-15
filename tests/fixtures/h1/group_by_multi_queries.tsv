@@ -1,0 +1,16 @@
+id_location	SELECT id, location, count() FROM sensors GROUP BY id, location ORDER BY id, location
+location_ok	SELECT location, ok, count() FROM sensors GROUP BY location, ok ORDER BY location, ok
+selection_order	SELECT ok, location, count() FROM sensors GROUP BY location, ok ORDER BY location, ok
+where_filtered	SELECT location, ok, count() FROM sensors WHERE id > 0 GROUP BY location, ok ORDER BY location, ok
+sum_order_limit	SELECT id, location, sum(flags) FROM sensors GROUP BY id, location ORDER BY sum(flags) DESC LIMIT 3
+aggregate_only	SELECT count() FROM sensors GROUP BY id, location ORDER BY id, location
+duplicate_key	SELECT id, count() FROM sensors GROUP BY id, id ORDER BY id
+selected_subset	SELECT id, count() FROM sensors GROUP BY id, location ORDER BY id
+reverse_group_order	SELECT id, location, count() FROM sensors GROUP BY location, id ORDER BY location, id
+limit_zero	SELECT id, location, count() FROM sensors GROUP BY id, location LIMIT 0
+desc_both	SELECT id, location, count() FROM sensors GROUP BY id, location ORDER BY location DESC, id DESC
+desc_second	SELECT id, location, count() FROM sensors GROUP BY id, location ORDER BY id, location DESC
+table_alias	SELECT s.id, s.location, count() FROM sensors s GROUP BY s.id, s.location ORDER BY s.id, s.location
+three_keys	SELECT id, location, ok, count() FROM sensors GROUP BY id, location, ok ORDER BY id, location, ok
+two_expressions	SELECT id + 1, flags + 1, count() FROM sensors GROUP BY id + 1, flags + 1 ORDER BY id + 1, flags + 1
+column_aliases	SELECT id AS sensor_id, location AS city, count() FROM sensors GROUP BY id, location ORDER BY city, sensor_id

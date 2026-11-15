@@ -1,0 +1,12 @@
+all_matches	SELECT regexp_replace('banana', 'a', 'x') FROM sensors LIMIT 1
+capture_one	SELECT regexp_replace('alpha', '(ph)', '<$1>') FROM sensors LIMIT 1
+capture_zero	SELECT regexp_replace('alpha', '(ph)', '$0') FROM sensors LIMIT 1
+capture_reorder_unicode	SELECT regexp_replace('βeta 東京', '(β)(eta)', '$2-$1') FROM sensors LIMIT 1
+capture_named	SELECT regexp_replace('alpha', '(?<x>a)', '${x}') FROM sensors LIMIT 1
+replacement_escape	SELECT regexp_replace('alpha', '(a)', '\$1') FROM sensors LIMIT 1
+optional_capture	SELECT regexp_replace('b', '(a)?b', '[$1]') FROM sensors LIMIT 1
+invalid_group_without_match	SELECT regexp_replace('zzz', '(a)', '$2') FROM sensors LIMIT 1
+column_unicode	SELECT id, regexp_replace(note, '(β)', '<$1>') FROM sensors ORDER BY id
+group_by_capture	SELECT regexp_replace(note, '(a)', '<$1>') AS changed FROM sensors GROUP BY note ORDER BY changed
+greedy_group_number	SELECT regexp_replace('alpha', '(a)', '$11') FROM sensors LIMIT 1
+lookbehind_pattern	SELECT regexp_replace('foo 123 foo 456', '(?<=foo )\d+', 'N') FROM sensors LIMIT 1

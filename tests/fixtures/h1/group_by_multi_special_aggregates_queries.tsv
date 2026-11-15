@@ -1,0 +1,5 @@
+covariance	SELECT s.location, covar_pop(s.score, s.id), corr(s.score, s.id), regr_slope(s.score, s.id), count() FROM sensors s GROUP BY s.location ORDER BY s.location
+strings	SELECT location, string_agg(note, '|'), count(), first(note) FROM sensors GROUP BY location ORDER BY location
+percentile	SELECT location, approx_percentile(flags, 0.5), approx_median(flags), sum(flags) FROM sensors GROUP BY location ORDER BY location
+param_alias	SELECT s.location AS city, approx_percentile(s.flags, 0.75) AS p75, string_agg(s.note, ',') AS notes, count() AS n FROM sensors s GROUP BY s.location ORDER BY p75 DESC
+two_column_order	SELECT location, count(), covar_pop(score, id) AS cov FROM sensors GROUP BY location ORDER BY cov DESC LIMIT 2

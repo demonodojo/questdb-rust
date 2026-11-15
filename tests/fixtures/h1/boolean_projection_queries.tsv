@@ -1,0 +1,8 @@
+and_literal	SELECT id, ok AND false AS v FROM sensors ORDER BY v, id
+or_null	SELECT id, ok OR NULL AS v FROM sensors ORDER BY v, id
+and_comparison	SELECT id, ok AND id > 1 AS v FROM sensors ORDER BY id
+or_comparison	SELECT id, ok OR id = 1 AS v FROM sensors ORDER BY id
+paren_comparison	SELECT id, (ok AND id > 1) AS v FROM sensors ORDER BY id
+rhs_paren_comparison	SELECT id, ok AND (id > 1) AS v FROM sensors ORDER BY id
+alias_order	SELECT id, ok AND id > 1 AS v FROM sensors ORDER BY v, id
+qualified_alias_order	SELECT s.id, s.ok OR s.id = 1 AS matched FROM sensors AS s ORDER BY matched, s.id

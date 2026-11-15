@@ -1,0 +1,360 @@
+{"query":"SELECT id::byte + flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[11],[2],[0],[41]],"count":4}
+{"query":"SELECT typeof(id::byte + flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte + flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte - flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[-9],[2],[0],[-43]],"count":4}
+{"query":"SELECT typeof(id::byte - flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte - flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte * flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[10],[0],[0],[-42]],"count":4}
+{"query":"SELECT typeof(id::byte * flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte * flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte / flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::byte / flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte / flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte % flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::byte % flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte % flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte + flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[11],[2],[0],[41]],"count":4}
+{"query":"SELECT typeof(id::byte + flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte + flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte - flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[-9],[2],[0],[-43]],"count":4}
+{"query":"SELECT typeof(id::byte - flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte - flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte * flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[10],[0],[0],[-42]],"count":4}
+{"query":"SELECT typeof(id::byte * flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte * flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte / flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::byte / flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte / flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte % flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::byte % flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte % flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte + flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[11],[null],[0],[41]],"count":4}
+{"query":"SELECT typeof(id::byte + flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte + flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte - flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[-9],[null],[0],[-43]],"count":4}
+{"query":"SELECT typeof(id::byte - flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte - flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte * flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[10],[null],[0],[-42]],"count":4}
+{"query":"SELECT typeof(id::byte * flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte * flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte / flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::byte / flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte / flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte % flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::byte % flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte % flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::byte + flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[11],[null],[0],[41]],"count":4}
+{"query":"SELECT typeof(id::byte + flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte + flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::byte - flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[-9],[null],[0],[-43]],"count":4}
+{"query":"SELECT typeof(id::byte - flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte - flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::byte * flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[10],[null],[0],[-42]],"count":4}
+{"query":"SELECT typeof(id::byte * flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte * flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::byte / flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::byte / flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte / flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::byte % flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::byte % flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte % flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::byte + flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[0.0],[41.0]],"count":4}
+{"query":"SELECT typeof(id::byte + flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte + flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::byte - flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[0.0],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::byte - flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte - flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::byte * flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[0.0],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::byte * flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte * flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::byte / flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::byte / flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte / flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::byte % flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::byte % flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte % flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::byte + flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[0.0],[41.0]],"count":4}
+{"query":"SELECT typeof(id::byte + flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte + flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::byte - flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[0.0],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::byte - flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte - flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::byte * flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[0.0],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::byte * flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte * flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::byte / flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::byte / flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte / flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::byte % flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::byte % flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::byte % flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::short + flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[11],[2],[0],[41]],"count":4}
+{"query":"SELECT typeof(id::short + flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short + flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short - flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[-9],[2],[0],[-43]],"count":4}
+{"query":"SELECT typeof(id::short - flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short - flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short * flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[10],[0],[0],[-42]],"count":4}
+{"query":"SELECT typeof(id::short * flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short * flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short / flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::short / flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short / flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short % flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::short % flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short % flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short + flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[11],[2],[0],[41]],"count":4}
+{"query":"SELECT typeof(id::short + flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short + flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short - flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[-9],[2],[0],[-43]],"count":4}
+{"query":"SELECT typeof(id::short - flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short - flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short * flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[10],[0],[0],[-42]],"count":4}
+{"query":"SELECT typeof(id::short * flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short * flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short / flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::short / flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short / flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short % flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::short % flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short % flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short + flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[11],[null],[0],[41]],"count":4}
+{"query":"SELECT typeof(id::short + flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short + flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short - flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[-9],[null],[0],[-43]],"count":4}
+{"query":"SELECT typeof(id::short - flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short - flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short * flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[10],[null],[0],[-42]],"count":4}
+{"query":"SELECT typeof(id::short * flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short * flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short / flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::short / flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short / flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short % flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::short % flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short % flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::short + flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[11],[null],[0],[41]],"count":4}
+{"query":"SELECT typeof(id::short + flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short + flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::short - flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[-9],[null],[0],[-43]],"count":4}
+{"query":"SELECT typeof(id::short - flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short - flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::short * flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[10],[null],[0],[-42]],"count":4}
+{"query":"SELECT typeof(id::short * flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short * flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::short / flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::short / flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short / flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::short % flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::short % flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short % flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::short + flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[0.0],[41.0]],"count":4}
+{"query":"SELECT typeof(id::short + flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short + flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::short - flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[0.0],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::short - flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short - flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::short * flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[0.0],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::short * flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short * flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::short / flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::short / flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short / flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::short % flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::short % flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short % flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::short + flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[0.0],[41.0]],"count":4}
+{"query":"SELECT typeof(id::short + flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short + flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::short - flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[0.0],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::short - flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short - flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::short * flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[0.0],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::short * flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short * flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::short / flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::short / flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short / flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::short % flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::short % flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::short % flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::int + flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[11],[2],[null],[41]],"count":4}
+{"query":"SELECT typeof(id::int + flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int + flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int - flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[-9],[2],[null],[-43]],"count":4}
+{"query":"SELECT typeof(id::int - flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int - flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int * flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[10],[0],[null],[-42]],"count":4}
+{"query":"SELECT typeof(id::int * flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int * flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int / flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::int / flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int / flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int % flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::int % flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int % flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int + flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[11],[2],[null],[41]],"count":4}
+{"query":"SELECT typeof(id::int + flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int + flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int - flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[-9],[2],[null],[-43]],"count":4}
+{"query":"SELECT typeof(id::int - flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int - flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int * flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[10],[0],[null],[-42]],"count":4}
+{"query":"SELECT typeof(id::int * flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int * flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int / flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::int / flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int / flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int % flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::int % flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int % flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int + flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[11],[null],[null],[41]],"count":4}
+{"query":"SELECT typeof(id::int + flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int + flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int - flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[-9],[null],[null],[-43]],"count":4}
+{"query":"SELECT typeof(id::int - flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int - flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int * flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[10],[null],[null],[-42]],"count":4}
+{"query":"SELECT typeof(id::int * flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int * flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int / flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::int / flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int / flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int % flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"INT"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::int % flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int % flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["INT"]],"count":1}
+{"query":"SELECT id::int + flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[11],[null],[null],[41]],"count":4}
+{"query":"SELECT typeof(id::int + flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int + flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::int - flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[-9],[null],[null],[-43]],"count":4}
+{"query":"SELECT typeof(id::int - flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int - flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::int * flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[10],[null],[null],[-42]],"count":4}
+{"query":"SELECT typeof(id::int * flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int * flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::int / flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::int / flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int / flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::int % flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::int % flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int % flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::int + flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::int + flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int + flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::int - flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::int - flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int - flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::int * flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::int * flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int * flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::int / flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::int / flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int / flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::int % flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::int % flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int % flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::int + flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::int + flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int + flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::int - flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::int - flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int - flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::int * flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::int * flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int * flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::int / flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::int / flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int / flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::int % flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::int % flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::int % flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::long + flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[11],[2],[null],[41]],"count":4}
+{"query":"SELECT typeof(id::long + flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long + flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long - flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[-9],[2],[null],[-43]],"count":4}
+{"query":"SELECT typeof(id::long - flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long - flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long * flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[10],[0],[null],[-42]],"count":4}
+{"query":"SELECT typeof(id::long * flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long * flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long / flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::long / flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long / flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long % flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::long % flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long % flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long + flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[11],[2],[null],[41]],"count":4}
+{"query":"SELECT typeof(id::long + flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long + flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long - flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[-9],[2],[null],[-43]],"count":4}
+{"query":"SELECT typeof(id::long - flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long - flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long * flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[10],[0],[null],[-42]],"count":4}
+{"query":"SELECT typeof(id::long * flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long * flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long / flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::long / flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long / flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long % flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::long % flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long % flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long + flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[11],[null],[null],[41]],"count":4}
+{"query":"SELECT typeof(id::long + flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long + flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long - flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[-9],[null],[null],[-43]],"count":4}
+{"query":"SELECT typeof(id::long - flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long - flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long * flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[10],[null],[null],[-42]],"count":4}
+{"query":"SELECT typeof(id::long * flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long * flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long / flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::long / flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long / flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long % flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::long % flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long % flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long + flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[11],[null],[null],[41]],"count":4}
+{"query":"SELECT typeof(id::long + flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long + flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long - flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[-9],[null],[null],[-43]],"count":4}
+{"query":"SELECT typeof(id::long - flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long - flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long * flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[10],[null],[null],[-42]],"count":4}
+{"query":"SELECT typeof(id::long * flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long * flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long / flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[0],[null],[null],[0]],"count":4}
+{"query":"SELECT typeof(id::long / flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long / flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long % flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[null],[-1]],"count":4}
+{"query":"SELECT typeof(id::long % flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long % flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["LONG"]],"count":1}
+{"query":"SELECT id::long + flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::long + flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long + flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::long - flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::long - flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long - flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::long * flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::long * flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long * flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::long / flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::long / flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long / flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::long % flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::long % flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long % flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::long + flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::long + flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long + flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::long - flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::long - flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long - flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::long * flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::long * flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long * flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::long / flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::long / flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long / flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::long % flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::long % flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::long % flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float + flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[2.0],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::float + flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE + flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float - flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[2.0],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::float - flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE - flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float * flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[0.0],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::float * flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE * flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float / flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::float / flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE / flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float % flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::float % flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE % flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float + flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[2.0],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::float + flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE + flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float - flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[2.0],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::float - flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE - flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float * flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[0.0],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::float * flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE * flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float / flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::float / flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE / flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float % flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::float % flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE % flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float + flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::float + flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE + flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float - flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::float - flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE - flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float * flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::float * flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE * flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float / flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::float / flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE / flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float % flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::float % flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE % flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float + flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::float + flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE + flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float - flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::float - flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE - flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float * flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::float * flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE * flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float / flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::float / flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE / flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float % flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::float % flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE % flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float + flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::float + flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE + flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float - flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::float - flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE - flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float * flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::float * flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE * flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float / flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::float / flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE / flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float % flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::float % flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE % flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float + flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::float + flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE + flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float - flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::float - flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE - flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float * flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::float * flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE * flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float / flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::float / flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE / flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::float % flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::float % flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::DOUBLE % flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double + flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[2.0],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::double + flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double + flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double - flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[2.0],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::double - flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double - flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double * flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[0.0],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::double * flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double * flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double / flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::double / flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double / flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double % flags::byte AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::double % flags::byte) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double % flags::byte)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double + flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[2.0],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::double + flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double + flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double - flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[2.0],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::double - flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double - flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double * flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[0.0],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::double * flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double * flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double / flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::double / flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double / flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double % flags::short AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::double % flags::short) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double % flags::short)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double + flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::double + flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double + flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double - flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::double - flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double - flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double * flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::double * flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double * flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double / flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::double / flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double / flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double % flags::int AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::double % flags::int) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double % flags::int)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double + flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::double + flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double + flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double - flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::double - flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double - flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double * flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::double * flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double * flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double / flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::double / flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double / flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double % flags::long AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::double % flags::long) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double % flags::long)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double + flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::double + flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double + flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double - flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::double - flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double - flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double * flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::double * flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double * flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double / flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::double / flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double / flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double % flags::float AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::double % flags::float) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double % flags::DOUBLE)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double + flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[11.0],[null],[null],[41.0]],"count":4}
+{"query":"SELECT typeof(id::double + flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double + flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double - flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[-9.0],[null],[null],[-43.0]],"count":4}
+{"query":"SELECT typeof(id::double - flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double - flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double * flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[10.0],[null],[null],[-42.0]],"count":4}
+{"query":"SELECT typeof(id::double * flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double * flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double / flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[0.1],[null],[null],[-0.023809523809523808]],"count":4}
+{"query":"SELECT typeof(id::double / flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double / flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}
+{"query":"SELECT id::double % flags::double AS value FROM sensors ORDER BY ts","columns":[{"name":"value","type":"DOUBLE"}],"timestamp":-1,"dataset":[[1.0],[null],[null],[-1.0]],"count":4}
+{"query":"SELECT typeof(id::double % flags::double) FROM sensors LIMIT 1","columns":[{"name":"typeof(id::double % flags::double)","type":"STRING"}],"timestamp":-1,"dataset":[["DOUBLE"]],"count":1}

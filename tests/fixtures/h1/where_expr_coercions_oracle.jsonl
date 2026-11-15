@@ -1,0 +1,9 @@
+{"query":"select id from sensors where ch + 1 > 0 limit 0","error":"inconvertible value: A [CHAR -> INT]","position":0}
+{"query":"select id from sensors where ok + 1 > 0 limit 0","error":"there is no matching operator `+` with the argument types: BOOLEAN + INT","position":32}
+{"query":"select id from sensors where location + 1 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null],[-1]],"count":3}
+{"query":"select id from sensors where location + 0.5 > 0 limit 0","error":"there is no matching operator `+` with the argument types: SYMBOL + DOUBLE","position":38}
+{"query":"select id from sensors where id + 9223372036854775807 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"select id from sensors where flags + 2147483647 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[null]],"count":1}
+{"query":"select id from sensors where id / 0 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select s.id from sensors s where abs(s.id) + 1 > 2 order by s.ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2]],"count":1}
+{"query":"select id from sensors where note + 1 > 0 limit 0","error":"inconvertible value: `alpha` [STRING -> INT]","position":0}

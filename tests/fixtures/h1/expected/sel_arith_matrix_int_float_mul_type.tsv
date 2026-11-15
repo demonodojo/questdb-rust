@@ -1,0 +1,2 @@
+typeof(id::int * flags::DOUBLE)
+DOUBLE

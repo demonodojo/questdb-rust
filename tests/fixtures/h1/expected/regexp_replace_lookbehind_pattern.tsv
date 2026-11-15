@@ -1,0 +1,2 @@
+regexp_replace('foo 123 foo 456', '(?<=foo )\d+', 'N')
+foo N foo N

@@ -1,0 +1,2 @@
+typeof(day + score::DOUBLE)
+DOUBLE

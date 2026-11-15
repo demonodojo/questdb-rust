@@ -1,0 +1,4 @@
+id	inside	outside	null_bound	listed
+-1	false	true	false	false
+1	false	false	false	true
+2	true	false	false	false

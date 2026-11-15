@@ -1,0 +1,2 @@
+typeof(id::DOUBLE % flags::byte)
+DOUBLE

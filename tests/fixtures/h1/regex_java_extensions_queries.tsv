@@ -1,0 +1,14 @@
+positive_lookahead	SELECT id, note FROM sensors WHERE note ~ '^alpha(?=$)' ORDER BY id
+negative_lookahead	SELECT id, note FROM sensors WHERE note ~ '^(?!βeta)' ORDER BY id
+positive_lookbehind	SELECT id, note FROM sensors WHERE note ~ '(?<=al)pha' ORDER BY id
+negative_lookbehind	SELECT id, note FROM sensors WHERE note ~ '(?<!β)eta' ORDER BY id
+numeric_backreference	SELECT id, note FROM sensors WHERE note ~ '^(a)lph\1$' ORDER BY id
+named_backreference	SELECT id, note FROM sensors WHERE note ~ '^(?<part>a)lph\k<part>$' ORDER BY id
+unicode_letter_property	SELECT id, note FROM sensors WHERE note ~ '^\p{L}+$' ORDER BY id
+unicode_script_property	SELECT id, note FROM sensors WHERE note ~ '^\p{IsLatin}+$' ORDER BY id
+horizontal_whitespace	SELECT id, note FROM sensors WHERE note ~ '^\h*$' ORDER BY id
+non_horizontal_whitespace	SELECT id, note FROM sensors WHERE note ~ '^\H+$' ORDER BY id
+linebreak_escape	SELECT id, note FROM sensors WHERE note ~ '\R' ORDER BY id
+possessive_quantifier	SELECT id, note FROM sensors WHERE note ~ '^a++lpha$' ORDER BY id
+atomic_group	SELECT id, note FROM sensors WHERE note ~ '^(?>a)lpha$' ORDER BY id
+inline_case_flag	SELECT id, note FROM sensors WHERE note ~ '(?i)^βETA$' ORDER BY id

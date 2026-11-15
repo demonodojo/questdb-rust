@@ -1,0 +1,3 @@
+{"query":"SELECT NOT (ok AND flags) AS n FROM sensors","error":"expression type mismatch, expected: BOOLEAN, actual: INT","position":19}
+{"query":"SELECT NOT (ok AND id) AS n FROM sensors","error":"expression type mismatch, expected: BOOLEAN, actual: LONG","position":19}
+{"query":"SELECT NOT (s.missing = 1 OR s.ok) AS n FROM sensors AS s","error":"Invalid column: s.missing","position":12}

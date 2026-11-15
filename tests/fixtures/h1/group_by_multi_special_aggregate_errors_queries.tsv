@@ -1,0 +1,4 @@
+pair_type	SELECT location, covar_pop(note, id), count() FROM sensors GROUP BY location	inconvertible value: `alpha` [STRING -> DOUBLE]	0
+string_separator_type	SELECT location, string_agg(note, id), count() FROM sensors GROUP BY location	there is no matching function `string_agg` with the argument types: (STRING, LONG)	17
+percentile_range	SELECT location, approx_percentile(score, 2.0), count() FROM sensors GROUP BY location	percentile must be between 0.0 and 1.0	17
+string_distinct_type	SELECT location, string_distinct_agg(tag), count() FROM sensors GROUP BY location	there is no matching function `string_distinct_agg` with the argument types: (VARCHAR)	17

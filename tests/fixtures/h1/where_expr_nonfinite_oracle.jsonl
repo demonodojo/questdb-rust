@@ -1,0 +1,4 @@
+{"query":"select id from sensors where reading * 1e308 * 1e308 > 1e308 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where reading * 1e308 * 1e308 = reading * 1e308 * 1e308 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where (reading * 1e308 * 1e308) - (reading * 1e308 * 1e308) > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where (reading * 1e308 * 1e308) - (reading * 1e308 * 1e308) = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2]],"count":2}

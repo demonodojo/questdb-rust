@@ -1,0 +1,2 @@
+regexp_replace('alpha', '(?<x>a)', '${x}')
+alpha

@@ -1,0 +1,4 @@
+location	count(score)	sum(score)	min(score)	max(score)
+NULL	0	NULL	NULL	NULL
+madrid	2	1.25	0.0	1.25
+東京	1	-1.5	-1.5	-1.5

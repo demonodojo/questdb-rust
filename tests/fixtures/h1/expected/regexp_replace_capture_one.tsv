@@ -1,0 +1,2 @@
+regexp_replace('alpha', '(ph)', '<$1>')
+al<ph>a

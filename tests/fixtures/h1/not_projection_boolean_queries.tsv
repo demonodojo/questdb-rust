@@ -1,0 +1,10 @@
+or_parenthesized	SELECT id, NOT (id = 1 OR id = -1) AS n FROM sensors ORDER BY id
+and_parenthesized	SELECT id, NOT (ok AND id > 1) AS n FROM sensors ORDER BY id
+or_with_tail	SELECT id, NOT (id = 1 OR id = -1) OR ok = false AS n FROM sensors ORDER BY id
+and_precedence	SELECT id, NOT (id = 1) AND ok AS n FROM sensors ORDER BY id
+nested_parens	SELECT id, NOT ((id = 1 OR id = -1) AND ok = false) AS n FROM sensors ORDER BY id
+not_order	SELECT id, NOT (id = 1 OR id = -1) AS n FROM sensors ORDER BY n, id
+qualified_alias	SELECT s.id, NOT (s.ok OR s.id > 1) AS inverted FROM sensors AS s ORDER BY inverted, s.id
+nested_not	SELECT id, NOT NOT (ok AND id > 1) AS n FROM sensors ORDER BY id
+numeric_text_eq	SELECT id, NOT (id = 'x' OR ok) AS n FROM sensors ORDER BY id
+numeric_text_ne	SELECT id, NOT (id <> 'x' AND ok) AS n FROM sensors ORDER BY id

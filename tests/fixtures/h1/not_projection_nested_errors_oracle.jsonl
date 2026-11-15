@@ -1,0 +1,3 @@
+{"query":"SELECT id, NOT (id IN ('x')) AS n FROM sensors ORDER BY id","error":"cannot compare LONG with type CHAR","position":23}
+{"query":"SELECT id, NOT (id BETWEEN 'x' AND 1) AS n FROM sensors","error":"there is no matching operator `between` with the argument type: LONG","position":19}
+{"query":"SELECT id, NOT (s.missing IS NULL) AS n FROM sensors AS s","error":"Invalid column: s.missing","position":16}

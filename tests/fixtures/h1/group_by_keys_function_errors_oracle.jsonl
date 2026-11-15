@@ -1,0 +1,138 @@
+{"query":"SELECT length(note) FROM sensors GROUP BY location","error":"column must appear in GROUP BY clause or aggregate function","position":14}
+{"query":"SELECT upper(note) FROM sensors GROUP BY location","error":"column must appear in GROUP BY clause or aggregate function","position":13}
+{"query":"SELECT left(note, id) FROM sensors GROUP BY note","error":"column must appear in GROUP BY clause or aggregate function","position":18}
+{"query":"SELECT substring(note, id, 1) FROM sensors GROUP BY note","error":"column must appear in GROUP BY clause or aggregate function","position":23}
+{"query":"SELECT lpad(note, id) FROM sensors GROUP BY note","error":"column must appear in GROUP BY clause or aggregate function","position":18}
+{"query":"SELECT regexp_replace(note, location, 'x') FROM sensors GROUP BY note","error":"column must appear in GROUP BY clause or aggregate function","position":28}
+{"query":"SELECT regexp_replace(note, 'a', location) FROM sensors GROUP BY note, location","error":"not implemented: dynamic replacement would be slow to execute","position":0}
+{"query":"SELECT starts_with(note, location) FROM sensors GROUP BY note","error":"column must appear in GROUP BY clause or aggregate function","position":25}
+{"query":"SELECT split_part(note, location, 1) FROM sensors GROUP BY note","error":"column must appear in GROUP BY clause or aggregate function","position":24}
+{"query":"SELECT quote_ident(note) FROM sensors GROUP BY location","error":"column must appear in GROUP BY clause or aggregate function","position":19}
+{"query":"SELECT ilike(note, 'A%') FROM sensors GROUP BY location","error":"column must appear in GROUP BY clause or aggregate function","position":13}
+{"query":"SELECT like(note, location) FROM sensors GROUP BY note, location","error":"use constant or bind variable","position":0}
+{"query":"SELECT glob(note, location) FROM sensors GROUP BY note, location","error":"there is no matching function `glob` with the argument types: (STRING, SYMBOL)","position":7}
+{"query":"SELECT switch(id, flags, 'x', 'other') FROM sensors GROUP BY id, flags","error":"constant expected","position":0}
+{"query":"SELECT switch(id, 1, 'one', 'other') FROM sensors GROUP BY location","error":"column must appear in GROUP BY clause or aggregate function","position":14}
+{"query":"SELECT bar(reading, 0, 42, 4) FROM sensors GROUP BY id","error":"column must appear in GROUP BY clause or aggregate function","position":11}
+{"query":"SELECT strpos(note, location) FROM sensors GROUP BY note","error":"column must appear in GROUP BY clause or aggregate function","position":20}
+{"query":"SELECT mid(reading, score) FROM sensors GROUP BY reading","error":"column must appear in GROUP BY clause or aggregate function","position":20}
+{"query":"SELECT spread_bps(reading, score) FROM sensors GROUP BY reading","error":"column must appear in GROUP BY clause or aggregate function","position":27}
+{"query":"SELECT wmid(flags, reading, score, code) FROM sensors GROUP BY flags, reading, score","error":"column must appear in GROUP BY clause or aggregate function","position":35}
+{"query":"SELECT round(reading, code) FROM sensors GROUP BY reading","error":"column must appear in GROUP BY clause or aggregate function","position":22}
+{"query":"SELECT sqrt(code) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":12}
+{"query":"SELECT power(reading, score) FROM sensors GROUP BY reading","error":"column must appear in GROUP BY clause or aggregate function","position":22}
+{"query":"SELECT sign(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":12}
+{"query":"SELECT ln(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":10}
+{"query":"SELECT log(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":11}
+{"query":"SELECT exp(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":11}
+{"query":"SELECT sin(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":11}
+{"query":"SELECT cos(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":11}
+{"query":"SELECT tan(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":11}
+{"query":"SELECT asin(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":12}
+{"query":"SELECT acos(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":12}
+{"query":"SELECT atan(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":12}
+{"query":"SELECT degrees(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":15}
+{"query":"SELECT radians(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":15}
+{"query":"SELECT cot(reading) FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":11}
+{"query":"SELECT atan2(reading, score) FROM sensors GROUP BY score","error":"column must appear in GROUP BY clause or aggregate function","position":13}
+{"query":"SELECT greatest(reading, score) FROM sensors GROUP BY reading","error":"column must appear in GROUP BY clause or aggregate function","position":25}
+{"query":"SELECT least(reading, score) FROM sensors GROUP BY score","error":"column must appear in GROUP BY clause or aggregate function","position":13}
+{"query":"SELECT round_down(reading, code) FROM sensors GROUP BY reading","error":"column must appear in GROUP BY clause or aggregate function","position":27}
+{"query":"SELECT round_up(reading, code) FROM sensors GROUP BY reading","error":"column must appear in GROUP BY clause or aggregate function","position":25}
+{"query":"SELECT round_half_even(reading, code) FROM sensors GROUP BY reading","error":"column must appear in GROUP BY clause or aggregate function","position":32}
+{"query":"SELECT coalesce(reading, score) AS value FROM sensors GROUP BY reading","error":"column must appear in GROUP BY clause or aggregate function","position":25}
+{"query":"SELECT nullif(reading, score) AS value FROM sensors GROUP BY reading","error":"column must appear in GROUP BY clause or aggregate function","position":23}
+{"query":"SELECT CAST(id AS INT) AS value FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":12}
+{"query":"SELECT year(day) AS value FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":12}
+{"query":"SELECT month(day) AS value FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":13}
+{"query":"SELECT day(day) AS value FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":11}
+{"query":"SELECT hour(day) AS value FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":12}
+{"query":"SELECT minute(day) AS value FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":14}
+{"query":"SELECT second(day) AS value FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":14}
+{"query":"SELECT millis(day) AS value FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":14}
+{"query":"SELECT micros(day) AS value FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":14}
+{"query":"SELECT nanos(day) AS value FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":13}
+{"query":"SELECT dateadd('d', 1, ts) AS value FROM sensors GROUP BY day","error":"column must appear in GROUP BY clause or aggregate function","position":23}
+{"query":"SELECT datediff('d', ts, day) AS value FROM sensors GROUP BY day","error":"column must appear in GROUP BY clause or aggregate function","position":21}
+{"query":"SELECT extract(year FROM ts) AS value FROM sensors GROUP BY day","error":"column must appear in GROUP BY clause or aggregate function","position":25}
+{"query":"SELECT timestamp_floor('d', ts) AS value FROM sensors GROUP BY day","error":"column must appear in GROUP BY clause or aggregate function","position":28}
+{"query":"SELECT timestamp_ceil('d', ts) AS value FROM sensors GROUP BY day","error":"column must appear in GROUP BY clause or aggregate function","position":27}
+{"query":"SELECT to_utc(ts, 'Europe/Madrid') AS utc_ts FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":14}
+{"query":"SELECT to_timezone(ts, 'Europe/Madrid') AS local_ts FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":19}
+{"query":"SELECT to_pg_date(note) AS pg_day FROM sensors AS s GROUP BY s.ts","error":"column must appear in GROUP BY clause or aggregate function","position":18}
+{"query":"SELECT is_leap_year(ts) AS leap FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":20}
+{"query":"SELECT days_in_month(day) AS month_days FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":21}
+{"query":"SELECT to_str(ts, 'yyyy') AS date_text FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":14}
+{"query":"SELECT is_end_of_month(ts) AS month_end FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":23}
+{"query":"SELECT day_of_week_sunday_first(ts) AS weekday FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":32}
+{"query":"SELECT to_date(note, 'yyyy-MM-dd') AS parsed_day FROM sensors AS s GROUP BY s.ts","error":"column must appear in GROUP BY clause or aggregate function","position":15}
+{"query":"SELECT to_timestamp(note, 'yyyy-MM-dd') AS parsed_ts FROM sensors AS s GROUP BY s.ts","error":"column must appear in GROUP BY clause or aggregate function","position":20}
+{"query":"SELECT md5(note) AS digest FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":11}
+{"query":"SELECT sha1(note) AS digest FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":12}
+{"query":"SELECT sha256(note) AS digest FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":14}
+{"query":"SELECT to_uuid(id, flags) AS uuid FROM sensors AS s GROUP BY s.id","error":"column must appear in GROUP BY clause or aggregate function","position":19}
+{"query":"SELECT json_extract(tag, '$') AS extracted FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":20}
+{"query":"SELECT to_char(from_base64(tag)) AS decoded FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":27}
+{"query":"SELECT to_lowercase(location) AS folded FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":20}
+{"query":"SELECT to_uppercase(location) AS folded FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":20}
+{"query":"SELECT length_bytes(note) AS byte_count FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":20}
+{"query":"SELECT size_pretty(id) AS pretty FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":19}
+{"query":"SELECT netmask(note) AS mask FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":15}
+{"query":"SELECT geo_distance_meters(reading, reading, 0, 0) AS meters FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":36}
+{"query":"SELECT geo_within_radius_latlon(reading, reading, 0, 0, 1000) AS inside FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":41}
+{"query":"SELECT within_radius(reading, reading, 0, 0, 1000) AS inside FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":30}
+{"query":"SELECT within_box(reading, reading, 0, 0, 100, 100) AS inside FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":27}
+{"query":"SELECT make_geohash(reading, reading, 4) AS hash FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":29}
+{"query":"SELECT format_type(note, -1) AS type_name FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":19}
+{"query":"SELECT pg_get_partkeydef(note) AS part_key FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":25}
+{"query":"SELECT pg_get_expr(note, 1) AS expression FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":19}
+{"query":"SELECT current_setting(note) FROM sensors GROUP BY note","error":"argument type mismatch for function `current_setting` at #1 expected: STRING constant, actual: STRING","position":0}
+{"query":"SELECT pg_catalog.pg_get_userbyid(flags) AS role FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":34}
+{"query":"SELECT pg_catalog.pg_table_is_visible(flags) AS visible FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":38}
+{"query":"SELECT pg_catalog.age(id) AS age FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":22}
+{"query":"SELECT pg_catalog.pg_get_userbyid(1, 2) AS role FROM sensors GROUP BY location","error":"wrong number of arguments for function `pg_catalog.pg_get_userbyid`; expected: 1, provided: 2","position":7}
+{"query":"SELECT pg_catalog.pg_table_is_visible(1, 2) AS visible FROM sensors GROUP BY location","error":"wrong number of arguments for function `pg_catalog.pg_table_is_visible`; expected: 1, provided: 2","position":7}
+{"query":"SELECT pg_catalog.age(1, 2) AS age FROM sensors GROUP BY location","error":"wrong number of arguments for function `pg_catalog.age`; expected: 1, provided: 2","position":7}
+{"query":"SELECT typeof(s.reading) AS value_type FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":14}
+{"query":"SELECT not(s.ok) AS inverse FROM sensors AS s GROUP BY s.location","error":"column must appear in GROUP BY clause or aggregate function","position":11}
+{"query":"SELECT typeof(s.note, 'x') AS value_type FROM sensors AS s GROUP BY s.note","error":"exactly one argument expected","position":7}
+{"query":"SELECT day_of_week(s.ts) AS weekday FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":19}
+{"query":"SELECT week_of_year(s.ts) AS week FROM sensors AS s GROUP BY s.note","error":"column must appear in GROUP BY clause or aggregate function","position":20}
+{"query":"SELECT id BETWEEN flags AND 3 AS matched FROM sensors GROUP BY id","error":"column must appear in GROUP BY clause or aggregate function","position":18}
+{"query":"SELECT s.id BETWEEN s.flags AND 3 AS matched FROM sensors AS s GROUP BY s.flags","error":"column must appear in GROUP BY clause or aggregate function","position":7}
+{"query":"SELECT s.id IN (1, 3) AS matched FROM sensors AS s GROUP BY s.flags","error":"column must appear in GROUP BY clause or aggregate function","position":7}
+{"query":"SELECT id BETWEEN 2 AND 3 AS matched FROM sensors GROUP BY id BETWEEN 2 AND 3 ORDER BY matched","error":"literal expected","position":62}
+{"query":"SELECT between(id,2,3) AS inside FROM sensors GROUP BY between(id,2,3)","error":"literal expected","position":55}
+{"query":"SELECT note BETWEEN 'a' AND 'z' AS matched FROM sensors GROUP BY note","error":"there is no matching operator `between` with the argument type: STRING","position":12}
+{"query":"SELECT id > 1 AS matched FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":7}
+{"query":"SELECT id > flags AS matched FROM sensors GROUP BY id","error":"column must appear in GROUP BY clause or aggregate function","position":12}
+{"query":"SELECT id IS NULL AS missing FROM sensors GROUP BY flags","error":"column must appear in GROUP BY clause or aggregate function","position":7}
+{"query":"SELECT note > 1 AS matched FROM sensors GROUP BY note","error":"inconvertible value: `alpha` [STRING -> INT]","position":0}
+{"query":"SELECT ok > 1 AS matched FROM sensors GROUP BY ok","error":"there is no matching operator `>` with the argument types: BOOLEAN > INT","position":10}
+{"query":"SELECT ok AND true AS both FROM sensors GROUP BY id","error":"column must appear in GROUP BY clause or aggregate function","position":7}
+{"query":"SELECT ok AND flags FROM sensors GROUP BY ok, flags","error":"expression type mismatch, expected: BOOLEAN, actual: INT","position":0}
+{"query":"SELECT ok OR note FROM sensors GROUP BY ok, note","error":"expression type mismatch, expected: BOOLEAN, actual: STRING","position":0}
+{"query":"SELECT s.note LIKE 'a%' AS matched FROM sensors AS s GROUP BY s.id","error":"column must appear in GROUP BY clause or aggregate function","position":7}
+{"query":"SELECT note ILIKE location AS matched FROM sensors GROUP BY note, location","error":"use constant or bind variable","position":0}
+{"query":"SELECT note ~ note AS matched FROM sensors GROUP BY note","error":"not implemented: dynamic pattern would be very slow to execute","position":0}
+{"query":"SELECT note ~ '[' AS matched FROM sensors GROUP BY note","error":"Unclosed character class near index 0\n[\n^","position":15}
+{"query":"SELECT NOT flags AS n FROM sensors GROUP BY flags","error":"argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: INT","position":0}
+{"query":"SELECT NOT s.missing AS n FROM sensors AS s GROUP BY s.id","error":"Invalid column: s.missing","position":11}
+{"query":"SELECT NOT s.ok AS n FROM sensors AS s GROUP BY s.id","error":"column must appear in GROUP BY clause or aggregate function","position":11}
+{"query":"SELECT NOT (id LIKE '1%') AS n FROM sensors GROUP BY id","error":"there is no matching operator `like` with the argument types: LONG like STRING","position":15}
+{"query":"SELECT NOT (id ILIKE '1%') AS n FROM sensors GROUP BY id","error":"there is no matching operator `ilike` with the argument types: LONG ilike STRING","position":15}
+{"query":"SELECT NOT (id ~ '1') AS n FROM sensors GROUP BY id","error":"there is no matching operator `~` with the argument types: LONG ~ CHAR","position":15}
+{"query":"SELECT NOT (s.missing IN (1)) AS n FROM sensors AS s GROUP BY s.id","error":"Invalid column: s.missing","position":12}
+{"query":"SELECT NOT (note LIKE location) AS n FROM sensors GROUP BY note","error":"column must appear in GROUP BY clause or aggregate function","position":22}
+{"query":"SELECT NOT (note LIKE location) AS n FROM sensors GROUP BY note, location","error":"use constant or bind variable","position":0}
+{"query":"SELECT NOT (note ~ note) AS n FROM sensors GROUP BY note","error":"not implemented: dynamic pattern would be very slow to execute","position":0}
+{"query":"SELECT NOT (note ~ '[') AS n FROM sensors GROUP BY note","error":"Unclosed character class near index 0\n[\n^","position":20}
+{"query":"SELECT NOT (s.missing IS NULL) AS n FROM sensors AS s GROUP BY s.id","error":"Invalid column: s.missing","position":12}
+{"query":"SELECT NOT (id BETWEEN 'x' AND 'z') AS n FROM sensors GROUP BY id","error":"there is no matching operator `between` with the argument type: LONG","position":15}
+{"query":"SELECT NOT NOT flags AS n FROM sensors GROUP BY flags","error":"argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: INT","position":0}
+{"query":"SELECT NOT (s.note IS NULL) AS n FROM sensors AS s GROUP BY s.id","error":"column must appear in GROUP BY clause or aggregate function","position":12}
+{"query":"SELECT NOT (id + 1 > 'x') AS n FROM sensors GROUP BY id","error":"inconvertible value: x [CHAR -> LONG]","position":0}
+{"query":"SELECT NOT (id + location > 2) AS n FROM sensors GROUP BY id, location","error":"there is no matching operator `+` with the argument types: LONG + SYMBOL","position":15}
+{"query":"SELECT NOT (note + 1 > 2) AS n FROM sensors GROUP BY note","error":"inconvertible value: `alpha` [STRING -> INT]","position":0}
+{"query":"SELECT NOT (s.missing + 1 > 2) AS n FROM sensors AS s GROUP BY s.id","error":"Invalid column: s.missing","position":12}
+{"query":"SELECT NOT (id + location > 2) AS n FROM sensors GROUP BY id, location LIMIT 0","error":"there is no matching operator `+` with the argument types: LONG + SYMBOL","position":15}

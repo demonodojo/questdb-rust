@@ -1,0 +1,5 @@
+nullif(s.reading, s.score)
+1.5
+NULL
+NULL
+-0.0

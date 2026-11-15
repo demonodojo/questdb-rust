@@ -1,0 +1,9 @@
+{"query":"select id from sensors where abs(id) > 1 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2]],"count":1}
+{"query":"select id from sensors where length(note) > 3 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where lower(note) = 'alpha' order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where id > abs(flags) order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where abs(id) < abs(flags) order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where abs(id) = 1 or length(note) > 3 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select s.id from sensors s where abs(s.id) > 1 order by s.ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2]],"count":1}
+{"query":"select id from sensors where abs(id) > null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where length(ok) > 1 limit 0","error":"there is no matching function `length` with the argument types: (BOOLEAN)","position":29}

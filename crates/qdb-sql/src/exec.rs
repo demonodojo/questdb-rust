@@ -1,24 +1,26 @@
 use crate::parse::{
-    date_from_literal, parse_query, timestamp_from_literal, AbsExpr, AcosExpr, AddExpr, AggFunc,
-    AggregateExpr, AggregateExtra, AndExpr, AndRight, ArithOp, AsinExpr, Atan2Expr, AtanExpr,
-    BarExpr, BetweenExpr, BitNotExpr, BoolOp, CastExpr, CeilExpr, CmpOp, CoalesceExpr, ConcatArg,
-    CosExpr, CotExpr, CurrentCatalogExpr, CurrentDatabaseExpr, CurrentSchemaExpr,
-    CurrentSettingExpr, CurrentUserExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr,
-    DayOfWeekExpr, DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, EquiJoin,
-    ExpExpr, ExtractExpr, Filter, FloorExpr, FormatTypeExpr, FromBase64Expr, GenerateSeries,
-    GeoDistanceExpr, GeoWithinExpr, GlobExpr, GreatestExpr, GroupedSelect, HourExpr, IlikeExpr,
-    InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, JsonExtractExpr, LeastExpr, LengthExpr, LikeExpr,
-    LnExpr, LogExpr, LowerExpr, MakeGeohashExpr, Md5Expr, MicrosExpr, MidExpr, MillisExpr,
-    MinuteExpr, MonthExpr, NanosExpr, NegExpr, NetmaskExpr, NotExpr, NullIfExpr, PadExpr,
-    PgAgeExpr, PgGetExprExpr, PgGetPartKeyDefExpr, PgGetUserByIdExpr, PgIsInRecoveryExpr,
-    PgTableIsVisibleExpr, PiExpr, PowerExpr, Proj, Query, QuoteIdentExpr, RadiansExpr,
-    RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr, RoundHalfEvenExpr, RoundUpExpr,
-    SecondExpr, SelectList, SeriesStep, SessionUserExpr, Sha1Expr, Sha256Expr, SideExpr, SignExpr,
-    SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr, SpreadBpsExpr, SpreadExpr, SqrtExpr,
-    StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr, TanExpr, TimestampCeilExpr,
-    TimestampFloorExpr, TimestampSequenceExpr, ToCharExpr, ToDateExpr, ToPgDateExpr, ToStrExpr,
-    ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr, TrimEnd, TrimExpr, TypeofExpr,
-    UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr, WmidExpr, YearExpr,
+    date_from_literal, parse_filter_operand, parse_query, timestamp_from_literal, AbsExpr,
+    AcosExpr, AddExpr, AggFunc, AggregateExpr, AggregateExtra, AndExpr, AndRight, ArithOp,
+    ArithmeticExpr, AsinExpr, Atan2Expr, AtanExpr, BarExpr, BetweenExpr, BitNotExpr, BoolOp,
+    CastExpr, CeilExpr, CmpOp, CoalesceExpr, ColumnExpr, ConcatArg, CosExpr, CotExpr,
+    CurrentCatalogExpr, CurrentDatabaseExpr, CurrentSchemaExpr, CurrentSettingExpr,
+    CurrentUserExpr, DateAddExpr, DateDiffExpr, DateTruncExpr, DayExpr, DayOfWeekExpr,
+    DayOfWeekSundayFirstExpr, DaysInMonthExpr, DegreesExpr, EqExpr, EquiJoin, ExpExpr, ExtractExpr,
+    Filter, FilterOperand, FloorExpr, FormatTypeExpr, FromBase64Expr, GenerateSeries,
+    GeoDistanceExpr, GeoWithinExpr, GlobExpr, GreatestExpr, GroupedSelect, GroupedSelectItem,
+    HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, JsonExtractExpr, LeastExpr,
+    LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, MakeGeohashExpr, Md5Expr, MicrosExpr,
+    MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NetmaskExpr, NotExpr,
+    NullIfExpr, PadExpr, PgAgeExpr, PgGetExprExpr, PgGetPartKeyDefExpr, PgGetUserByIdExpr,
+    PgIsInRecoveryExpr, PgTableIsVisibleExpr, PiExpr, PowerExpr, Proj, ProjectionList, Query,
+    QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
+    RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SeriesStep, SessionUserExpr, Sha1Expr,
+    Sha256Expr, SideExpr, SignExpr, SinExpr, SizePrettyExpr, SparkParams, SplitPartExpr,
+    SpreadBpsExpr, SpreadExpr, SqrtExpr, StartsWithExpr, StrPosExpr, SubstrExpr, SwitchExpr,
+    TanExpr, TimestampCeilExpr, TimestampFloorExpr, TimestampSequenceExpr, ToCharExpr, ToDateExpr,
+    ToPgDateExpr, ToStrExpr, ToTimestampExpr, ToTimezoneExpr, ToUtcExpr, ToUuidExpr, TrimEnd,
+    TrimExpr, TypeofExpr, UpperExpr, VersionExpr, WeekOfYearExpr, WithinBoxExpr, WithinRadiusExpr,
+    WmidExpr, YearExpr,
 };
 use qdb_storage::{open_table, ColumnMeta, Table, TableMeta, TxnHeader};
 use qdb_types::{
@@ -510,10 +512,16 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
             query.table, table.name
         )));
     }
+    if let Some(filter) = &query.filter {
+        validate_filter_regex(table, filter)?;
+    }
     if query.group_by.is_some()
         && !matches!(
             &query.columns,
-            SelectList::Aggregate(_) | SelectList::Grouped(_)
+            SelectList::Aggregate(_)
+                | SelectList::Grouped(_)
+                | SelectList::Columns(_)
+                | SelectList::Projection(_)
         )
     {
         return Err(Error::new("unsupported: GROUP BY without an aggregate"));
@@ -522,18 +530,28 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
         SelectList::Aggregate(aggregate) if query.group_by.is_none() => {
             return execute_aggregate(table, query, aggregate);
         }
-        SelectList::Aggregate(aggregate) => return execute_group(table, query, None, aggregate),
-        SelectList::Grouped(grouped) => {
-            return execute_group(table, query, Some(grouped), &grouped.aggregate);
+        SelectList::Aggregate(aggregate) => {
+            return execute_group(table, query, None, std::slice::from_ref(aggregate.as_ref()));
         }
-        SelectList::Projection(items) => return execute_projection(table, query, items),
+        SelectList::Grouped(grouped) => {
+            return execute_group(table, query, Some(grouped), &grouped.aggregates);
+        }
+        SelectList::Columns(columns) if query.group_by.is_some() => {
+            return execute_group_keys(table, query, columns);
+        }
+        SelectList::Projection(items) if query.group_by.is_some() => {
+            return execute_group_key_projection(table, query, items);
+        }
+        SelectList::Projection(items) => {
+            return execute_projection(table, query, &items.items);
+        }
         SelectList::Star => (0..table.meta.columns.len()).collect::<Vec<_>>(),
         SelectList::Columns(names) => {
             let mut indexes = Vec::with_capacity(names.len());
-            for name in names {
+            for column in names {
                 let index = table
-                    .column_index(name)
-                    .ok_or_else(|| Error::new(format!("unknown column `{name}`")))?;
+                    .column_index(&column.name)
+                    .ok_or_else(|| Error::new(format!("unknown column `{}`", column.name)))?;
                 indexes.push(index);
             }
             indexes
@@ -594,8 +612,14 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
 fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<QueryResult, Error> {
     let resolved = items
         .iter()
-        .map(|item| resolve_proj(table, item))
+        .map(|item| {
+            resolve_proj(table, item).map_err(|error| match item {
+                Proj::Not(expression) => not_projection_error(expression, error),
+                _ => error,
+            })
+        })
         .collect::<Result<Vec<_>, _>>()?;
+    validate_regexp_replace_arguments(&resolved)?;
     let mut row_ids = Vec::new();
     for row in 0..table.row_count() {
         if let Some(filter) = &query.filter {
@@ -766,6 +790,7 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             | ResolvedProj::InList { label, .. }
             | ResolvedProj::Eq { label, .. }
             | ResolvedProj::Add { label, .. }
+            | ResolvedProj::Arithmetic { label, .. }
             | ResolvedProj::Neg { label, .. }
             | ResolvedProj::BitNot { label, .. }
             | ResolvedProj::And { label, .. }
@@ -803,8 +828,12 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
     let mut rows = Vec::with_capacity(row_ids.len());
     for row in row_ids {
         let mut values = Vec::with_capacity(resolved.len());
-        for item in &resolved {
-            values.push(eval_checked(table, row, item)?);
+        for (expression, item) in items.iter().zip(&resolved) {
+            let value = eval_checked(table, row, item).map_err(|error| match expression {
+                Proj::Not(expression) => not_projection_error(expression, error),
+                _ => error,
+            })?;
+            values.push(value);
         }
         rows.push(values);
     }
@@ -838,9 +867,182 @@ enum UtcZone {
     NewYork,
 }
 
+#[derive(Clone)]
+enum CompiledRegex {
+    Linear(regex::Regex),
+    Backtracking(fancy_regex::Regex),
+}
+
+type RegexCaptureSpans = Vec<Vec<Option<(usize, usize)>>>;
+
+impl CompiledRegex {
+    fn is_match(&self, text: &str) -> Result<bool, Error> {
+        match self {
+            Self::Linear(regex) => Ok(regex.is_match(text)),
+            Self::Backtracking(regex) => regex
+                .is_match(text)
+                .map_err(|error| Error::new(error.to_string())),
+        }
+    }
+
+    fn is_match_or_false(&self, text: &str) -> bool {
+        self.is_match(text).unwrap_or(false)
+    }
+
+    fn capture_names(&self) -> Vec<Option<String>> {
+        match self {
+            Self::Linear(regex) => regex
+                .capture_names()
+                .map(|name| name.map(str::to_string))
+                .collect(),
+            Self::Backtracking(regex) => regex
+                .capture_names()
+                .map(|name| name.map(str::to_string))
+                .collect(),
+        }
+    }
+
+    fn capture_spans(&self, text: &str) -> Result<RegexCaptureSpans, Error> {
+        match self {
+            Self::Linear(regex) => Ok(regex
+                .captures_iter(text)
+                .map(|captures| {
+                    (0..captures.len())
+                        .map(|index| {
+                            captures
+                                .get(index)
+                                .map(|matched| (matched.start(), matched.end()))
+                        })
+                        .collect()
+                })
+                .collect()),
+            Self::Backtracking(regex) => regex
+                .captures_iter(text)
+                .map(|result| {
+                    result
+                        .map(|captures| {
+                            (0..captures.len())
+                                .map(|index| {
+                                    captures
+                                        .get(index)
+                                        .map(|matched| (matched.start(), matched.end()))
+                                })
+                                .collect()
+                        })
+                        .map_err(|error| Error::new(error.to_string()))
+                })
+                .collect(),
+        }
+    }
+
+    fn replace_all_java(&self, text: &str, replacement: &str) -> Result<String, String> {
+        let names = self.capture_names();
+        let matches = self.capture_spans(text).map_err(|error| error.message)?;
+        let mut result = String::with_capacity(text.len());
+        let mut copied_until = 0;
+        for captures in matches {
+            let Some((start, end)) = captures.first().copied().flatten() else {
+                continue;
+            };
+            result.push_str(&text[copied_until..start]);
+            append_java_replacement(&mut result, text, &captures, &names, replacement)?;
+            copied_until = end;
+        }
+        result.push_str(&text[copied_until..]);
+        Ok(result)
+    }
+}
+
+fn append_java_replacement(
+    result: &mut String,
+    text: &str,
+    captures: &[Option<(usize, usize)>],
+    names: &[Option<String>],
+    replacement: &str,
+) -> Result<(), String> {
+    let chars = replacement.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        match chars[index] {
+            '\\' => {
+                index += 1;
+                let Some(escaped) = chars.get(index) else {
+                    return Err("character to be escaped is missing".to_string());
+                };
+                result.push(*escaped);
+            }
+            '$' => {
+                index += 1;
+                let Some(next) = chars.get(index).copied() else {
+                    return Err("Illegal group reference".to_string());
+                };
+                if next == '{' {
+                    index += 1;
+                    let name_start = index;
+                    while index < chars.len() && chars[index] != '}' {
+                        index += 1;
+                    }
+                    if index == chars.len() {
+                        return Err(format!(
+                            "named capturing group <{}> does not exist",
+                            chars[name_start..].iter().collect::<String>()
+                        ));
+                    }
+                    let name = chars[name_start..index].iter().collect::<String>();
+                    let Some(group) = names
+                        .iter()
+                        .position(|candidate| candidate.as_deref() == Some(name.as_str()))
+                    else {
+                        return Err(format!("No group with name {{{name}}}"));
+                    };
+                    append_capture(result, text, captures, group);
+                } else if next.is_ascii_digit() {
+                    let mut group = next.to_digit(10).unwrap_or(0) as usize;
+                    if group >= captures.len() {
+                        return Err(format!("No group {group}"));
+                    }
+                    index += 1;
+                    while index < chars.len() && chars[index].is_ascii_digit() {
+                        let digit = chars[index].to_digit(10).unwrap_or(0) as usize;
+                        let candidate = group.saturating_mul(10).saturating_add(digit);
+                        if candidate >= captures.len() {
+                            break;
+                        }
+                        group = candidate;
+                        index += 1;
+                    }
+                    append_capture(result, text, captures, group);
+                    index -= 1;
+                } else {
+                    return Err("Illegal group reference".to_string());
+                }
+            }
+            character => result.push(character),
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn append_capture(
+    result: &mut String,
+    text: &str,
+    captures: &[Option<(usize, usize)>],
+    group: usize,
+) {
+    if let Some(Some((start, end))) = captures.get(group) {
+        result.push_str(&text[*start..*end]);
+    }
+}
+
 enum ResolvedProj {
     Column {
         index: usize,
+    },
+    Arithmetic {
+        label: String,
+        operand: FilterOperand,
+        result_tag: i32,
     },
     Concat {
         label: String,
@@ -880,7 +1082,7 @@ enum ResolvedProj {
     },
     RegexpReplace {
         label: String,
-        mode: ReplaceMode,
+        mode: RegexpReplaceMode,
     },
     StartsWith {
         label: String,
@@ -903,7 +1105,8 @@ enum ResolvedProj {
         value: ResolvedArg,
         pattern: IlikePattern,
         negated: bool,
-        regex: Option<Vec<RegexTerm>>,
+        regex: Option<CompiledRegex>,
+        regex_null: bool,
     },
     Switch {
         label: String,
@@ -1436,6 +1639,18 @@ enum ReplaceMode {
     },
 }
 
+enum RegexpReplaceMode {
+    Run {
+        value: ResolvedArg,
+        pattern: ResolvedArg,
+        regex: Option<CompiledRegex>,
+        replacement: ResolvedArg,
+        pattern_position: usize,
+        replacement_position: usize,
+        function_position: usize,
+    },
+}
+
 enum SubstrMode {
     Null,
     Empty,
@@ -1533,6 +1748,7 @@ impl ResolvedProj {
             | Self::InList { label, .. }
             | Self::Eq { label, .. }
             | Self::Add { label, .. }
+            | Self::Arithmetic { label, .. }
             | Self::Neg { label, .. }
             | Self::BitNot { label, .. }
             | Self::And { label, .. }
@@ -1651,6 +1867,7 @@ impl ResolvedProj {
             Self::Greatest { result_tag, .. }
             | Self::Least { result_tag, .. }
             | Self::Add { result_tag, .. }
+            | Self::Arithmetic { result_tag, .. }
             | Self::Neg { result_tag, .. }
             | Self::BitNot { result_tag, .. } => *result_tag,
             Self::Floor { wide, .. } | Self::Ceil { wide, .. } => {
@@ -1810,6 +2027,7 @@ fn resolve_proj(table: &Table, item: &Proj) -> Result<ResolvedProj, Error> {
         Proj::InList(expr) => resolve_in_list(table, expr),
         Proj::Eq(expr) => resolve_eq(table, expr),
         Proj::Add(expr) => resolve_add(table, expr),
+        Proj::Arithmetic(expr) => resolve_arithmetic(table, expr),
         Proj::Neg(expr) => resolve_neg(table, expr),
         Proj::BitNot(expr) => resolve_bit_not(table, expr),
         Proj::And(expr) => resolve_and(table, expr),
@@ -2616,8 +2834,13 @@ fn within_box_scalar(table: &Table, row: usize, args: &[GeoSide; 6]) -> Result<S
     let (x, y, min_x, min_y, max_x, max_y) = (
         values[0], values[1], values[2], values[3], values[4], values[5],
     );
+    // QuestDB compares geospatial doubles with Java's total ordering, where -0.0
+    // sorts below +0.0. Rust's ordinary float comparisons consider them equal.
     Ok(Scalar::Boolean(
-        x >= min_x && x <= max_x && y >= min_y && y <= max_y,
+        x.total_cmp(&min_x).is_ge()
+            && x.total_cmp(&max_x).is_le()
+            && y.total_cmp(&min_y).is_ge()
+            && y.total_cmp(&max_y).is_le(),
     ))
 }
 
@@ -3280,6 +3503,15 @@ fn extract_json_varchar(doc: &str, path: &str) -> Option<String> {
     let mut parser = JsonCursor { src: doc, i: 0 };
     let value = parser.parse_value()?;
     if value.is_scalar() {
+        if let JVal::Raw(raw) = &value {
+            let starts_number = raw
+                .as_bytes()
+                .first()
+                .is_some_and(|byte| byte.is_ascii_digit() || *byte == b'-');
+            if starts_number && !doc[parser.i..].trim().is_empty() {
+                return Some(doc.to_string());
+            }
+        }
         return Some(value.text());
     }
     let steps = json_path_steps(path)?;
@@ -4218,6 +4450,114 @@ fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
     })
 }
 
+fn resolve_arithmetic(table: &Table, expr: &ArithmeticExpr) -> Result<ResolvedProj, Error> {
+    let result_tag = select_operand_tag(table, &expr.operand).map_err(|error| {
+        if let Some(name) = error
+            .message
+            .strip_prefix("unknown column `")
+            .and_then(|message| message.strip_suffix('`'))
+        {
+            let position = expr
+                .source
+                .find(name)
+                .map_or(expr.position, |offset| expr.position + offset);
+            Error::at(format!("Invalid column: {name}"), position)
+        } else {
+            error
+        }
+    })?;
+    Ok(ResolvedProj::Arithmetic {
+        label: expr.label.clone(),
+        operand: expr.operand.clone(),
+        result_tag,
+    })
+}
+
+fn select_operand_tag(table: &Table, operand: &FilterOperand) -> Result<i32, Error> {
+    let FilterOperand::Arithmetic(expr) = operand else {
+        return filter_operand_tag(table, operand);
+    };
+    let left_tag = select_operand_tag(table, &expr.left)?;
+    let right_tag = select_operand_tag(table, &expr.right)?;
+    if !is_numeric_tag(left_tag) || !is_numeric_tag(right_tag) {
+        return filter_operand_tag(table, operand);
+    }
+    if matches!(left_tag, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP)
+        && expr.op == ArithOp::Sub
+        && matches!(
+            &expr.right,
+            FilterOperand::Literal(value)
+                if literal_tag(value) == qdb_types::TAG_INT
+        )
+    {
+        return Ok(qdb_types::TAG_TIMESTAMP);
+    }
+    Ok(arithmetic_result_tag(left_tag, right_tag, expr.op))
+}
+
+fn eval_select_operand(
+    table: &Table,
+    row: usize,
+    operand: &FilterOperand,
+) -> Result<(Scalar, i32), Error> {
+    let FilterOperand::Arithmetic(expr) = operand else {
+        return eval_filter_operand(table, row, operand);
+    };
+    let (left, left_tag) = eval_select_operand(table, row, &expr.left)?;
+    let (right, right_tag) = eval_select_operand(table, row, &expr.right)?;
+    let subtract_integer_literal = expr.op == ArithOp::Sub
+        && matches!(left_tag, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP)
+        && matches!(
+            &expr.right,
+            FilterOperand::Literal(value)
+                if literal_tag(value) == qdb_types::TAG_INT
+        );
+    select_arithmetic_value(
+        &left,
+        left_tag,
+        &right,
+        right_tag,
+        expr.op,
+        expr.position,
+        subtract_integer_literal,
+    )
+    .map_err(|error| {
+        if error.position.is_none() && error.message.starts_with("inconvertible value:") {
+            Error::at(error.message, 0)
+        } else {
+            error
+        }
+    })
+}
+
+fn select_arithmetic_value(
+    left: &Scalar,
+    left_tag: i32,
+    right: &Scalar,
+    right_tag: i32,
+    op: ArithOp,
+    position: usize,
+    subtract_integer_literal: bool,
+) -> Result<(Scalar, i32), Error> {
+    if left.is_null() || right.is_null() {
+        let tag = if subtract_integer_literal {
+            qdb_types::TAG_TIMESTAMP
+        } else {
+            arithmetic_result_tag(left_tag, right_tag, op)
+        };
+        return Ok((Scalar::Null, tag));
+    }
+    if subtract_integer_literal {
+        let left = temporal_as_micros(left, left_tag)?;
+        let right = scalar_as_i64(right)?;
+        let value = apply_i64(op, left, right).map_or(Scalar::Null, |value| {
+            integer_arithmetic_result(value, qdb_types::TAG_TIMESTAMP)
+        });
+        return Ok((value, qdb_types::TAG_TIMESTAMP));
+    }
+    filter_arithmetic_value(left, left_tag, right, right_tag, op, position)
+}
+
 enum ResolvedAnd {
     Literal(Scalar),
     Column(usize),
@@ -4227,10 +4567,9 @@ fn resolve_and(table: &Table, expr: &AndExpr) -> Result<ResolvedProj, Error> {
     let Some(left) = table.column_index(&expr.left) else {
         return Err(Error::new(format!("Invalid column: {}", expr.left)));
     };
-    let spelling = expr.op.spelling();
     if table.meta.columns[left].tag != qdb_types::TAG_BOOLEAN {
         return Err(Error::new(format!(
-            "there is no matching operator `{spelling}` with the argument type: {}",
+            "expression type mismatch, expected: BOOLEAN, actual: {}",
             qdb_types::type_name(table.meta.columns[left].tag)
         )));
     }
@@ -4239,9 +4578,9 @@ fn resolve_and(table: &Table, expr: &AndExpr) -> Result<ResolvedProj, Error> {
             ResolvedAnd::Literal(value.clone())
         }
         AndRight::Literal(_) => {
-            return Err(Error::new(format!(
-                "there is no matching operator `{spelling}` with the argument type: STRING"
-            )));
+            return Err(Error::new(
+                "expression type mismatch, expected: BOOLEAN, actual: STRING",
+            ));
         }
         AndRight::Column(name) => {
             let Some(index) = table.column_index(name) else {
@@ -4249,7 +4588,7 @@ fn resolve_and(table: &Table, expr: &AndExpr) -> Result<ResolvedProj, Error> {
             };
             if table.meta.columns[index].tag != qdb_types::TAG_BOOLEAN {
                 return Err(Error::new(format!(
-                    "there is no matching operator `{spelling}` with the argument type: {}",
+                    "expression type mismatch, expected: BOOLEAN, actual: {}",
                     qdb_types::type_name(table.meta.columns[index].tag)
                 )));
             }
@@ -4442,6 +4781,20 @@ fn apply_f64(op: ArithOp, left: f64, right: f64) -> Option<f64> {
     }
 }
 
+fn apply_f32(op: ArithOp, left: f32, right: f32) -> Option<f32> {
+    if matches!(op, ArithOp::Div | ArithOp::Mod) && right == 0.0 {
+        return None;
+    }
+    Some(match op {
+        ArithOp::Add => left + right,
+        ArithOp::Sub => left - right,
+        ArithOp::Mul => left * right,
+        ArithOp::Div => left / right,
+        ArithOp::Mod => left % right,
+        ArithOp::BitAnd | ArithOp::BitOr | ArithOp::BitXor => return None,
+    })
+}
+
 fn add_column_i64(value: &Scalar) -> Option<i64> {
     match value {
         Scalar::Long(number) => Some(*number),
@@ -4514,14 +4867,32 @@ fn resolve_eq(table: &Table, expr: &EqExpr) -> Result<ResolvedProj, Error> {
     let Some(index) = table.column_index(&expr.value) else {
         return Err(Error::new(format!("Invalid column: {}", expr.value)));
     };
+    let tag = table.meta.columns[index].tag;
     let other = match &expr.other {
-        Some(name) => Some(
-            table
+        Some(name) => {
+            let other = table
                 .column_index(name)
-                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?,
-        ),
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            compare_columns(
+                &Scalar::Null,
+                tag,
+                &Scalar::Null,
+                table.meta.columns[other].tag,
+                expr.op,
+            )?;
+            Some(other)
+        }
         None => None,
     };
+    if other.is_none() && !expr.literal.is_null() {
+        compare_columns(
+            &Scalar::Null,
+            tag,
+            &Scalar::Null,
+            literal_tag(&expr.literal),
+            expr.op,
+        )?;
+    }
     Ok(ResolvedProj::Eq {
         label: expr.label.clone(),
         index,
@@ -4529,6 +4900,26 @@ fn resolve_eq(table: &Table, expr: &EqExpr) -> Result<ResolvedProj, Error> {
         literal: expr.literal.clone(),
         other,
     })
+}
+
+fn comparison_operator_offset(expr: &EqExpr) -> usize {
+    let source = if expr.source_label.is_empty() {
+        expr.label.as_str()
+    } else {
+        expr.source_label.as_str()
+    };
+    let candidates: &[&str] = match expr.op {
+        CmpOp::Eq => &[" = "],
+        CmpOp::NotEq => &[" <> ", " != "],
+        CmpOp::Lt => &[" < "],
+        CmpOp::Gt => &[" > "],
+        CmpOp::LtEq => &[" <= "],
+        CmpOp::GtEq => &[" >= "],
+    };
+    candidates
+        .iter()
+        .find_map(|operator| source.find(operator).map(|offset| offset + 1))
+        .unwrap_or(0)
 }
 
 fn eq_value(
@@ -4543,17 +4934,13 @@ fn eq_value(
     let left = &table.columns[index][row];
     if let Some(other) = other {
         let right = &table.columns[other][row];
-        let result = match op {
-            CmpOp::NotEq => !sql_cmp(left, tag, CmpOp::Eq, right)?,
-            CmpOp::Eq => sql_cmp(left, tag, CmpOp::Eq, right)?,
-            other_op => sql_cmp(left, tag, other_op, right)?,
-        };
-        return Ok(Scalar::Boolean(result));
+        return compare_columns(left, tag, right, table.meta.columns[other].tag, op)
+            .map(Scalar::Boolean);
     }
-    let result = match op {
-        CmpOp::NotEq => !sql_cmp(left, tag, CmpOp::Eq, literal)?,
-        CmpOp::Eq => sql_cmp(left, tag, CmpOp::Eq, literal)?,
-        other => sql_cmp(left, tag, other, literal)?,
+    let result = if literal.is_null() {
+        sql_cmp(left, tag, op, literal)?
+    } else {
+        compare_columns(left, tag, literal, literal_tag(literal), op)?
     };
     Ok(Scalar::Boolean(result))
 }
@@ -4701,11 +5088,7 @@ fn wmid_value(
     };
     let imbalance = bid_size / (bid_size + ask_size);
     let value = ask_price * imbalance + bid_price * (1.0 - imbalance);
-    if value.is_finite() {
-        Scalar::Double(value)
-    } else {
-        Scalar::Null
-    }
+    Scalar::Double(value)
 }
 
 fn resolve_spread_bps(table: &Table, expr: &SpreadBpsExpr) -> Result<ResolvedProj, Error> {
@@ -4731,11 +5114,7 @@ fn spread_bps_value(table: &Table, row: usize, bid: &SqrtInput, ask: &SqrtInput)
         return Scalar::Null;
     }
     let value = (ask - bid) / ((ask + bid) / 2.0) * 10_000.0;
-    if value.is_finite() {
-        Scalar::Double(value)
-    } else {
-        Scalar::Null
-    }
+    Scalar::Double(value)
 }
 
 fn power_input(table: &Table, arg: &ConcatArg) -> Result<SqrtInput, Error> {
@@ -4841,9 +5220,50 @@ fn resolve_cot(table: &Table, expr: &CotExpr) -> Result<ResolvedProj, Error> {
 enum NotInput {
     Const(bool),
     Column(usize),
+    Predicate(Box<Filter>),
 }
 
 fn resolve_not(table: &Table, expr: &NotExpr) -> Result<ResolvedProj, Error> {
+    if let Some(filter) = &expr.filter {
+        validate_filter_arithmetic(table, filter).map_err(|error| {
+            if let Some(name) = error
+                .message
+                .strip_prefix("unknown column `")
+                .and_then(|message| message.strip_suffix('`'))
+            {
+                if let Some((_, reference)) = source_dependency_reference(&expr.source_label, name)
+                {
+                    return Error::new(format!("Invalid column: {reference}"));
+                }
+            }
+            error
+        })?;
+        if let Filter::Not(inner) = filter.as_ref() {
+            if let Filter::BooleanColumn { column } = inner.as_ref() {
+                let Some(index) = table.column_index(column) else {
+                    return Err(Error::new(format!("Invalid column: {column}")));
+                };
+                let tag = table.meta.columns[index].tag;
+                if tag != qdb_types::TAG_BOOLEAN {
+                    return Err(Error::at(
+                        format!(
+                            "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: {}",
+                            qdb_types::type_name(tag)
+                        ),
+                        0,
+                    ));
+                }
+            } else {
+                validate_not_logical_types(table, expr, inner)?;
+            }
+        } else {
+            validate_not_logical_types(table, expr, filter)?;
+        }
+        return Ok(ResolvedProj::Not {
+            label: expr.label.clone(),
+            input: NotInput::Predicate(filter.clone()),
+        });
+    }
     if expr.args.is_empty() {
         return Err(Error::new(
             "too few arguments for 'not' [found=0,expected=1]",
@@ -4854,6 +5274,162 @@ fn resolve_not(table: &Table, expr: &NotExpr) -> Result<ResolvedProj, Error> {
         label: expr.label.clone(),
         input,
     })
+}
+
+fn validate_not_logical_types(
+    table: &Table,
+    expression: &NotExpr,
+    filter: &Filter,
+) -> Result<(), Error> {
+    match filter {
+        Filter::And(left, right) | Filter::Or(left, right) => {
+            for operand in [left.as_ref(), right.as_ref()] {
+                match operand {
+                    Filter::BooleanColumn { column } => {
+                        let Some(index) = table.column_index(column) else {
+                            let dependency = column.rsplit('.').next().unwrap_or(column);
+                            if let Some((offset, reference)) =
+                                source_dependency_reference(&expression.source_label, dependency)
+                            {
+                                return Err(Error::at(
+                                    format!("Invalid column: {reference}"),
+                                    expression.position + offset,
+                                ));
+                            }
+                            return Err(Error::new(format!("Invalid column: {column}")));
+                        };
+                        let tag = table.meta.columns[index].tag;
+                        if tag != qdb_types::TAG_BOOLEAN {
+                            let dependency = column.rsplit('.').next().unwrap_or(column);
+                            let offset = source_dependency_offset_with_qualifier(
+                                &expression.source_label,
+                                dependency,
+                            )
+                            .unwrap_or_default();
+                            return Err(Error::at(
+                                format!(
+                                    "expression type mismatch, expected: BOOLEAN, actual: {}",
+                                    qdb_types::type_name(tag)
+                                ),
+                                expression.position + offset,
+                            ));
+                        }
+                    }
+                    Filter::NonBooleanLiteral { value, position } => {
+                        let tag = filter_boolean_literal_tag(value);
+                        return Err(Error::at(
+                            format!(
+                                "expression type mismatch, expected: BOOLEAN, actual: {}",
+                                qdb_types::type_name(tag)
+                            ),
+                            expression.position + position,
+                        ));
+                    }
+                    Filter::And(_, _) | Filter::Or(_, _) => {
+                        validate_not_logical_types(table, expression, operand)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Filter::Not(inner) => validate_not_logical_types(table, expression, inner)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn not_projection_error(expression: &NotExpr, error: Error) -> Error {
+    let source = expression.source_label.as_ref();
+    if is_regex_compilation_error(&error.message) {
+        if let Some(position) = error.position {
+            return Error::at(error.message, expression.position + position);
+        }
+    }
+    if let Some(name) = error.message.strip_prefix("Invalid column: ") {
+        let dependency = name.rsplit('.').next().unwrap_or(name);
+        if let Some((offset, reference)) = source_dependency_reference(source, dependency) {
+            return Error::at(
+                format!("Invalid column: {reference}"),
+                expression.position + offset,
+            );
+        }
+    }
+    if error
+        .message
+        .starts_with("argument type mismatch for function `not`")
+    {
+        if let Some(name) = expression
+            .filter
+            .as_deref()
+            .and_then(not_boolean_column_dependency)
+        {
+            if let Some(offset) = source_dependency_offset_with_qualifier(source, name) {
+                return Error::at(error.message, expression.position + offset);
+            }
+        }
+    }
+    if error.message.starts_with("there is no matching operator") {
+        let lower = source.to_ascii_lowercase();
+        if let Some(offset) = [" ilike ", " like ", " between ", " !~ ", " ~ "]
+            .iter()
+            .find_map(|operator| lower.find(operator).map(|offset| offset + 1))
+        {
+            return Error::at(error.message, expression.position + offset);
+        }
+    }
+    if error.message.starts_with("cannot compare") {
+        if let Some(offset) = source.find('\'') {
+            return Error::at(error.message, expression.position + offset);
+        }
+    }
+    error
+}
+
+fn not_boolean_column_dependency(filter: &Filter) -> Option<&str> {
+    match filter {
+        Filter::Not(inner) => match inner.as_ref() {
+            Filter::BooleanColumn { column } => Some(column),
+            nested => not_boolean_column_dependency(nested),
+        },
+        _ => None,
+    }
+}
+
+fn validate_filter_arithmetic(table: &Table, filter: &Filter) -> Result<(), Error> {
+    match filter {
+        Filter::CompareExpressions { left, right, .. } => {
+            validate_filter_arithmetic_operand(table, left)?;
+            validate_filter_arithmetic_operand(table, right)?;
+        }
+        Filter::Not(inner) => validate_filter_arithmetic(table, inner)?,
+        Filter::And(left, right) | Filter::Or(left, right) => {
+            validate_filter_arithmetic(table, left)?;
+            validate_filter_arithmetic(table, right)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_filter_arithmetic_operand(table: &Table, operand: &FilterOperand) -> Result<(), Error> {
+    let FilterOperand::Arithmetic(expression) = operand else {
+        select_operand_tag(table, operand)?;
+        return Ok(());
+    };
+    validate_filter_arithmetic_operand(table, &expression.left)?;
+    validate_filter_arithmetic_operand(table, &expression.right)?;
+    let left_tag = select_operand_tag(table, &expression.left)?;
+    let right_tag = select_operand_tag(table, &expression.right)?;
+    if matches!(
+        (left_tag, right_tag),
+        (qdb_types::TAG_LONG, qdb_types::TAG_SYMBOL) | (qdb_types::TAG_SYMBOL, qdb_types::TAG_LONG)
+    ) {
+        let error = arithmetic_type_error(expression.op, left_tag, right_tag, expression.position)
+            .expect_err("LONG and SYMBOL arithmetic is unsupported");
+        return Err(error);
+    }
+    select_operand_tag(table, operand)?;
+    Ok(())
 }
 
 fn not_input(table: &Table, arg: &ConcatArg) -> Result<NotInput, Error> {
@@ -4881,6 +5457,15 @@ fn not_input(table: &Table, arg: &ConcatArg) -> Result<NotInput, Error> {
 }
 
 fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Error> {
+    if let Some(arithmetic) = &expr.arithmetic {
+        let operand = parse_filter_operand(arithmetic, 0)?;
+        let result_tag = select_operand_tag(table, &operand)?;
+        return Ok(ResolvedProj::Typeof {
+            label: expr.label.clone(),
+            name: qdb_types::type_name(result_tag).to_string(),
+            result_tag: qdb_types::TAG_STRING,
+        });
+    }
     if let Some(inner) = &expr.geohash {
         let resolved = resolve_make_geohash(table, inner)?;
         let ResolvedProj::MakeGeohash { bits, .. } = resolved else {
@@ -4917,6 +5502,7 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
     if lowered.contains("pg_catalog.age(") || lowered.contains("(age(") {
         let inner = PgAgeExpr {
             label: String::new(),
+            source_label: String::new().into(),
             args: expr.args.clone(),
             qualified: lowered.contains("pg_catalog."),
         };
@@ -4930,6 +5516,7 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
     if lowered.contains("pg_table_is_visible(") {
         let inner = PgTableIsVisibleExpr {
             label: String::new(),
+            source_label: String::new().into(),
             args: expr.args.clone(),
             qualified: expr.label.to_ascii_lowercase().contains("pg_catalog."),
         };
@@ -4943,6 +5530,7 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
     if lowered.contains("pg_get_expr(") {
         let inner = PgGetExprExpr {
             label: expr.label.clone(),
+            source_label: expr.label.clone().into(),
             args: expr.args.clone(),
         };
         resolve_pg_get_expr(table, &inner)?;
@@ -4955,6 +5543,7 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
     if lowered.contains("pg_get_partkeydef(") {
         let inner = PgGetPartKeyDefExpr {
             label: expr.label.clone(),
+            source_label: expr.label.clone().into(),
             args: expr.args.clone(),
         };
         resolve_pg_get_partkeydef(table, &inner)?;
@@ -4967,6 +5556,7 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
     if expr.label.to_ascii_lowercase().contains("pg_get_userbyid(") {
         let inner = PgGetUserByIdExpr {
             label: String::new(),
+            source_label: String::new().into(),
             args: expr.args.clone(),
             qualified: expr.label.to_ascii_lowercase().contains("pg_catalog."),
         };
@@ -4994,6 +5584,61 @@ fn resolve_typeof(table: &Table, expr: &TypeofExpr) -> Result<ResolvedProj, Erro
         name: name.to_string(),
         result_tag,
     })
+}
+
+fn filter_operand_tag(table: &Table, operand: &FilterOperand) -> Result<i32, Error> {
+    match operand {
+        FilterOperand::Literal(value) => Ok(literal_tag(value)),
+        FilterOperand::Projection(expr) => {
+            let resolved = resolve_proj(table, expr)?;
+            match &resolved {
+                ResolvedProj::Column { index } => Ok(table.meta.columns[*index].tag),
+                _ => Ok(resolved.expr_tag()),
+            }
+        }
+        FilterOperand::Arithmetic(expr) => {
+            let mut left_tag = filter_operand_tag(table, &expr.left)?;
+            let mut right_tag = filter_operand_tag(table, &expr.right)?;
+            if left_tag == qdb_types::TAG_SYMBOL
+                && matches!(
+                    right_tag,
+                    qdb_types::TAG_BYTE
+                        | qdb_types::TAG_SHORT
+                        | qdb_types::TAG_INT
+                        | qdb_types::TAG_LONG
+                )
+            {
+                left_tag = qdb_types::TAG_INT;
+            } else if right_tag == qdb_types::TAG_SYMBOL
+                && matches!(
+                    left_tag,
+                    qdb_types::TAG_BYTE
+                        | qdb_types::TAG_SHORT
+                        | qdb_types::TAG_INT
+                        | qdb_types::TAG_LONG
+                )
+            {
+                right_tag = qdb_types::TAG_INT;
+            }
+            if is_text_tag(left_tag)
+                && is_numeric_tag(right_tag)
+                && !matches!(right_tag, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP)
+            {
+                left_tag = right_tag;
+            } else if is_text_tag(right_tag)
+                && is_numeric_tag(left_tag)
+                && !matches!(left_tag, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP)
+            {
+                right_tag = left_tag;
+            }
+            if !is_numeric_tag(left_tag) || !is_numeric_tag(right_tag) {
+                let error = arithmetic_type_error(expr.op, left_tag, right_tag, expr.position)
+                    .expect_err("arithmetic type validation must fail here");
+                return Err(error);
+            }
+            Ok(arithmetic_result_tag(left_tag, right_tag, expr.op))
+        }
+    }
 }
 
 fn typeof_binding(table: &Table, arg: &ConcatArg) -> Result<(&'static str, i32), Error> {
@@ -7425,35 +8070,42 @@ fn resolve_nanos(table: &Table, expr: &NanosExpr) -> Result<ResolvedProj, Error>
 }
 
 fn nanos_side(table: &Table, arg: &ConcatArg) -> Result<DateDiffSide, Error> {
-    let ConcatArg::Column(name) = arg else {
-        return Err(datediff_type_mismatch("nanos", 1, "UNSUPPORTED"));
-    };
-    let Some(index) = table.column_index(name) else {
-        return Err(Error::new(format!("Invalid column: {name}")));
-    };
-    let tag = table.meta.columns[index].tag;
-    match tag {
-        qdb_types::TAG_TIMESTAMP
-        | qdb_types::TAG_DATE
-        | qdb_types::TAG_LONG
-        | qdb_types::TAG_INT => Ok(DateDiffSide::Column { index }),
-        qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR | qdb_types::TAG_SYMBOL => {
-            let sample = table
-                .columns
-                .get(index)
-                .and_then(|column| column.first())
-                .map(scalar_text)
-                .unwrap_or_default();
-            Err(Error::new(format!(
-                "inconvertible value: `{sample}` [{} -> TIMESTAMP_NS]",
-                qdb_types::type_name(tag)
-            )))
+    match arg {
+        ConcatArg::Column(name) => {
+            let Some(index) = table.column_index(name) else {
+                return Err(Error::new(format!("Invalid column: {name}")));
+            };
+            let tag = table.meta.columns[index].tag;
+            match tag {
+                qdb_types::TAG_TIMESTAMP
+                | qdb_types::TAG_DATE
+                | qdb_types::TAG_LONG
+                | qdb_types::TAG_INT => Ok(DateDiffSide::Column { index }),
+                qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR | qdb_types::TAG_SYMBOL => {
+                    let sample = table
+                        .columns
+                        .get(index)
+                        .and_then(|column| column.first())
+                        .map(scalar_text)
+                        .unwrap_or_default();
+                    Err(Error::new(format!(
+                        "inconvertible value: `{sample}` [{} -> TIMESTAMP_NS]",
+                        qdb_types::type_name(tag)
+                    )))
+                }
+                _ => Err(datediff_type_mismatch(
+                    "nanos",
+                    1,
+                    qdb_types::type_name(tag),
+                )),
+            }
         }
-        _ => Err(datediff_type_mismatch(
-            "nanos",
-            1,
-            qdb_types::type_name(tag),
-        )),
+        ConcatArg::Literal(Scalar::Null) => Ok(DateDiffSide::Null),
+        ConcatArg::Literal(Scalar::Long(number)) => Ok(DateDiffSide::Micros(*number)),
+        ConcatArg::Literal(Scalar::Text(text)) => qdb_types::parse_timestamp_micros(text)
+            .map(DateDiffSide::Micros)
+            .ok_or_else(|| Error::new(format!("Invalid date [str={text}]"))),
+        ConcatArg::Literal(_) => Err(datediff_type_mismatch("nanos", 1, "UNSUPPORTED")),
     }
 }
 
@@ -7631,6 +8283,7 @@ fn datediff_side(
                 qdb_types::TAG_TIMESTAMP | qdb_types::TAG_LONG => {
                     Ok(DateDiffSide::Column { index })
                 }
+                qdb_types::TAG_DATE => Ok(DateDiffSide::Column { index }),
                 tag => Err(datediff_type_mismatch(
                     function,
                     position,
@@ -7694,6 +8347,7 @@ fn datediff_micros(table: &Table, row: usize, side: &DateDiffSide) -> Option<i64
         DateDiffSide::Micros(number) => Some(*number),
         DateDiffSide::Column { index } => match table.columns[*index][row] {
             Scalar::Timestamp(number) | Scalar::Long(number) => Some(number),
+            Scalar::Date(number) => number.checked_mul(1_000),
             _ => None,
         },
     }
@@ -9051,7 +9705,7 @@ fn resolve_ilike(table: &Table, expr: &IlikeExpr) -> Result<ResolvedProj, Error>
         if expr.args.len() == 2 && value_ok && ilike_text_column(table, &expr.args[1]) {
             return Err(Error::new("use constant or bind variable"));
         }
-        return ilike_operator_error(table, &expr.args, "ilike");
+        return Err(ilike_operator_error(table, &expr.args, "ilike")?);
     }
     let pattern = match &expr.args[1] {
         ConcatArg::Literal(Scalar::Text(text)) if !text.is_empty() => {
@@ -9595,7 +10249,7 @@ fn resolve_like(table: &Table, expr: &LikeExpr) -> Result<ResolvedProj, Error> {
         if expr.args.len() == 2 && value_ok && ilike_text_column(table, &expr.args[1]) {
             return Err(Error::new("use constant or bind variable"));
         }
-        return ilike_operator_error(table, &expr.args, "like");
+        return Err(ilike_operator_error(table, &expr.args, "like")?);
     }
     let pattern = match &expr.args[1] {
         ConcatArg::Literal(Scalar::Text(text)) if !text.is_empty() => {
@@ -9609,6 +10263,7 @@ fn resolve_like(table: &Table, expr: &LikeExpr) -> Result<ResolvedProj, Error> {
         pattern,
         negated: expr.negated,
         regex: None,
+        regex_null: false,
     })
 }
 
@@ -9621,17 +10276,30 @@ fn resolve_regex(table: &Table, expr: &LikeExpr) -> Result<ResolvedProj, Error> 
     let op = if expr.negated { "!~" } else { "~" };
     if matches!(expr.args[1], ConcatArg::Column(_)) {
         if expr.negated {
-            return ilike_operator_error(table, &expr.args, op);
+            return Err(ilike_operator_error(table, &expr.args, op)?);
         }
         return Err(Error::new(
             "not implemented: dynamic pattern would be very slow to execute".to_string(),
         ));
     }
+    if matches!(expr.args[1], ConcatArg::Literal(Scalar::Null)) {
+        if !replace_text_ok(table, &expr.args[0]) {
+            return Err(ilike_operator_error(table, &expr.args, op)?);
+        }
+        return Ok(ResolvedProj::Like {
+            label: expr.label.clone(),
+            value: resolve_concat_arg(table, &expr.args[0])?,
+            pattern: IlikePattern::Never,
+            negated: expr.negated,
+            regex: None,
+            regex_null: true,
+        });
+    }
     let ConcatArg::Literal(Scalar::Text(text)) = &expr.args[1] else {
-        return ilike_operator_error(table, &expr.args, op);
+        return Err(ilike_operator_error(table, &expr.args, op)?);
     };
     if !replace_text_ok(table, &expr.args[0]) {
-        return ilike_operator_error(table, &expr.args, op);
+        return Err(ilike_operator_error(table, &expr.args, op)?);
     }
     Ok(ResolvedProj::Like {
         label: expr.label.clone(),
@@ -9639,105 +10307,416 @@ fn resolve_regex(table: &Table, expr: &LikeExpr) -> Result<ResolvedProj, Error> 
         pattern: IlikePattern::Never,
         negated: expr.negated,
         regex: Some(compile_regex(text)?),
+        regex_null: false,
     })
 }
 
-fn ilike_operator_error(
-    table: &Table,
-    args: &[ConcatArg],
-    name: &str,
-) -> Result<ResolvedProj, Error> {
+fn ilike_operator_error(table: &Table, args: &[ConcatArg], name: &str) -> Result<Error, Error> {
     let right_at = if args.len() == 2 { 1 } else { args.len() - 1 };
     let left = replace_arg_type(table, &args[0])?;
     let right = replace_arg_type(table, &args[right_at])?;
-    Err(Error::new(format!(
+    Ok(Error::new(format!(
         "there is no matching operator `{name}` with the argument types: {left} {name} {right}"
     )))
 }
 
-#[derive(Clone, Copy)]
-enum RegexAtom {
-    Lit(char),
-    Any,
+fn compile_regex(pattern: &str) -> Result<CompiledRegex, Error> {
+    if pattern.ends_with('\\') {
+        let index = pattern.chars().count();
+        return Err(Error::new(format!(
+            "Unescaped trailing backslash near index {index}\n{pattern}"
+        )));
+    }
+    if let Some(index) = pattern.find("**").map(|index| index + 1) {
+        return Err(Error::new(format!(
+            "Dangling meta character '*' near index {index}\n{pattern}\n{}^",
+            " ".repeat(index)
+        )));
+    }
+    if let Some(error) = java_anchor_in_character_class_error(pattern) {
+        return Err(error);
+    }
+    let translated = translate_java_regex_escapes(pattern);
+    match regex::Regex::new(&translated) {
+        Ok(regex) => Ok(CompiledRegex::Linear(regex)),
+        Err(error) => match fancy_regex::RegexBuilder::new(&translated)
+            .backtrack_limit(usize::MAX)
+            .build()
+        {
+            Ok(regex) => Ok(CompiledRegex::Backtracking(regex)),
+            Err(_) => Err(legacy_regex_compile_error(pattern, error)),
+        },
+    }
 }
 
-#[derive(Clone, Copy)]
-enum RegexTerm {
-    Atom(RegexAtom),
-    Star(RegexAtom),
-}
-
-fn compile_regex(pattern: &str) -> Result<Vec<RegexTerm>, Error> {
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut terms = Vec::new();
+fn translate_java_regex_escapes(pattern: &str) -> String {
+    const HORIZONTAL: &str =
+        r"\x{9}-\x{d}\x{20}\x{85}\x{a0}\x{1680}\x{180e}\x{2000}-\x{200a}\x{202f}\x{205f}\x{3000}";
+    let chars = pattern.chars().collect::<Vec<_>>();
+    let mut translated = String::with_capacity(pattern.len());
     let mut index = 0;
     while index < chars.len() {
-        let atom = match chars[index] {
-            '\\' => {
-                index += 1;
-                let Some(escaped) = chars.get(index).copied() else {
-                    return Err(Error::new(
-                        "regular expression must not end with an escape".to_string(),
-                    ));
-                };
-                RegexAtom::Lit(escaped)
+        if chars[index] == '[' {
+            if let Some(end) = regex_class_end(&chars, index) {
+                translated.push_str(&translate_java_character_class(
+                    &chars[index + 1..end],
+                    HORIZONTAL,
+                ));
+                index = end + 1;
+                continue;
             }
-            '.' => RegexAtom::Any,
-            '*' => {
-                return Err(Error::new("dangling meta character '*'".to_string()));
+        }
+        if chars[index] == '\\' && index + 1 < chars.len() {
+            match chars[index + 1] {
+                'Q' => {
+                    let (quoted, next) = take_quoted_regex_literal(&chars, index + 2);
+                    for ch in quoted {
+                        push_escaped_regex_char(&mut translated, ch);
+                    }
+                    index = next;
+                    continue;
+                }
+                'h' => {
+                    translated.push('[');
+                    translated.push_str(HORIZONTAL);
+                    translated.push(']');
+                    index += 2;
+                    continue;
+                }
+                'H' => {
+                    translated.push_str("[^");
+                    translated.push_str(HORIZONTAL);
+                    translated.push(']');
+                    index += 2;
+                    continue;
+                }
+                'Z' => {
+                    translated.push_str(r"(?=(?:\r\n|[\n\r\x{85}\x{2028}\x{2029}])?\z)");
+                    index += 2;
+                    continue;
+                }
+                'p' | 'P' => {
+                    if let Some((property, next)) = regex_property(&chars, index + 2) {
+                        if let Some((start, end)) = java_block_range(&property) {
+                            translated.push('[');
+                            if chars[index + 1] == 'P' {
+                                translated.push('^');
+                            }
+                            translated.push_str(&format!(r"\x{{{start:x}}}-\x{{{end:x}}}"));
+                            translated.push(']');
+                            index = next;
+                            continue;
+                        }
+                    }
+                }
+                _ => {}
             }
-            ch => RegexAtom::Lit(ch),
-        };
+        }
+        translated.push(chars[index]);
         index += 1;
-        if chars.get(index) == Some(&'*') {
-            terms.push(RegexTerm::Star(atom));
-            index += 1;
+    }
+    translated
+}
+
+fn regex_class_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut index = start + 1;
+    if chars.get(index) == Some(&'^') {
+        index += 1;
+    }
+    if chars.get(index) == Some(&']') {
+        index += 1;
+    }
+    let mut nested = 0usize;
+    while index < chars.len() {
+        match chars[index] {
+            '\\' if index + 1 < chars.len() => {
+                if chars[index + 1] == 'Q' {
+                    let (_, next) = take_quoted_regex_literal(chars, index + 2);
+                    index = next;
+                } else {
+                    index += 2;
+                }
+            }
+            '[' => {
+                nested += 1;
+                index += 1;
+            }
+            ']' if nested == 0 => return Some(index),
+            ']' => {
+                nested -= 1;
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+    None
+}
+
+fn take_quoted_regex_literal(chars: &[char], start: usize) -> (Vec<char>, usize) {
+    let mut quoted = Vec::new();
+    let mut index = start;
+    while index < chars.len() {
+        if chars[index] == '\\' && chars.get(index + 1) == Some(&'E') {
+            return (quoted, index + 2);
+        }
+        quoted.push(chars[index]);
+        index += 1;
+    }
+    (quoted, index)
+}
+
+fn translate_java_character_class(body: &[char], horizontal: &str) -> String {
+    let negated = body.first() == Some(&'^');
+    let content = if negated { &body[1..] } else { body };
+    let horizontal_positions = top_level_non_horizontal_escapes(content);
+    if horizontal_positions.is_empty() {
+        let mut output = String::from("[");
+        if negated {
+            output.push('^');
+        }
+        output.push_str(&translate_java_class_content(content, horizontal));
+        output.push(']');
+        return output;
+    }
+
+    let mut other = String::new();
+    let mut index = 0;
+    while index < content.len() {
+        if content[index] == '\\' && content.get(index + 1) == Some(&'H') {
+            index += 2;
         } else {
-            terms.push(RegexTerm::Atom(atom));
+            other.push(content[index]);
+            index += 1;
         }
     }
-    Ok(terms)
-}
-
-fn regex_search(text: &str, terms: &[RegexTerm]) -> bool {
-    let chars: Vec<char> = text.chars().collect();
-    (0..=chars.len()).any(|start| regex_at(&chars, start, terms, 0))
-}
-
-fn regex_at(chars: &[char], pos: usize, terms: &[RegexTerm], index: usize) -> bool {
-    if index == terms.len() {
-        return true;
-    }
-    match terms[index] {
-        RegexTerm::Atom(atom) => {
-            pos < chars.len()
-                && regex_atom_eq(chars[pos], atom)
-                && regex_at(chars, pos + 1, terms, index + 1)
+    let other = translate_java_class_content(&other.chars().collect::<Vec<_>>(), horizontal);
+    if negated {
+        if other.is_empty() {
+            format!("[{horizontal}]")
+        } else {
+            format!("[{horizontal}&&[^{other}]]")
         }
-        RegexTerm::Star(atom) => {
-            let mut end = pos;
-            while end < chars.len() && regex_atom_eq(chars[end], atom) {
-                end += 1;
+    } else if other.is_empty() {
+        format!("[^{horizontal}]")
+    } else {
+        format!("(?:[^{horizontal}]|[{other}])")
+    }
+}
+
+fn top_level_non_horizontal_escapes(content: &[char]) -> Vec<usize> {
+    let mut positions = Vec::new();
+    let mut index = 0;
+    let mut nested = 0usize;
+    while index + 1 < content.len() {
+        match content[index] {
+            '\\' if content[index + 1] == 'Q' => {
+                let (_, next) = take_quoted_regex_literal(content, index + 2);
+                index = next;
             }
-            let mut cursor = end;
-            loop {
-                if regex_at(chars, cursor, terms, index + 1) {
-                    return true;
-                }
-                if cursor == pos {
-                    return false;
-                }
-                cursor -= 1;
+            '\\' if content[index + 1] == 'H' && nested == 0 => {
+                positions.push(index);
+                index += 2;
             }
+            '\\' => index += 2,
+            '[' => {
+                nested += 1;
+                index += 1;
+            }
+            ']' if nested > 0 => {
+                nested -= 1;
+                index += 1;
+            }
+            _ => index += 1,
         }
+    }
+    positions
+}
+
+fn translate_java_class_content(content: &[char], horizontal: &str) -> String {
+    let mut output = String::new();
+    let mut index = 0;
+    while index < content.len() {
+        if content[index] == '\\' && index + 1 < content.len() {
+            match content[index + 1] {
+                'Q' => {
+                    let (quoted, next) = take_quoted_regex_literal(content, index + 2);
+                    for ch in quoted {
+                        push_escaped_class_char(&mut output, ch);
+                    }
+                    index = next;
+                    continue;
+                }
+                'h' => {
+                    output.push_str(horizontal);
+                    index += 2;
+                    continue;
+                }
+                'p' | 'P' => {
+                    if let Some((property, next)) = regex_property(content, index + 2) {
+                        if let Some((start, end)) = java_block_range(&property) {
+                            if content[index + 1] == 'P' {
+                                output.push_str(&format!(r"[^\x{{{start:x}}}-\x{{{end:x}}}]"));
+                            } else {
+                                output.push_str(&format!(r"\x{{{start:x}}}-\x{{{end:x}}}"));
+                            }
+                            index = next;
+                            continue;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            output.push('\\');
+            output.push(content[index + 1]);
+            index += 2;
+        } else {
+            output.push(content[index]);
+            index += 1;
+        }
+    }
+    output
+}
+
+fn push_escaped_regex_char(output: &mut String, ch: char) {
+    if matches!(
+        ch,
+        '\\' | '.' | '^' | '$' | '|' | '?' | '*' | '+' | '(' | ')' | '[' | ']' | '{' | '}'
+    ) {
+        output.push('\\');
+    }
+    output.push(ch);
+}
+
+fn push_escaped_class_char(output: &mut String, ch: char) {
+    if matches!(ch, '\\' | ']' | '-' | '^' | '[') {
+        output.push('\\');
+    }
+    output.push(ch);
+}
+
+fn regex_property(chars: &[char], start: usize) -> Option<(String, usize)> {
+    if chars.get(start) != Some(&'{') {
+        return None;
+    }
+    let close = chars[start + 1..].iter().position(|ch| *ch == '}')? + start + 1;
+    Some((chars[start + 1..close].iter().collect(), close + 1))
+}
+
+fn java_block_range(property: &str) -> Option<(u32, u32)> {
+    let property = property.strip_prefix("In")?;
+    let normalized = property
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    match normalized.as_str() {
+        "basiclatin" => Some((0x0000, 0x007f)),
+        "latin1supplement" => Some((0x0080, 0x00ff)),
+        "latinextendeda" => Some((0x0100, 0x017f)),
+        "latinextendedb" => Some((0x0180, 0x024f)),
+        "greek" | "greekandcoptic" => Some((0x0370, 0x03ff)),
+        "cyrillic" => Some((0x0400, 0x04ff)),
+        _ => None,
     }
 }
 
-fn regex_atom_eq(ch: char, atom: RegexAtom) -> bool {
-    match atom {
-        RegexAtom::Any => ch != '\n' && ch != '\r',
-        RegexAtom::Lit(lit) => ch == lit,
+fn java_anchor_in_character_class_error(pattern: &str) -> Option<Error> {
+    let chars = pattern.chars().collect::<Vec<_>>();
+    let mut in_class = false;
+    let mut index = 0;
+    while index + 1 < chars.len() {
+        if chars[index] == '\\' {
+            match chars[index + 1] {
+                'Q' => {
+                    let (_, next) = take_quoted_regex_literal(&chars, index + 2);
+                    index = next;
+                    continue;
+                }
+                'Z' | 'z' if in_class => {
+                    let error_index = index + 1;
+                    return Some(Error::new(format!(
+                        "Illegal/unsupported escape sequence near index {error_index}\n{pattern}\n{}^",
+                        " ".repeat(error_index)
+                    )));
+                }
+                _ => index += 2,
+            }
+        } else {
+            match chars[index] {
+                '[' => in_class = true,
+                ']' => in_class = false,
+                _ => {}
+            }
+            index += 1;
+        }
     }
+    None
+}
+
+fn legacy_regex_compile_error(pattern: &str, error: regex::Error) -> Error {
+    let error = error.to_string();
+    if error.contains("unclosed character class") {
+        let mut escaped = false;
+        let mut class_start = None;
+        for (index, ch) in pattern.char_indices() {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '[' && class_start.is_none() {
+                class_start = Some(index);
+            } else if ch == ']' {
+                class_start = None;
+            }
+        }
+        let index = class_start.unwrap_or(0);
+        return Error::new(format!(
+            "Unclosed character class near index {index}\n{pattern}\n{}^",
+            " ".repeat(index)
+        ));
+    }
+    if error.contains("repetition operator missing expression") {
+        if let Some(index) = pattern.find("**").map(|index| index + 1) {
+            return Error::new(format!(
+                "Dangling meta character '*' near index {index}\n{pattern}\n{}^",
+                " ".repeat(index)
+            ));
+        }
+    }
+    if error.contains("unclosed group") {
+        let index = pattern.chars().count();
+        return Error::new(format!("Unclosed group near index {index}\n{pattern}"));
+    }
+    Error::new(error)
+}
+
+fn is_regex_compilation_error(message: &str) -> bool {
+    message.starts_with("Unescaped trailing backslash")
+        || message.starts_with("Unclosed character class")
+        || message.starts_with("Dangling meta character")
+        || message.starts_with("Unclosed group")
+        || message.starts_with("error parsing")
+        || message.starts_with("regex parse error:")
+}
+
+fn regex_error_position(pattern: &str, pattern_position: usize, message: &str) -> usize {
+    let char_offset = message
+        .split_once("near index ")
+        .and_then(|(_, rest)| {
+            let digits = rest
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>();
+            (!digits.is_empty())
+                .then(|| digits.parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0);
+    let byte_offset = pattern
+        .char_indices()
+        .nth(char_offset)
+        .map_or(pattern.len(), |(offset, _)| offset);
+    pattern_position + byte_offset
 }
 
 fn like_row(
@@ -9888,22 +10867,25 @@ fn resolve_regexp_replace(table: &Table, expr: &RegexpReplaceExpr) -> Result<Res
     if expr.args.len() != 3 || expr.args.iter().any(|arg| !replace_text_ok(table, arg)) {
         return Err(text_type_error(table, "regexp_replace", &expr.args));
     }
-    let mode = if matches!(expr.args[2], ConcatArg::Literal(Scalar::Null))
-        || matches!(expr.args[1], ConcatArg::Literal(Scalar::Null))
-    {
-        ReplaceMode::Null
-    } else if matches!(&expr.args[1], ConcatArg::Literal(Scalar::Text(text)) if text.is_empty()) {
-        ReplaceMode::Value(resolve_concat_arg(table, &expr.args[0])?)
-    } else if matches!(expr.args[0], ConcatArg::Literal(Scalar::Null)) {
-        ReplaceMode::Null
-    } else if matches!(&expr.args[0], ConcatArg::Literal(Scalar::Text(text)) if text.is_empty()) {
-        ReplaceMode::Empty
-    } else {
-        ReplaceMode::Run {
-            value: resolve_concat_arg(table, &expr.args[0])?,
-            old: resolve_concat_arg(table, &expr.args[1])?,
-            new: resolve_concat_arg(table, &expr.args[2])?,
+    let pattern_position = expr.arg_positions.get(1).copied().unwrap_or(expr.position);
+    let replacement_position = expr.arg_positions.get(2).copied().unwrap_or(expr.position);
+    let regex = match &expr.args[1] {
+        ConcatArg::Literal(Scalar::Text(pattern)) => {
+            Some(compile_regex(pattern).map_err(|error| {
+                let position = regex_error_position(pattern, pattern_position + 1, &error.message);
+                Error::at(error.message, position)
+            })?)
         }
+        _ => None,
+    };
+    let mode = RegexpReplaceMode::Run {
+        value: resolve_concat_arg(table, &expr.args[0])?,
+        pattern: resolve_concat_arg(table, &expr.args[1])?,
+        regex,
+        replacement: resolve_concat_arg(table, &expr.args[2])?,
+        pattern_position,
+        replacement_position,
+        function_position: expr.position,
     };
     Ok(ResolvedProj::RegexpReplace {
         label: expr.label.clone(),
@@ -10452,6 +11434,13 @@ fn resolve_concat_arg(table: &Table, arg: &ConcatArg) -> Result<ResolvedArg, Err
 
 fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar, Error> {
     match item {
+        ResolvedProj::Not {
+            input: NotInput::Predicate(filter),
+            ..
+        } => row_matches(table, row, filter).map(Scalar::Boolean),
+        ResolvedProj::Arithmetic { operand, .. } => {
+            eval_select_operand(table, row, operand).map(|(value, _)| value)
+        }
         ResolvedProj::Sin { input, .. } => sin_scalar(table, row, input),
         ResolvedProj::Cos { input, .. } => cos_scalar(table, row, input),
         ResolvedProj::Tan { input, .. } => tan_scalar(table, row, input),
@@ -10487,13 +11476,120 @@ fn eval_checked(table: &Table, row: usize, item: &ResolvedProj) -> Result<Scalar
         }
         ResolvedProj::ToUuid { lo, hi, .. } => to_uuid_scalar(table, row, lo, hi),
         ResolvedProj::ToChar { source, .. } => to_char_scalar(table, row, source),
+        ResolvedProj::Like {
+            value,
+            pattern,
+            negated,
+            regex,
+            regex_null,
+            ..
+        } => {
+            if *regex_null {
+                Ok(Scalar::Boolean(false))
+            } else {
+                let matched = if let Some(regex) = regex {
+                    match text_of(table, row, value) {
+                        Some(text) => regex.is_match(&text)?,
+                        None => false,
+                    }
+                } else {
+                    like_row(table, row, value, pattern, false)
+                };
+                Ok(Scalar::Boolean(if *negated { !matched } else { matched }))
+            }
+        }
+        ResolvedProj::RegexpReplace { mode, .. } => eval_regexp_replace(table, row, mode),
         _ => Ok(eval_resolved(table, row, item)),
     }
+}
+
+fn validate_regexp_replace_arguments(items: &[ResolvedProj]) -> Result<(), Error> {
+    for item in items {
+        let ResolvedProj::RegexpReplace {
+            mode:
+                RegexpReplaceMode::Run {
+                    pattern,
+                    replacement,
+                    pattern_position,
+                    replacement_position,
+                    ..
+                },
+            ..
+        } = item
+        else {
+            continue;
+        };
+        if matches!(pattern, ResolvedArg::Column { .. }) {
+            return Err(Error::at(
+                "not implemented: dynamic pattern would be very slow to execute",
+                *pattern_position,
+            ));
+        }
+        if matches!(replacement, ResolvedArg::Column { .. }) {
+            return Err(Error::at(
+                "not implemented: dynamic replacement would be slow to execute",
+                *replacement_position,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn eval_regexp_replace(
+    table: &Table,
+    row: usize,
+    mode: &RegexpReplaceMode,
+) -> Result<Scalar, Error> {
+    let RegexpReplaceMode::Run {
+        value,
+        pattern,
+        regex,
+        replacement,
+        pattern_position,
+        replacement_position,
+        function_position,
+    } = mode;
+    if matches!(pattern, ResolvedArg::Column { .. }) {
+        return Err(Error::at(
+            "not implemented: dynamic pattern would be very slow to execute",
+            *pattern_position,
+        ));
+    }
+    if matches!(replacement, ResolvedArg::Column { .. }) {
+        return Err(Error::at(
+            "not implemented: dynamic replacement would be slow to execute",
+            *replacement_position,
+        ));
+    }
+    let (Some(text), Some(replacement)) =
+        (text_of(table, row, value), text_of(table, row, replacement))
+    else {
+        return Ok(Scalar::Null);
+    };
+    let Some(regex) = regex else {
+        return Ok(Scalar::Null);
+    };
+    let output = regex
+        .replace_all_java(&text, &replacement)
+        .map_err(|error| {
+            Error::new(format!(
+                "regexp_replace failed [position={function_position}, ex={error}]"
+            ))
+        })?;
+    if output.len() > 1_048_576 {
+        return Err(Error::new(
+            "breached memory limit set for regexp_replace(SSS) [maxLength=1048576]",
+        ));
+    }
+    Ok(Scalar::Text(output))
 }
 
 fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
     match item {
         ResolvedProj::Column { index } => table.columns[*index][row].clone(),
+        ResolvedProj::Arithmetic { operand, .. } => eval_select_operand(table, row, operand)
+            .map(|(value, _)| value)
+            .unwrap_or(Scalar::Null),
         ResolvedProj::Concat { args, .. } => Scalar::Text(
             args.iter()
                 .map(|arg| match arg {
@@ -10684,6 +11780,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 Scalar::Boolean(value) => Scalar::Boolean(!value),
                 _ => Scalar::Boolean(true),
             },
+            NotInput::Predicate(_) => Scalar::Null,
         },
         ResolvedProj::Sqrt { input, .. } => match sqrt_number(table, row, input) {
             Some(value) => {
@@ -10956,14 +12053,19 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             pattern,
             negated,
             regex,
+            regex_null,
             ..
         } => {
-            let matched = if let Some(terms) = regex {
-                text_of(table, row, value).is_some_and(|text| regex_search(&text, terms))
+            if *regex_null {
+                Scalar::Boolean(false)
             } else {
-                like_row(table, row, value, pattern, false)
-            };
-            Scalar::Boolean(if *negated { !matched } else { matched })
+                let matched = if let Some(regex) = regex {
+                    text_of(table, row, value).is_some_and(|text| regex.is_match_or_false(&text))
+                } else {
+                    like_row(table, row, value, pattern, false)
+                };
+                Scalar::Boolean(if *negated { !matched } else { matched })
+            }
         }
         ResolvedProj::Switch {
             key,
@@ -10989,8 +12091,7 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             };
             Scalar::Boolean(matched)
         }
-        ResolvedProj::Replace { mode, .. } | ResolvedProj::RegexpReplace { mode, .. } => match mode
-        {
+        ResolvedProj::Replace { mode, .. } => match mode {
             ReplaceMode::Null => Scalar::Null,
             ReplaceMode::Empty => Scalar::Text(String::new()),
             ReplaceMode::Value(arg) => match text_of(table, row, arg) {
@@ -11006,6 +12107,9 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 },
             },
         },
+        ResolvedProj::RegexpReplace { mode, .. } => {
+            eval_regexp_replace(table, row, mode).unwrap_or(Scalar::Null)
+        }
         ResolvedProj::Trim { arg, end, .. } => match text_of(table, row, arg) {
             Some(text) => Scalar::Text(trim_ascii_space(&text, *end)),
             None => Scalar::Null,
@@ -11027,11 +12131,7 @@ fn power_value(table: &Table, row: usize, base: &SqrtInput, exponent: &SqrtInput
         }
     };
     let result = base.powf(exponent);
-    if result.is_finite() {
-        Scalar::Double(result)
-    } else {
-        Scalar::Null
-    }
+    Scalar::Double(result)
 }
 
 fn log_value(table: &Table, row: usize, input: &SqrtInput, function: fn(f64) -> f64) -> Scalar {
@@ -12096,79 +13196,206 @@ fn execute_group(
     table: &Table,
     query: &Query,
     grouped: Option<&GroupedSelect>,
-    aggregate: &AggregateExpr,
+    aggregates: &[AggregateExpr],
 ) -> Result<QueryResult, Error> {
-    let group_name = query
+    let group_exprs = query
         .group_by
         .as_deref()
         .ok_or_else(|| Error::new("unsupported: aggregate mixed with other select expressions"))?;
-    let key_index = if let Some(grouped) = grouped {
-        let select_index = table
-            .column_index(&grouped.key)
-            .ok_or_else(|| Error::new(format!("Invalid column: {}", grouped.key)))?;
-        let group_index = table
-            .column_index(group_name)
-            .ok_or_else(|| Error::new(format!("Invalid column: {group_name}")))?;
-        if select_index != group_index {
-            return Err(Error::new(
-                "column must appear in GROUP BY clause or aggregate function",
-            ));
+    let mut group_operands = Vec::with_capacity(group_exprs.len());
+    let mut group_tags = Vec::with_capacity(group_exprs.len());
+    for expression in group_exprs {
+        let operand = parse_filter_operand(&expression.source, expression.position)?;
+        let tag = select_operand_tag(table, &operand).map_err(|error| {
+            if let Some(name) = error
+                .message
+                .strip_prefix("unknown column `")
+                .and_then(|message| message.strip_suffix('`'))
+            {
+                let offset = expression.source.find(name).unwrap_or_default();
+                Error::at(
+                    format!("Invalid column: {name}"),
+                    expression.position + offset,
+                )
+            } else {
+                error
+            }
+        })?;
+        group_operands.push(operand);
+        group_tags.push(tag);
+    }
+    let selected_key_groups = if let Some(grouped) = grouped {
+        let mut selected = Vec::with_capacity(grouped.keys.len());
+        for key in &grouped.keys {
+            let Some(group_index) = group_operands
+                .iter()
+                .position(|operand| same_filter_operand(&key.operand, operand))
+            else {
+                return Err(Error::at(
+                    "column must appear in GROUP BY clause or aggregate function",
+                    key.position,
+                ));
+            };
+            selected.push(group_index);
         }
-        select_index
+        selected
     } else {
-        table
-            .column_index(group_name)
-            .ok_or_else(|| Error::new(format!("Invalid column: {group_name}")))?
+        Vec::new()
     };
+    let mut execution_aggregates = aggregates.to_vec();
     for order in &query.order_by {
-        let by_aggregate = order.column.eq_ignore_ascii_case(&aggregate.label);
-        let by_key = order.column.eq_ignore_ascii_case(group_name);
+        if execution_aggregates
+            .iter()
+            .any(|aggregate| order.column.eq_ignore_ascii_case(&aggregate.label))
+            || !order.column.contains('(')
+        {
+            continue;
+        }
+        let sql = format!("SELECT {} FROM {}", order.column, query.table);
+        if let Ok(order_query) = parse_query(&sql) {
+            if let SelectList::Aggregate(aggregate) = order_query.columns {
+                execution_aggregates.push(*aggregate);
+            }
+        }
+    }
+    for order in &query.order_by {
+        let by_aggregate = execution_aggregates
+            .iter()
+            .any(|aggregate| order.column.eq_ignore_ascii_case(&aggregate.label));
+        let by_key = group_exprs.iter().enumerate().any(|(group_index, key)| {
+            order.column.eq_ignore_ascii_case(&key.source)
+                || grouped.is_some_and(|selection| {
+                    selection
+                        .keys
+                        .iter()
+                        .enumerate()
+                        .any(|(selected_index, selected_key)| {
+                            selected_key_groups[selected_index] == group_index
+                                && selected_key.label.eq_ignore_ascii_case(&order.column)
+                        })
+                })
+        });
         if !by_aggregate && !by_key {
+            let expression_position = group_exprs
+                .iter()
+                .find(|key| order.column.eq_ignore_ascii_case(&key.source))
+                .map(|key| key.position);
+            let position = expression_position.unwrap_or(order.position);
+            let message = if table.column_index(&order.column).is_some() {
+                format!(
+                    "ORDER BY expressions must appear in select list. Invalid column: {}",
+                    order.column
+                )
+            } else {
+                format!("Invalid column: {}", order.column)
+            };
+            return Err(Error::at(message, position));
+        }
+    }
+    if execution_aggregates.is_empty() {
+        return Err(Error::new("internal: grouped select without aggregates"));
+    }
+    let mut inputs = Vec::with_capacity(execution_aggregates.len());
+    let mut value_tags = Vec::with_capacity(execution_aggregates.len());
+    for aggregate in &execution_aggregates {
+        let fallback_position = if aggregate_error_at_zero(aggregate) {
+            0
+        } else {
+            aggregate.position
+        };
+        let input = aggregate_input(table, aggregate)
+            .map_err(|error| grouped_aggregate_error(error, aggregate, fallback_position))?;
+        if aggregate.func == AggFunc::CountDistinct
+            && matches!(
+                input.tag,
+                qdb_types::TAG_BOOLEAN | qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE
+            )
+        {
             return Err(Error::new(format!(
-                "ORDER BY expressions must appear in select list. Invalid column: {}",
-                order.column
+                "there is no matching function `count_distinct` with the argument types: ({})",
+                qdb_types::type_name(input.tag)
             )));
         }
+        value_tags.push(aggregate_order_tag(&input));
+        inputs.push(input);
     }
-    let input = aggregate_input(table, aggregate)?;
-    if aggregate.func == AggFunc::CountDistinct
-        && matches!(
-            input.tag,
-            qdb_types::TAG_BOOLEAN | qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE
-        )
-    {
-        return Err(Error::new(format!(
-            "there is no matching function `count_distinct` with the argument types: ({})",
-            qdb_types::type_name(input.tag)
-        )));
-    }
-    let value_tag = aggregate_order_tag(&input);
-    let mut groups: Vec<(Scalar, Accumulator)> = Vec::new();
+    let mut groups: Vec<(Vec<Scalar>, Vec<Accumulator>)> = Vec::new();
     for row in 0..table.row_count() {
         if let Some(filter) = &query.filter {
             if !row_matches(table, row, filter)? {
                 continue;
             }
         }
-        let key = table.columns[key_index][row].clone();
+        let key = group_operands
+            .iter()
+            .map(|operand| eval_select_operand(table, row, operand).map(|(value, _)| value))
+            .collect::<Result<Vec<_>, _>>()?;
         if let Some(group) = groups.iter_mut().find(|(found, _)| found == &key) {
-            feed(&mut group.1, &table.columns, row, &input)?;
+            for (index, (accumulator, input)) in group.1.iter_mut().zip(&inputs).enumerate() {
+                let aggregate = &execution_aggregates[index];
+                feed(accumulator, &table.columns, row, input).map_err(|error| {
+                    let position = (aggregate_error_at_zero(aggregate)
+                        || aggregate.func == AggFunc::ApproxPercentile)
+                        .then_some(0);
+                    grouped_aggregate_error(error, aggregate, position)
+                })?;
+            }
         } else {
-            let mut accumulator = start_accumulator(aggregate, &input);
-            feed(&mut accumulator, &table.columns, row, &input)?;
-            groups.push((key, accumulator));
+            let mut accumulators = execution_aggregates
+                .iter()
+                .zip(&inputs)
+                .map(|(aggregate, input)| start_accumulator(aggregate, input))
+                .collect::<Vec<_>>();
+            for (index, (accumulator, input)) in accumulators.iter_mut().zip(&inputs).enumerate() {
+                let aggregate = &execution_aggregates[index];
+                feed(accumulator, &table.columns, row, input).map_err(|error| {
+                    let position = (aggregate_error_at_zero(aggregate)
+                        || aggregate.func == AggFunc::ApproxPercentile)
+                        .then_some(0);
+                    grouped_aggregate_error(error, aggregate, position)
+                })?;
+            }
+            groups.push((key, accumulators));
         }
     }
-    for (_, accumulator) in &groups {
-        accumulator_value(accumulator)?;
+    for (_, accumulators) in &groups {
+        for accumulator in accumulators {
+            accumulator_value(accumulator)?;
+        }
     }
-    let tag = table.meta.columns[key_index].tag;
     groups.sort_by(|left, right| {
         for order in &query.order_by {
-            let mut ordering = if order.column.eq_ignore_ascii_case(&aggregate.label) {
-                compare_asc(&left.1.finish(), &right.1.finish(), value_tag)
+            let aggregate_index = execution_aggregates
+                .iter()
+                .position(|aggregate| order.column.eq_ignore_ascii_case(&aggregate.label));
+            let mut ordering = if let Some(aggregate_index) = aggregate_index {
+                compare_asc(
+                    &left.1[aggregate_index].finish(),
+                    &right.1[aggregate_index].finish(),
+                    value_tags[aggregate_index],
+                )
             } else {
-                compare_asc(&left.0, &right.0, tag)
+                let group_index = group_exprs
+                    .iter()
+                    .position(|key| order.column.eq_ignore_ascii_case(&key.source))
+                    .or_else(|| {
+                        grouped.and_then(|selection| {
+                            selection.keys.iter().enumerate().find_map(
+                                |(selected_index, selected_key)| {
+                                    selected_key
+                                        .label
+                                        .eq_ignore_ascii_case(&order.column)
+                                        .then_some(selected_key_groups[selected_index])
+                                },
+                            )
+                        })
+                    })
+                    .unwrap_or(0);
+                compare_asc(
+                    &left.0[group_index],
+                    &right.0[group_index],
+                    group_tags[group_index],
+                )
             };
             if order.descending {
                 ordering = ordering.reverse();
@@ -12187,23 +13414,1587 @@ fn execute_group(
         apply_limit(&mut row_ids, limit.lo, limit.hi);
     }
     let columns = match grouped {
-        Some(grouped) if grouped.key_at == 0 => {
-            vec![grouped.key.clone(), aggregate.label.clone()]
-        }
-        Some(grouped) => vec![aggregate.label.clone(), grouped.key.clone()],
-        None => vec![aggregate.label.clone()],
+        Some(grouped) => grouped
+            .select_order
+            .iter()
+            .map(|item| match item {
+                GroupedSelectItem::Key(index) => grouped.keys[*index].label.clone(),
+                GroupedSelectItem::Aggregate(index) => grouped.aggregates[*index].label.clone(),
+            })
+            .collect(),
+        None => vec![aggregates[0].label.clone()],
     };
     let mut rows = Vec::new();
-    for index in row_ids {
-        let (key, accumulator) = &groups[index];
-        let value = accumulator_value(accumulator)?;
-        rows.push(match grouped {
-            Some(grouped) if grouped.key_at == 0 => vec![key.clone(), value],
-            Some(_) => vec![value, key.clone()],
-            None => vec![value],
-        });
+    for group_index in row_ids {
+        let (keys, accumulators) = &groups[group_index];
+        if let Some(grouped) = grouped {
+            rows.push(
+                grouped
+                    .select_order
+                    .iter()
+                    .map(|item| match item {
+                        GroupedSelectItem::Key(index) => {
+                            Ok(keys[selected_key_groups[*index]].clone())
+                        }
+                        GroupedSelectItem::Aggregate(index) => {
+                            accumulator_value(&accumulators[*index])
+                        }
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?,
+            );
+        } else {
+            rows.push(vec![accumulator_value(&accumulators[0])?]);
+        }
     }
     Ok(QueryResult { columns, rows })
+}
+
+fn execute_group_keys(
+    table: &Table,
+    query: &Query,
+    selected: &[ColumnExpr],
+) -> Result<QueryResult, Error> {
+    let selected = selected
+        .iter()
+        .map(|column| SelectedGroupKey {
+            name: Some(column.name.clone()),
+            label: column.label.clone(),
+            position: column.position,
+            operand: FilterOperand::Projection(Box::new(Proj::Column(column.name.clone()))),
+        })
+        .collect::<Vec<_>>();
+    execute_group_key_items(table, query, &selected)
+}
+
+fn execute_group_key_projection(
+    table: &Table,
+    query: &Query,
+    projection: &ProjectionList,
+) -> Result<QueryResult, Error> {
+    let selected = projection
+        .items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| match item {
+            Proj::Column(name) => Ok(SelectedGroupKey {
+                name: Some(name.clone()),
+                label: name.clone(),
+                position: projection.positions[index],
+                operand: FilterOperand::Projection(Box::new(Proj::Column(name.clone()))),
+            }),
+            Proj::Arithmetic(expression) => Ok(SelectedGroupKey {
+                name: None,
+                label: expression.label.clone(),
+                position: projection.positions[index],
+                operand: expression.operand.clone(),
+            }),
+            Proj::Abs(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Lower(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Upper(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Length(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::SizePretty(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Typeof(expression) => {
+                resolve_typeof(table, expression).map_err(|error| {
+                    if error.position.is_none() {
+                        Error::at(error.message, projection.positions[index])
+                    } else {
+                        error
+                    }
+                })?;
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Not(expression) => {
+                resolve_not(table, expression).map_err(|error| {
+                    if error
+                        .message
+                        .starts_with("expression type mismatch, expected: BOOLEAN")
+                    {
+                        return Error::at(error.message, 0);
+                    }
+                    if error.position.is_none() {
+                        let invalid_column = error
+                            .message
+                            .strip_prefix("Invalid column: ")
+                            .and_then(|name| {
+                                source_dependency_reference(&expression.source_label, name)
+                            });
+                        if let Some((offset, spelling)) = invalid_column {
+                            Error::at(
+                                format!("Invalid column: {spelling}"),
+                                projection.positions[index] + offset,
+                            )
+                        } else {
+                            Error::at(error.message, projection.positions[index])
+                        }
+                    } else {
+                        error
+                    }
+                })?;
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Between(expression) => {
+                resolve_between(table, expression).map_err(|error| {
+                    if error.position.is_none() {
+                        let offset = expression
+                            .source_label
+                            .to_ascii_lowercase()
+                            .find(" between ")
+                            .map(|offset| offset + 1)
+                            .unwrap_or(0);
+                        Error::at(error.message, projection.positions[index] + offset)
+                    } else {
+                        error
+                    }
+                })?;
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::InList(expression) => {
+                resolve_in_list(table, expression)?;
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Eq(expression) => {
+                resolve_eq(table, expression).map_err(|error| {
+                    if error.position.is_none() {
+                        Error::at(
+                            error.message,
+                            projection.positions[index] + comparison_operator_offset(expression),
+                        )
+                    } else {
+                        error
+                    }
+                })?;
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::And(expression) => {
+                resolve_and(table, expression).map_err(|error| {
+                    if error.position.is_none() {
+                        Error::at(error.message, 0)
+                    } else {
+                        error
+                    }
+                })?;
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::CurrentSchema(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::CurrentDatabase(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::CurrentUser(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::SessionUser(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::CurrentCatalog(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Version(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::PgIsInRecovery(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::FormatType(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::CurrentSetting(expression) => {
+                resolve_current_setting(table, expression).map_err(|error| {
+                    if error.position.is_none() {
+                        Error::at(error.message, 0)
+                    } else {
+                        error
+                    }
+                })?;
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::PgGetPartKeyDef(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::PgGetExpr(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::PgGetUserById(expression) => {
+                resolve_pg_get_userbyid(table, expression).map_err(|error| {
+                    if error.position.is_none() {
+                        Error::at(error.message, projection.positions[index])
+                    } else {
+                        error
+                    }
+                })?;
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::PgTableIsVisible(expression) => {
+                resolve_pg_table_is_visible(table, expression).map_err(|error| {
+                    if error.position.is_none() {
+                        Error::at(error.message, projection.positions[index])
+                    } else {
+                        error
+                    }
+                })?;
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::PgAge(expression) => {
+                resolve_pg_age(table, expression).map_err(|error| {
+                    if error.position.is_none() {
+                        Error::at(error.message, projection.positions[index])
+                    } else {
+                        error
+                    }
+                })?;
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Netmask(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::GeoDistance(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::GeoWithin(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::WithinRadius(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::WithinBox(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::MakeGeohash(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Side(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Substr(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Pad(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::RegexpReplace(expression)
+                if matches!(expression.args.get(2), Some(ConcatArg::Column(_))) =>
+            {
+                Err(Error::at(
+                    "not implemented: dynamic replacement would be slow to execute",
+                    0,
+                ))
+            }
+            Proj::RegexpReplace(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::StartsWith(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::SplitPart(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::QuoteIdent(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Glob(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Ilike(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Like(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Switch(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Bar(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::StrPos(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Mid(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Spread(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::SpreadBps(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Wmid(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Round(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Floor(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Ceil(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Sqrt(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Power(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Sign(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Ln(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Log(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Exp(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Sin(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Cos(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Tan(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Asin(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Acos(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Atan(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Atan2(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Degrees(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Radians(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Cot(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Pi(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Greatest(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Least(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::RoundDown(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::RoundUp(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::RoundHalfEven(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Coalesce(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::NullIf(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Cast(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Year(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Month(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Day(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Hour(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Minute(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Second(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Millis(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Micros(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Nanos(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::DateAdd(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::DateDiff(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::IsLeapYear(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::DaysInMonth(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::ToStr(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::IsEndOfMonth(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::DayOfWeekSundayFirst(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::DayOfWeek(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::WeekOfYear(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::ToTimestamp(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::ToDate(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Md5(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Sha1(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Sha256(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::ToUuid(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::JsonExtract(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::ToChar(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::ToUtc(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::ToTimezone(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::ToPgDate(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Extract(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::TimestampFloor(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::TimestampCeil(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Trim(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Concat(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::Replace(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            Proj::DateTrunc(expression) => {
+                selected_projection_key(item, &expression.label, projection.positions[index])
+            }
+            _ => Err(Error::new("unsupported: GROUP BY projection must be a key")),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    execute_group_key_items(table, query, &selected)
+}
+
+fn selected_projection_key(
+    item: &Proj,
+    label: &str,
+    position: usize,
+) -> Result<SelectedGroupKey, Error> {
+    Ok(SelectedGroupKey {
+        name: None,
+        label: label.to_string(),
+        position,
+        operand: FilterOperand::Projection(Box::new(item.clone())),
+    })
+}
+
+struct SelectedGroupKey {
+    name: Option<String>,
+    label: String,
+    position: usize,
+    operand: FilterOperand,
+}
+
+fn execute_group_key_items(
+    table: &Table,
+    query: &Query,
+    selected: &[SelectedGroupKey],
+) -> Result<QueryResult, Error> {
+    let group_exprs = query
+        .group_by
+        .as_deref()
+        .ok_or_else(|| Error::new("unsupported: GROUP BY without an aggregate"))?;
+    let mut group_operands = Vec::with_capacity(group_exprs.len());
+    for expression in group_exprs {
+        let operand = parse_filter_operand(&expression.source, expression.position)?;
+        select_operand_tag(table, &operand)?;
+        group_operands.push(operand);
+    }
+    let grouped_columns = group_operands
+        .iter()
+        .filter_map(|operand| match operand {
+            FilterOperand::Projection(projection) => match projection.as_ref() {
+                Proj::Column(name) => Some(name.to_ascii_lowercase()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut selected_groups = Vec::with_capacity(selected.len());
+    for column in selected {
+        let group_index = group_operands
+            .iter()
+            .position(|group_operand| same_filter_operand(&column.operand, group_operand));
+        if let FilterOperand::Projection(projection) = &column.operand {
+            if let Proj::Not(expression) = projection.as_ref() {
+                if let Some(filter) = &expression.filter {
+                    let dependencies = filter_dependencies(filter);
+                    if let Some(missing) = dependencies
+                        .iter()
+                        .find(|name| table.column_index(name).is_none())
+                    {
+                        let label = projection_source_label(&column.operand, &column.label);
+                        let (offset, reference) = source_dependency_reference(label, missing)
+                            .unwrap_or((0, (*missing).clone()));
+                        return Err(Error::at(
+                            format!("Invalid column: {reference}"),
+                            column.position + offset,
+                        ));
+                    }
+                }
+            }
+        }
+        let ungrouped_dependency = filter_operand_dependencies(&column.operand)
+            .into_iter()
+            .find(|name| !grouped_columns.iter().any(|grouped| grouped == name));
+        if group_index.is_none() && ungrouped_dependency.is_some() {
+            let position = ungrouped_dependency
+                .as_ref()
+                .and_then(|name| {
+                    let label = projection_source_label(&column.operand, &column.label);
+                    let is_geo = matches!(
+                        &column.operand,
+                        FilterOperand::Projection(projection)
+                            if matches!(
+                                projection.as_ref(),
+                                Proj::Netmask(_)
+                                    | Proj::GeoDistance(_)
+                                    | Proj::GeoWithin(_)
+                                    | Proj::WithinRadius(_)
+                                    | Proj::WithinBox(_)
+                                    | Proj::MakeGeohash(_)
+                            )
+                    );
+                    let offset = if matches!(
+                        &column.operand,
+                        FilterOperand::Projection(projection)
+                            if matches!(
+                                projection.as_ref(),
+                                Proj::Typeof(_)
+                                    | Proj::Not(_)
+                                    | Proj::And(_)
+                                    | Proj::DayOfWeek(_)
+                                    | Proj::WeekOfYear(_)
+                                    | Proj::Eq(_)
+                                    | Proj::Like(_)
+                                    | Proj::Ilike(_)
+                            )
+                    ) {
+                        source_dependency_offset_with_qualifier(label, name).or_else(|| {
+                            source_dependency_offset_with_qualifier(&column.label, name)
+                        })
+                    } else if matches!(
+                        &column.operand,
+                        FilterOperand::Projection(projection)
+                            if matches!(projection.as_ref(), Proj::Between(_) | Proj::InList(_))
+                    ) {
+                        let FilterOperand::Projection(projection) = &column.operand else {
+                            unreachable!();
+                        };
+                        let first_offset = match projection.as_ref() {
+                            Proj::Between(expression) => expression.args.first().and_then(|arg| {
+                                matches!(arg, ConcatArg::Column(column) if column.eq_ignore_ascii_case(name))
+                                    .then_some(0)
+                            }),
+                            Proj::InList(expression) => expression
+                                .value
+                                .eq_ignore_ascii_case(name)
+                                .then_some(0),
+                            _ => None,
+                        };
+                        first_offset.or_else(|| {
+                            source_dependency_offset(label, name)
+                                .or_else(|| source_dependency_offset(&column.label, name))
+                        })
+                    } else if is_geo {
+                        source_dependency_offset_last(label, name)
+                            .or_else(|| source_dependency_offset_last(&column.label, name))
+                    } else {
+                        source_dependency_offset(label, name)
+                            .or_else(|| source_dependency_offset(&column.label, name))
+                    };
+                    offset.map(|offset| column.position + offset)
+                })
+                .unwrap_or(column.position);
+            return Err(Error::at(
+                "column must appear in GROUP BY clause or aggregate function",
+                position,
+            ));
+        };
+        selected_groups.push(group_index);
+    }
+    for order in &query.order_by {
+        if selected.iter().any(|column| {
+            column
+                .name
+                .as_ref()
+                .is_some_and(|name| name.eq_ignore_ascii_case(&order.column))
+                || column.label.eq_ignore_ascii_case(&order.column)
+        }) || group_operands.iter().any(|operand| {
+            matches!(operand, FilterOperand::Projection(projection)
+                if matches!(projection.as_ref(), Proj::Column(name) if name.eq_ignore_ascii_case(&order.column)))
+        }) {
+            continue;
+        }
+        let message = if table.column_index(&order.column).is_some() {
+            format!(
+                "ORDER BY expressions must appear in select list. Invalid column: {}",
+                order.column
+            )
+        } else {
+            format!("Invalid column: {}", order.column)
+        };
+        return Err(Error::at(message, order.position));
+    }
+
+    let mut groups: Vec<(Vec<Scalar>, usize)> = Vec::new();
+    for row in 0..table.row_count() {
+        if let Some(filter) = &query.filter {
+            if !row_matches(table, row, filter)? {
+                continue;
+            }
+        }
+        let key = group_operands
+            .iter()
+            .map(|operand| {
+                eval_select_operand(table, row, operand)
+                    .map(|(value, _)| normalize_group_key(operand, value))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if !groups.iter().any(|(found, _)| found == &key) {
+            groups.push((key, row));
+        }
+    }
+    let projection_tags = selected
+        .iter()
+        .map(|column| {
+            select_operand_tag(table, &column.operand).map_err(|error| {
+                let position = grouped_pattern_projection_error_position(
+                    &column.operand,
+                    &error.message,
+                    column.position,
+                )
+                .or_else(|| match (&column.operand, error.message.as_str()) {
+                    (FilterOperand::Projection(projection), message)
+                        if matches!(projection.as_ref(), Proj::Glob(_))
+                            && message.starts_with("there is no matching function `glob`") =>
+                    {
+                        Some(column.position)
+                    }
+                    (FilterOperand::Projection(projection), "use constant or bind variable")
+                        if matches!(projection.as_ref(), Proj::Like(_) | Proj::Ilike(_)) =>
+                    {
+                        Some(0)
+                    }
+                    (FilterOperand::Projection(projection), "constant expected")
+                        if matches!(projection.as_ref(), Proj::Switch(_)) =>
+                    {
+                        Some(0)
+                    }
+                    _ => None,
+                });
+                if let Some(position) = position {
+                    Error::at(error.message, position)
+                } else {
+                    error
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if query
+        .limit
+        .is_some_and(|limit| limit.lo == 0 && limit.hi == 0)
+    {
+        let columns = selected.iter().map(|column| column.label.clone()).collect();
+        return Ok(QueryResult {
+            columns,
+            rows: Vec::new(),
+        });
+    }
+    let projected_groups = groups
+        .iter()
+        .map(|(keys, first_row)| {
+            selected_groups
+                .iter()
+                .enumerate()
+                .map(|(index, group)| match group {
+                    Some(group) => Ok(keys[*group].clone()),
+                    None => eval_select_operand(table, *first_row, &selected[index].operand)
+                        .map(|(value, _)| value)
+                        .map_err(|error| {
+                            if let Some(position) = grouped_pattern_projection_error_position(
+                                &selected[index].operand,
+                                &error.message,
+                                selected[index].position,
+                            ) {
+                                return Error::at(error.message, position);
+                            }
+                            if error.position.is_none()
+                                && error.message.starts_with("inconvertible value:")
+                                && matches!(
+                                    &selected[index].operand,
+                                    FilterOperand::Projection(projection)
+                                        if matches!(projection.as_ref(), Proj::Eq(_))
+                                )
+                            {
+                                Error::at(error.message, 0)
+                            } else {
+                                error
+                            }
+                        }),
+                })
+                .collect::<Result<Vec<_>, Error>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let group_tags = group_operands
+        .iter()
+        .map(|operand| select_operand_tag(table, operand))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut row_ids: Vec<usize> = (0..groups.len()).collect();
+    row_ids.sort_by(|left, right| {
+        for order in &query.order_by {
+            let selected_index = selected
+                .iter()
+                .position(|column| {
+                    column
+                        .name
+                        .as_ref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(&order.column))
+                        || column.label.eq_ignore_ascii_case(&order.column)
+                });
+            let group_index = group_operands.iter().position(|operand| {
+                matches!(operand, FilterOperand::Projection(projection)
+                    if matches!(projection.as_ref(), Proj::Column(name) if name.eq_ignore_ascii_case(&order.column)))
+            });
+            let mut ordering = if let Some(selected_index) = selected_index {
+                compare_asc(
+                    &projected_groups[*left][selected_index],
+                    &projected_groups[*right][selected_index],
+                    projection_tags[selected_index],
+                )
+            } else if let Some(group_index) = group_index {
+                compare_asc(
+                    &groups[*left].0[group_index],
+                    &groups[*right].0[group_index],
+                    group_tags[group_index],
+                )
+            } else {
+                Ordering::Equal
+            };
+            if order.descending {
+                ordering = ordering.reverse();
+            }
+            if ordering != Ordering::Equal {
+                return ordering;
+            }
+        }
+        Ordering::Equal
+    });
+    if let Some(limit) = query.limit {
+        if limit.lo < 0 && limit.hi > 0 && limit_follows_timestamp_order(table, query)? {
+            return Err(Error::new("LIMIT <negative>, <positive> is not allowed"));
+        }
+        apply_limit(&mut row_ids, limit.lo, limit.hi);
+    }
+    let columns = selected.iter().map(|column| column.label.clone()).collect();
+    let rows = row_ids
+        .into_iter()
+        .map(|row| projected_groups[row].clone())
+        .collect();
+    Ok(QueryResult { columns, rows })
+}
+
+fn source_dependency_offset_last(source: &str, dependency: &str) -> Option<usize> {
+    let function_open = source.find('(')?;
+    let (search, base) = if source[..function_open]
+        .trim()
+        .eq_ignore_ascii_case(dependency)
+    {
+        (&source[function_open + 1..], function_open + 1)
+    } else {
+        (source, 0)
+    };
+    search.char_indices().rev().find_map(|(offset, _)| {
+        search
+            .get(offset..offset + dependency.len())
+            .filter(|found| found.eq_ignore_ascii_case(dependency))
+            .and_then(|_| {
+                let before = search[..offset].chars().next_back();
+                let after = search[offset + dependency.len()..].chars().next();
+                let is_identifier =
+                    |ch: Option<char>| ch.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+                (!is_identifier(before) && !is_identifier(after)).then_some(base + offset)
+            })
+    })
+}
+
+fn source_dependency_offset(source: &str, dependency: &str) -> Option<usize> {
+    let find_dependency = |source: &str| {
+        source.char_indices().find_map(|(offset, _)| {
+            source
+                .get(offset..offset + dependency.len())
+                .filter(|found| found.eq_ignore_ascii_case(dependency))
+                .and_then(|_| {
+                    let before = source[..offset].chars().next_back();
+                    let after = source[offset + dependency.len()..].chars().next();
+                    let is_identifier = |ch: Option<char>| {
+                        ch.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                    };
+                    (!is_identifier(before) && !is_identifier(after)).then_some(offset)
+                })
+        })
+    };
+    let Some(function_open) = source.find('(') else {
+        return find_dependency(source);
+    };
+    if source[..function_open]
+        .trim()
+        .eq_ignore_ascii_case(dependency)
+    {
+        find_dependency(&source[function_open + 1..]).map(|offset| function_open + 1 + offset)
+    } else {
+        find_dependency(source)
+    }
+}
+
+fn source_dependency_offset_with_qualifier(source: &str, dependency: &str) -> Option<usize> {
+    let offset = source_dependency_offset(source, dependency)?;
+    let bytes = source.as_bytes();
+    let mut start = offset;
+    while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+        start -= 1;
+    }
+    if start > 0 && bytes[start - 1] == b'.' {
+        start -= 1;
+        while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+            start -= 1;
+        }
+        Some(start)
+    } else {
+        Some(offset)
+    }
+}
+
+fn source_dependency_reference(source: &str, dependency: &str) -> Option<(usize, String)> {
+    let dependency_offset = source_dependency_offset(source, dependency)?;
+    let bytes = source.as_bytes();
+    let mut start = dependency_offset;
+    while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+        start -= 1;
+    }
+    if start > 0 && bytes[start - 1] == b'.' {
+        start -= 1;
+        while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+            start -= 1;
+        }
+    } else {
+        start = dependency_offset;
+    }
+    let end = dependency_offset + dependency.len();
+    Some((start, source[start..end].to_string()))
+}
+
+fn normalize_group_key(operand: &FilterOperand, value: Scalar) -> Scalar {
+    if matches!(
+        operand,
+        FilterOperand::Projection(projection) if matches!(projection.as_ref(), Proj::Cot(_))
+    ) && matches!(&value, Scalar::Double(number) if !number.is_finite())
+    {
+        Scalar::Null
+    } else {
+        value
+    }
+}
+
+fn grouped_aggregate_error(
+    error: Error,
+    aggregate: &AggregateExpr,
+    fallback_position: impl Into<Option<usize>>,
+) -> Error {
+    if error.position.is_some() {
+        error
+    } else if let Some(position) = fallback_position.into() {
+        Error::at(error.message, position)
+    } else if matches!(
+        aggregate.func,
+        AggFunc::StringAgg | AggFunc::StringDistinctAgg | AggFunc::ApproxPercentile
+    ) {
+        Error::at(error.message, aggregate.position)
+    } else {
+        error
+    }
+}
+
+fn aggregate_error_at_zero(aggregate: &AggregateExpr) -> bool {
+    matches!(
+        aggregate.func,
+        AggFunc::CovarPop
+            | AggFunc::CovarSamp
+            | AggFunc::Corr
+            | AggFunc::RegrSlope
+            | AggFunc::RegrIntercept
+            | AggFunc::RegrR2
+            | AggFunc::Vwap
+            | AggFunc::Twap
+            | AggFunc::WeightedAvg
+            | AggFunc::WeightedStdDev
+            | AggFunc::WeightedStdDevRel
+            | AggFunc::WeightedStdDevFreq
+            | AggFunc::ArgMax
+            | AggFunc::ArgMin
+            | AggFunc::BitAnd
+            | AggFunc::BitOr
+            | AggFunc::BitXor
+    )
+}
+
+fn same_filter_operand(left: &FilterOperand, right: &FilterOperand) -> bool {
+    match (left, right) {
+        (FilterOperand::Projection(left), FilterOperand::Projection(right)) => {
+            same_projection(left, right)
+        }
+        (FilterOperand::Literal(left), FilterOperand::Literal(right)) => left == right,
+        (FilterOperand::Arithmetic(left), FilterOperand::Arithmetic(right)) => {
+            left.op == right.op
+                && same_filter_operand(&left.left, &right.left)
+                && same_filter_operand(&left.right, &right.right)
+        }
+        _ => false,
+    }
+}
+
+fn same_projection(left: &Proj, right: &Proj) -> bool {
+    match (left, right) {
+        (Proj::Concat(left), Proj::Concat(right)) => left.args == right.args,
+        (Proj::Length(left), Proj::Length(right)) => {
+            left.args == right.args && left.bytes == right.bytes
+        }
+        (Proj::SizePretty(left), Proj::SizePretty(right)) => left.args == right.args,
+        (Proj::Typeof(left), Proj::Typeof(right)) => {
+            left.args == right.args
+                && left.arithmetic == right.arithmetic
+                && left.geohash == right.geohash
+                && left.uuid == right.uuid
+                && left.json == right.json
+                && left.to_char == right.to_char
+        }
+        (Proj::Not(left), Proj::Not(right)) => match (&left.filter, &right.filter) {
+            (Some(left), Some(right)) => left == right,
+            (None, None) => left.args.last() == right.args.last(),
+            _ => false,
+        },
+        (Proj::Between(left), Proj::Between(right)) => {
+            left.args == right.args && left.negated == right.negated
+        }
+        (Proj::InList(left), Proj::InList(right)) => {
+            left.value.eq_ignore_ascii_case(&right.value) && left.args == right.args
+        }
+        (Proj::Eq(left), Proj::Eq(right)) => {
+            left.value.eq_ignore_ascii_case(&right.value)
+                && left.op == right.op
+                && left.literal == right.literal
+                && left.other.as_ref().map(|name| name.to_ascii_lowercase())
+                    == right.other.as_ref().map(|name| name.to_ascii_lowercase())
+        }
+        (Proj::And(left), Proj::And(right)) => {
+            left.left.eq_ignore_ascii_case(&right.left)
+                && left.op == right.op
+                && match (&left.right, &right.right) {
+                    (AndRight::Literal(left), AndRight::Literal(right)) => left == right,
+                    (AndRight::Column(left), AndRight::Column(right)) => {
+                        left.eq_ignore_ascii_case(right)
+                    }
+                    _ => false,
+                }
+        }
+        (Proj::CurrentSchema(left), Proj::CurrentSchema(right)) => left.args == right.args,
+        (Proj::CurrentDatabase(left), Proj::CurrentDatabase(right)) => left.args == right.args,
+        (Proj::CurrentUser(left), Proj::CurrentUser(right)) => left.args == right.args,
+        (Proj::SessionUser(left), Proj::SessionUser(right)) => left.args == right.args,
+        (Proj::CurrentCatalog(left), Proj::CurrentCatalog(right)) => left.args == right.args,
+        (Proj::Version(left), Proj::Version(right)) => left.args == right.args,
+        (Proj::PgIsInRecovery(left), Proj::PgIsInRecovery(right)) => left.args == right.args,
+        (Proj::FormatType(left), Proj::FormatType(right)) => left.args == right.args,
+        (Proj::CurrentSetting(left), Proj::CurrentSetting(right)) => left.args == right.args,
+        (Proj::PgGetPartKeyDef(left), Proj::PgGetPartKeyDef(right)) => left.args == right.args,
+        (Proj::PgGetExpr(left), Proj::PgGetExpr(right)) => left.args == right.args,
+        (Proj::PgGetUserById(left), Proj::PgGetUserById(right)) => {
+            left.args == right.args && left.qualified == right.qualified
+        }
+        (Proj::PgTableIsVisible(left), Proj::PgTableIsVisible(right)) => {
+            left.args == right.args && left.qualified == right.qualified
+        }
+        (Proj::PgAge(left), Proj::PgAge(right)) => {
+            left.args == right.args && left.qualified == right.qualified
+        }
+        (Proj::Netmask(left), Proj::Netmask(right)) => left.args == right.args,
+        (Proj::GeoDistance(left), Proj::GeoDistance(right)) => left.args == right.args,
+        (Proj::GeoWithin(left), Proj::GeoWithin(right)) => left.args == right.args,
+        (Proj::WithinRadius(left), Proj::WithinRadius(right)) => left.args == right.args,
+        (Proj::WithinBox(left), Proj::WithinBox(right)) => left.args == right.args,
+        (Proj::MakeGeohash(left), Proj::MakeGeohash(right)) => left.args == right.args,
+        (Proj::Side(left), Proj::Side(right)) => {
+            left.args == right.args && left.from_right == right.from_right
+        }
+        (Proj::Substr(left), Proj::Substr(right)) => left.args == right.args,
+        (Proj::Pad(left), Proj::Pad(right)) => {
+            left.args == right.args && left.from_right == right.from_right
+        }
+        (Proj::RegexpReplace(left), Proj::RegexpReplace(right)) => left.args == right.args,
+        (Proj::StartsWith(left), Proj::StartsWith(right)) => left.args == right.args,
+        (Proj::SplitPart(left), Proj::SplitPart(right)) => left.args == right.args,
+        (Proj::QuoteIdent(left), Proj::QuoteIdent(right)) => left.args == right.args,
+        (Proj::Glob(left), Proj::Glob(right)) => left.args == right.args,
+        (Proj::Ilike(left), Proj::Ilike(right)) => {
+            left.args == right.args && left.negated == right.negated
+        }
+        (Proj::Like(left), Proj::Like(right)) => {
+            left.args == right.args && left.negated == right.negated && left.regex == right.regex
+        }
+        (Proj::Switch(left), Proj::Switch(right)) => left.args == right.args,
+        (Proj::Bar(left), Proj::Bar(right)) => left.args == right.args,
+        (Proj::StrPos(left), Proj::StrPos(right)) => left.args == right.args,
+        (Proj::Mid(left), Proj::Mid(right)) => left.args == right.args,
+        (Proj::Spread(left), Proj::Spread(right)) => left.args == right.args,
+        (Proj::SpreadBps(left), Proj::SpreadBps(right)) => left.args == right.args,
+        (Proj::Wmid(left), Proj::Wmid(right)) => left.args == right.args,
+        (Proj::Round(left), Proj::Round(right)) => left.args == right.args,
+        (Proj::Floor(left), Proj::Floor(right)) => left.args == right.args,
+        (Proj::Ceil(left), Proj::Ceil(right)) => left.args == right.args,
+        (Proj::Sqrt(left), Proj::Sqrt(right)) => left.args == right.args,
+        (Proj::Power(left), Proj::Power(right)) => left.args == right.args,
+        (Proj::Sign(left), Proj::Sign(right)) => left.args == right.args,
+        (Proj::Ln(left), Proj::Ln(right)) => left.args == right.args,
+        (Proj::Log(left), Proj::Log(right)) => left.args == right.args,
+        (Proj::Exp(left), Proj::Exp(right)) => left.args == right.args,
+        (Proj::Sin(left), Proj::Sin(right)) => left.args == right.args,
+        (Proj::Cos(left), Proj::Cos(right)) => left.args == right.args,
+        (Proj::Tan(left), Proj::Tan(right)) => left.args == right.args,
+        (Proj::Asin(left), Proj::Asin(right)) => left.args == right.args,
+        (Proj::Acos(left), Proj::Acos(right)) => left.args == right.args,
+        (Proj::Atan(left), Proj::Atan(right)) => left.args == right.args,
+        (Proj::Atan2(left), Proj::Atan2(right)) => left.args == right.args,
+        (Proj::Degrees(left), Proj::Degrees(right)) => left.args == right.args,
+        (Proj::Radians(left), Proj::Radians(right)) => left.args == right.args,
+        (Proj::Cot(left), Proj::Cot(right)) => left.args == right.args,
+        (Proj::Pi(left), Proj::Pi(right)) => left.args == right.args,
+        (Proj::Greatest(left), Proj::Greatest(right)) => left.args == right.args,
+        (Proj::Least(left), Proj::Least(right)) => left.args == right.args,
+        (Proj::RoundDown(left), Proj::RoundDown(right)) => left.args == right.args,
+        (Proj::RoundUp(left), Proj::RoundUp(right)) => left.args == right.args,
+        (Proj::RoundHalfEven(left), Proj::RoundHalfEven(right)) => left.args == right.args,
+        (Proj::Coalesce(left), Proj::Coalesce(right)) => left.args == right.args,
+        (Proj::NullIf(left), Proj::NullIf(right)) => left.args == right.args,
+        (Proj::Cast(left), Proj::Cast(right)) => {
+            left.column.eq_ignore_ascii_case(&right.column)
+                && left.type_name.eq_ignore_ascii_case(&right.type_name)
+        }
+        (Proj::Year(left), Proj::Year(right)) => left.args == right.args,
+        (Proj::Month(left), Proj::Month(right)) => left.args == right.args,
+        (Proj::Day(left), Proj::Day(right)) => left.args == right.args,
+        (Proj::Hour(left), Proj::Hour(right)) => left.args == right.args,
+        (Proj::Minute(left), Proj::Minute(right)) => left.args == right.args,
+        (Proj::Second(left), Proj::Second(right)) => left.args == right.args,
+        (Proj::Millis(left), Proj::Millis(right)) => left.args == right.args,
+        (Proj::Micros(left), Proj::Micros(right)) => left.args == right.args,
+        (Proj::Nanos(left), Proj::Nanos(right)) => left.args == right.args,
+        (Proj::DateAdd(left), Proj::DateAdd(right)) => left.args == right.args,
+        (Proj::DateDiff(left), Proj::DateDiff(right)) => left.args == right.args,
+        (Proj::IsLeapYear(left), Proj::IsLeapYear(right)) => left.args == right.args,
+        (Proj::DaysInMonth(left), Proj::DaysInMonth(right)) => left.args == right.args,
+        (Proj::ToStr(left), Proj::ToStr(right)) => left.args == right.args,
+        (Proj::IsEndOfMonth(left), Proj::IsEndOfMonth(right)) => left.args == right.args,
+        (Proj::DayOfWeekSundayFirst(left), Proj::DayOfWeekSundayFirst(right)) => {
+            left.args == right.args
+        }
+        (Proj::DayOfWeek(left), Proj::DayOfWeek(right)) => left.args == right.args,
+        (Proj::WeekOfYear(left), Proj::WeekOfYear(right)) => left.args == right.args,
+        (Proj::ToTimestamp(left), Proj::ToTimestamp(right)) => left.args == right.args,
+        (Proj::ToDate(left), Proj::ToDate(right)) => left.args == right.args,
+        (Proj::Md5(left), Proj::Md5(right)) => left.args == right.args,
+        (Proj::Sha1(left), Proj::Sha1(right)) => left.args == right.args,
+        (Proj::Sha256(left), Proj::Sha256(right)) => left.args == right.args,
+        (Proj::ToUuid(left), Proj::ToUuid(right)) => left.args == right.args,
+        (Proj::JsonExtract(left), Proj::JsonExtract(right)) => left.args == right.args,
+        (Proj::ToChar(left), Proj::ToChar(right)) => {
+            left.args == right.args && left.base64 == right.base64
+        }
+        (Proj::ToUtc(left), Proj::ToUtc(right)) => left.args == right.args,
+        (Proj::ToTimezone(left), Proj::ToTimezone(right)) => left.args == right.args,
+        (Proj::ToPgDate(left), Proj::ToPgDate(right)) => left.args == right.args,
+        (Proj::Extract(left), Proj::Extract(right)) => {
+            left.part.eq_ignore_ascii_case(&right.part) && left.arg == right.arg
+        }
+        (Proj::TimestampFloor(left), Proj::TimestampFloor(right)) => left.args == right.args,
+        (Proj::TimestampCeil(left), Proj::TimestampCeil(right)) => left.args == right.args,
+        (Proj::Lower(left), Proj::Lower(right)) => left.args == right.args,
+        (Proj::Upper(left), Proj::Upper(right)) => left.args == right.args,
+        (Proj::Trim(left), Proj::Trim(right)) => left.args == right.args && left.end == right.end,
+        (Proj::Replace(left), Proj::Replace(right)) => left.args == right.args,
+        (Proj::Abs(left), Proj::Abs(right)) => left.args == right.args,
+        (Proj::DateTrunc(left), Proj::DateTrunc(right)) => left.args == right.args,
+        _ => left == right,
+    }
+}
+
+fn filter_dependencies(filter: &Filter) -> Vec<String> {
+    match filter {
+        Filter::BooleanColumn { column }
+        | Filter::Compare { column, .. }
+        | Filter::Between { column, .. }
+        | Filter::InList { column, .. } => vec![column.to_ascii_lowercase()],
+        Filter::CompareColumns { left, right, .. } => {
+            vec![left.to_ascii_lowercase(), right.to_ascii_lowercase()]
+        }
+        Filter::CompareExpressions { left, right, .. } => {
+            let mut dependencies = filter_operand_dependencies(left);
+            dependencies.extend(filter_operand_dependencies(right));
+            dependencies
+        }
+        Filter::Like {
+            column, pattern, ..
+        }
+        | Filter::Regex {
+            column, pattern, ..
+        } => {
+            let mut dependencies = vec![column.to_ascii_lowercase()];
+            if let ConcatArg::Column(name) = pattern {
+                dependencies.push(name.to_ascii_lowercase());
+            }
+            dependencies
+        }
+        Filter::BooleanLiteral(_) | Filter::NonBooleanLiteral { .. } => Vec::new(),
+        Filter::Not(inner) => filter_dependencies(inner),
+        Filter::And(left, right) | Filter::Or(left, right) => {
+            let mut dependencies = filter_dependencies(left);
+            dependencies.extend(filter_dependencies(right));
+            dependencies
+        }
+    }
+}
+
+fn filter_operand_dependencies(operand: &FilterOperand) -> Vec<String> {
+    match operand {
+        FilterOperand::Projection(projection) => match projection.as_ref() {
+            Proj::Column(name) => vec![name.to_ascii_lowercase()],
+            Proj::Abs(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Lower(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Upper(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Length(expr) => concat_arg_dependencies(&expr.args),
+            Proj::SizePretty(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Typeof(expr) => typeof_dependencies(expr),
+            Proj::Not(expr) => expr.filter.as_ref().map_or_else(
+                || {
+                    expr.args
+                        .last()
+                        .map(std::slice::from_ref)
+                        .map_or_else(Vec::new, concat_arg_dependencies)
+                },
+                |filter| filter_dependencies(filter),
+            ),
+            Proj::Between(expr) => concat_arg_dependencies(&expr.args),
+            Proj::InList(expr) => vec![expr.value.to_ascii_lowercase()],
+            Proj::Eq(expr) => {
+                let mut dependencies = vec![expr.value.to_ascii_lowercase()];
+                if let Some(other) = &expr.other {
+                    dependencies.push(other.to_ascii_lowercase());
+                }
+                dependencies
+            }
+            Proj::And(expr) => {
+                let mut dependencies = vec![expr.left.to_ascii_lowercase()];
+                if let AndRight::Column(name) = &expr.right {
+                    dependencies.push(name.to_ascii_lowercase());
+                }
+                dependencies
+            }
+            Proj::CurrentSchema(expr) => concat_arg_dependencies(&expr.args),
+            Proj::CurrentDatabase(expr) => concat_arg_dependencies(&expr.args),
+            Proj::CurrentUser(expr) => concat_arg_dependencies(&expr.args),
+            Proj::SessionUser(expr) => concat_arg_dependencies(&expr.args),
+            Proj::CurrentCatalog(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Version(expr) => concat_arg_dependencies(&expr.args),
+            Proj::PgIsInRecovery(expr) => concat_arg_dependencies(&expr.args),
+            Proj::FormatType(expr) => concat_arg_dependencies(&expr.args),
+            Proj::CurrentSetting(expr) => concat_arg_dependencies(&expr.args),
+            Proj::PgGetPartKeyDef(expr) => concat_arg_dependencies(&expr.args),
+            Proj::PgGetExpr(expr) => concat_arg_dependencies(&expr.args),
+            Proj::PgGetUserById(expr) => concat_arg_dependencies(&expr.args),
+            Proj::PgTableIsVisible(expr) => concat_arg_dependencies(&expr.args),
+            Proj::PgAge(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Netmask(expr) => {
+                let mut dependencies = concat_arg_dependencies(&expr.args);
+                dependencies.reverse();
+                dependencies
+            }
+            Proj::GeoDistance(expr) => {
+                let mut dependencies = concat_arg_dependencies(&expr.args);
+                dependencies.reverse();
+                dependencies
+            }
+            Proj::GeoWithin(expr) => {
+                let mut dependencies = concat_arg_dependencies(&expr.args);
+                dependencies.reverse();
+                dependencies
+            }
+            Proj::WithinRadius(expr) => {
+                let mut dependencies = concat_arg_dependencies(&expr.args);
+                dependencies.reverse();
+                dependencies
+            }
+            Proj::WithinBox(expr) => {
+                let mut dependencies = concat_arg_dependencies(&expr.args);
+                dependencies.reverse();
+                dependencies
+            }
+            Proj::MakeGeohash(expr) => {
+                let mut dependencies = concat_arg_dependencies(&expr.args);
+                dependencies.reverse();
+                dependencies
+            }
+            Proj::Side(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Substr(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Pad(expr) => concat_arg_dependencies(&expr.args),
+            Proj::RegexpReplace(expr) => concat_arg_dependencies(&expr.args),
+            Proj::StartsWith(expr) => concat_arg_dependencies(&expr.args),
+            Proj::SplitPart(expr) => concat_arg_dependencies(&expr.args),
+            Proj::QuoteIdent(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Glob(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Ilike(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Like(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Switch(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Bar(expr) => concat_arg_dependencies(&expr.args),
+            Proj::StrPos(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Mid(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Spread(expr) => concat_arg_dependencies(&expr.args),
+            Proj::SpreadBps(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Wmid(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Round(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Floor(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Ceil(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Sqrt(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Power(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Sign(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Ln(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Log(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Exp(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Sin(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Cos(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Tan(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Asin(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Acos(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Atan(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Atan2(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Degrees(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Radians(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Cot(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Pi(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Greatest(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Least(expr) => concat_arg_dependencies(&expr.args),
+            Proj::RoundDown(expr) => concat_arg_dependencies(&expr.args),
+            Proj::RoundUp(expr) => concat_arg_dependencies(&expr.args),
+            Proj::RoundHalfEven(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Coalesce(expr) => concat_arg_dependencies(&expr.args),
+            Proj::NullIf(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Cast(expr) => vec![expr.column.to_ascii_lowercase()],
+            Proj::Year(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Month(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Day(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Hour(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Minute(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Second(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Millis(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Micros(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Nanos(expr) => concat_arg_dependencies(&expr.args),
+            Proj::DateAdd(expr) => concat_arg_dependencies(&expr.args),
+            Proj::DateDiff(expr) => concat_arg_dependencies(&expr.args),
+            Proj::IsLeapYear(expr) => concat_arg_dependencies(&expr.args),
+            Proj::DaysInMonth(expr) => concat_arg_dependencies(&expr.args),
+            Proj::ToStr(expr) => concat_arg_dependencies(&expr.args),
+            Proj::IsEndOfMonth(expr) => concat_arg_dependencies(&expr.args),
+            Proj::DayOfWeekSundayFirst(expr) => concat_arg_dependencies(&expr.args),
+            Proj::DayOfWeek(expr) => concat_arg_dependencies(&expr.args),
+            Proj::WeekOfYear(expr) => concat_arg_dependencies(&expr.args),
+            Proj::ToTimestamp(expr) => concat_arg_dependencies(&expr.args),
+            Proj::ToDate(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Md5(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Sha1(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Sha256(expr) => concat_arg_dependencies(&expr.args),
+            Proj::ToUuid(expr) => {
+                let mut dependencies = concat_arg_dependencies(&expr.args);
+                dependencies.reverse();
+                dependencies
+            }
+            Proj::JsonExtract(expr) => concat_arg_dependencies(&expr.args),
+            Proj::ToChar(expr) => expr.base64.as_ref().map_or_else(
+                || concat_arg_dependencies(&expr.args),
+                |base64| concat_arg_dependencies(&base64.args),
+            ),
+            Proj::ToUtc(expr) => concat_arg_dependencies(&expr.args),
+            Proj::ToTimezone(expr) => concat_arg_dependencies(&expr.args),
+            Proj::ToPgDate(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Extract(expr) => match &expr.arg {
+                ConcatArg::Column(name) => vec![name.to_ascii_lowercase()],
+                ConcatArg::Literal(_) => Vec::new(),
+            },
+            Proj::TimestampFloor(expr) => concat_arg_dependencies(&expr.args),
+            Proj::TimestampCeil(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Trim(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Concat(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Replace(expr) => concat_arg_dependencies(&expr.args),
+            Proj::DateTrunc(expr) => concat_arg_dependencies(&expr.args),
+            _ => Vec::new(),
+        },
+        FilterOperand::Arithmetic(expr) => {
+            let mut dependencies = filter_operand_dependencies(&expr.left);
+            dependencies.extend(filter_operand_dependencies(&expr.right));
+            dependencies
+        }
+        FilterOperand::Literal(_) => Vec::new(),
+    }
+}
+
+fn projection_source_label<'a>(operand: &'a FilterOperand, fallback: &'a str) -> &'a str {
+    match operand {
+        FilterOperand::Projection(projection) => match projection.as_ref() {
+            Proj::Length(expression) => &expression.source_label,
+            Proj::Lower(expression) => &expression.source_label,
+            Proj::Upper(expression) => &expression.source_label,
+            Proj::SizePretty(expression) => &expression.source_label,
+            Proj::Typeof(expression) if !expression.source_label.is_empty() => {
+                &expression.source_label
+            }
+            Proj::Not(expression) => &expression.source_label,
+            Proj::Between(expression) => &expression.source_label,
+            Proj::InList(expression) => &expression.source_label,
+            Proj::Eq(expression) if !expression.source_label.is_empty() => &expression.source_label,
+            Proj::And(expression) if !expression.source_label.is_empty() => {
+                &expression.source_label
+            }
+            Proj::FormatType(expression) => &expression.source_label,
+            Proj::CurrentSetting(expression) => &expression.source_label,
+            Proj::PgGetPartKeyDef(expression) => &expression.source_label,
+            Proj::PgGetExpr(expression) => &expression.source_label,
+            Proj::PgGetUserById(expression) => &expression.source_label,
+            Proj::PgTableIsVisible(expression) => &expression.source_label,
+            Proj::PgAge(expression) => &expression.source_label,
+            Proj::Netmask(expression) => &expression.source_label,
+            Proj::GeoDistance(expression) => &expression.source_label,
+            Proj::GeoWithin(expression) => &expression.source_label,
+            Proj::WithinRadius(expression) => &expression.source_label,
+            Proj::WithinBox(expression) => &expression.source_label,
+            Proj::MakeGeohash(expression) => &expression.source_label,
+            Proj::Ilike(expression) => &expression.source_label,
+            Proj::Like(expression) => &expression.source_label,
+            Proj::Coalesce(expression) => &expression.source_label,
+            Proj::NullIf(expression) => &expression.source_label,
+            Proj::Cast(expression) => &expression.source_label,
+            Proj::Year(expression) => &expression.source_label,
+            Proj::Month(expression) => &expression.source_label,
+            Proj::Day(expression) => &expression.source_label,
+            Proj::Hour(expression) => &expression.source_label,
+            Proj::Minute(expression) => &expression.source_label,
+            Proj::Second(expression) => &expression.source_label,
+            Proj::Millis(expression) => &expression.source_label,
+            Proj::Micros(expression) => &expression.source_label,
+            Proj::Nanos(expression) => &expression.source_label,
+            Proj::DateAdd(expression) => &expression.source_label,
+            Proj::DateDiff(expression) => &expression.source_label,
+            Proj::IsLeapYear(expression) => &expression.source_label,
+            Proj::DaysInMonth(expression) => &expression.source_label,
+            Proj::ToStr(expression) => &expression.source_label,
+            Proj::IsEndOfMonth(expression) => &expression.source_label,
+            Proj::DayOfWeekSundayFirst(expression) => &expression.source_label,
+            Proj::DayOfWeek(expression) => &expression.source_label,
+            Proj::WeekOfYear(expression) => &expression.source_label,
+            Proj::ToTimestamp(expression) => &expression.source_label,
+            Proj::ToDate(expression) => &expression.source_label,
+            Proj::Md5(expression) => &expression.source_label,
+            Proj::Sha1(expression) => &expression.source_label,
+            Proj::Sha256(expression) => &expression.source_label,
+            Proj::ToUuid(expression) => &expression.source_label,
+            Proj::JsonExtract(expression) => &expression.source_label,
+            Proj::ToChar(expression) => &expression.source_label,
+            Proj::ToUtc(expression) => &expression.source_label,
+            Proj::ToTimezone(expression) => &expression.source_label,
+            Proj::ToPgDate(expression) => &expression.source_label,
+            Proj::Extract(expression) => &expression.source_label,
+            Proj::TimestampFloor(expression) => &expression.source_label,
+            Proj::TimestampCeil(expression) => &expression.source_label,
+            _ => fallback,
+        },
+        _ => fallback,
+    }
+}
+
+fn grouped_pattern_projection_error_position(
+    operand: &FilterOperand,
+    message: &str,
+    projection_position: usize,
+) -> Option<usize> {
+    let FilterOperand::Projection(projection) = operand else {
+        return None;
+    };
+    match projection.as_ref() {
+        Proj::Not(expression) => {
+            let source = expression.source_label.as_ref();
+            if let Some(name) = message
+                .strip_prefix("Invalid column: ")
+                .and_then(|message| message.rsplit('.').next())
+            {
+                return source_dependency_offset_with_qualifier(source, name)
+                    .map(|offset| projection_position + offset);
+            }
+            if message.starts_with("there is no matching operator") {
+                let lower = source.to_ascii_lowercase();
+                let offset = [" ilike ", " like ", " between ", " !~ ", " ~ "]
+                    .iter()
+                    .find_map(|operator| lower.find(operator).map(|offset| offset + 1));
+                return offset.map(|offset| projection_position + offset);
+            }
+            if message.starts_with("argument type mismatch for function `not`") {
+                return Some(0);
+            }
+            if message.starts_with("Unescaped")
+                || message.starts_with("Unclosed")
+                || message.starts_with("Dangling")
+                || message.starts_with("error parsing")
+            {
+                let pattern = expression
+                    .filter
+                    .as_deref()
+                    .and_then(filter_pattern_literal)?;
+                return Some(projection_position + source.find(pattern).unwrap_or_default());
+            }
+            (message == "use constant or bind variable"
+                || message.starts_with("not implemented: dynamic pattern"))
+            .then_some(0)
+        }
+        Proj::Like(expression) if expression.regex => {
+            if message.starts_with("Unescaped")
+                || message.starts_with("Unclosed")
+                || message.starts_with("Dangling")
+                || message.starts_with("error parsing")
+            {
+                let pattern = match expression.args.get(1) {
+                    Some(ConcatArg::Literal(Scalar::Text(pattern))) => pattern,
+                    _ => return Some(0),
+                };
+                return Some(
+                    projection_position + expression.source_label.find(pattern).unwrap_or_default(),
+                );
+            }
+            Some(0)
+        }
+        Proj::Like(_) | Proj::Ilike(_) => Some(0),
+        _ => None,
+    }
+}
+
+fn filter_pattern_literal(filter: &Filter) -> Option<&str> {
+    match filter {
+        Filter::Like {
+            pattern: ConcatArg::Literal(Scalar::Text(pattern)),
+            ..
+        }
+        | Filter::Regex {
+            pattern: ConcatArg::Literal(Scalar::Text(pattern)),
+            ..
+        } => Some(pattern),
+        Filter::Not(inner) => filter_pattern_literal(inner),
+        Filter::And(left, right) | Filter::Or(left, right) => {
+            filter_pattern_literal(left).or_else(|| filter_pattern_literal(right))
+        }
+        _ => None,
+    }
+}
+
+fn typeof_dependencies(expr: &TypeofExpr) -> Vec<String> {
+    if let Some(source) = &expr.arithmetic {
+        if let Ok(operand) = parse_filter_operand(source, 0) {
+            return filter_operand_dependencies(&operand);
+        }
+    }
+    if let Some(inner) = &expr.geohash {
+        return concat_arg_dependencies(&inner.args);
+    }
+    if let Some(inner) = &expr.uuid {
+        return concat_arg_dependencies(&inner.args);
+    }
+    if let Some(inner) = &expr.json {
+        return concat_arg_dependencies(&inner.args);
+    }
+    if let Some(inner) = &expr.to_char {
+        return inner.base64.as_ref().map_or_else(
+            || concat_arg_dependencies(&inner.args),
+            |base64| concat_arg_dependencies(&base64.args),
+        );
+    }
+    concat_arg_dependencies(&expr.args)
+}
+
+fn concat_arg_dependencies(args: &[ConcatArg]) -> Vec<String> {
+    args.iter()
+        .filter_map(|arg| match arg {
+            ConcatArg::Column(name) => Some(name.to_ascii_lowercase()),
+            ConcatArg::Literal(_) => None,
+        })
+        .collect()
 }
 
 struct AggColumn {
@@ -15562,12 +18353,1134 @@ fn apply_limit(row_ids: &mut Vec<usize>, mut lo: i64, mut hi: i64) {
 }
 
 fn row_matches(table: &Table, row: usize, filter: &Filter) -> Result<bool, Error> {
-    let index = table
-        .column_index(&filter.column)
-        .ok_or_else(|| Error::new(format!("unknown column `{}`", filter.column)))?;
-    let left = &table.columns[index][row];
-    let tag = table.meta.columns[index].tag;
-    sql_cmp(left, tag, filter.op, &filter.literal)
+    match filter {
+        Filter::BooleanColumn { column } => {
+            let index = table
+                .column_index(column)
+                .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
+            if table.meta.columns[index].tag != qdb_types::TAG_BOOLEAN {
+                return Err(Error::new("boolean expression expected"));
+            }
+            Ok(matches!(table.columns[index][row], Scalar::Boolean(true)))
+        }
+        Filter::BooleanLiteral(Some(value)) => Ok(*value),
+        Filter::BooleanLiteral(None) => Err(Error::new("boolean expression expected")),
+        Filter::NonBooleanLiteral { value, position } => Err(Error::at(
+            format!(
+                "expression type mismatch, expected: BOOLEAN, actual: {}",
+                qdb_types::type_name(filter_boolean_literal_tag(value))
+            ),
+            *position,
+        )),
+        Filter::Not(inner) => {
+            if let Filter::BooleanColumn { column } = inner.as_ref() {
+                let index = table
+                    .column_index(column)
+                    .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
+                let tag = table.meta.columns[index].tag;
+                if tag != qdb_types::TAG_BOOLEAN {
+                    return Err(Error::new(format!(
+                        "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: {}",
+                        qdb_types::type_name(tag)
+                    )));
+                }
+                return Ok(!matches!(table.columns[index][row], Scalar::Boolean(true)));
+            }
+            if matches!(inner.as_ref(), Filter::BooleanLiteral(None)) {
+                return Ok(true);
+            }
+            Ok(!row_matches(table, row, inner)?)
+        }
+        Filter::Compare {
+            column,
+            op,
+            literal,
+        } => {
+            let index = table
+                .column_index(column)
+                .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
+            let left = &table.columns[index][row];
+            let tag = table.meta.columns[index].tag;
+            sql_cmp(left, tag, *op, literal)
+        }
+        Filter::CompareColumns { left, op, right } => {
+            let left_index = table
+                .column_index(left)
+                .ok_or_else(|| Error::new(format!("Invalid column: {left}")))?;
+            let right_index = table
+                .column_index(right)
+                .ok_or_else(|| Error::new(format!("Invalid column: {right}")))?;
+            compare_columns(
+                &table.columns[left_index][row],
+                table.meta.columns[left_index].tag,
+                &table.columns[right_index][row],
+                table.meta.columns[right_index].tag,
+                *op,
+            )
+        }
+        Filter::CompareExpressions { left, op, right } => {
+            let (left, left_tag) = eval_filter_operand(table, row, left)?;
+            match right {
+                FilterOperand::Literal(literal)
+                    if matches!(left_tag, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP)
+                        && is_numeric_tag(literal_tag(literal)) =>
+                {
+                    compare_columns(&left, left_tag, literal, literal_tag(literal), *op)
+                }
+                FilterOperand::Literal(literal) => sql_cmp(&left, left_tag, *op, literal),
+                FilterOperand::Projection(_) | FilterOperand::Arithmetic(_) => {
+                    let (right, right_tag) = eval_filter_operand(table, row, right)?;
+                    compare_columns(&left, left_tag, &right, right_tag, *op)
+                }
+            }
+        }
+        Filter::Between {
+            column,
+            low,
+            high,
+            negated,
+        } => {
+            let index = table
+                .column_index(column)
+                .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
+            let left = &table.columns[index][row];
+            let tag = table.meta.columns[index].tag;
+            if is_numeric_tag(tag)
+                && (matches!(low, Scalar::Text(_)) || matches!(high, Scalar::Text(_)))
+            {
+                return Err(Error::new(format!(
+                    "there is no matching operator `between` with the argument type: {}",
+                    qdb_types::type_name(tag)
+                )));
+            }
+            let inside = if low.is_null() || high.is_null() {
+                false
+            } else {
+                let (low, high) = if sql_cmp(low, tag, CmpOp::Gt, high)? {
+                    (high, low)
+                } else {
+                    (low, high)
+                };
+                sql_cmp(left, tag, CmpOp::GtEq, low)? && sql_cmp(left, tag, CmpOp::LtEq, high)?
+            };
+            Ok(if *negated { !inside } else { inside })
+        }
+        Filter::Regex {
+            column,
+            pattern,
+            negated,
+            position,
+        } => {
+            let index = table
+                .column_index(column)
+                .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
+            let args = [ConcatArg::Column(column.clone()), pattern.clone()];
+            if matches!(pattern, ConcatArg::Literal(Scalar::Null)) {
+                if !replace_text_ok(table, &args[0]) {
+                    return Err(ilike_operator_error(
+                        table,
+                        &args,
+                        if *negated { "!~" } else { "~" },
+                    )?);
+                }
+                return Ok(false);
+            }
+            if let ConcatArg::Column(_) = pattern {
+                if !negated {
+                    return Err(Error::new(
+                        "not implemented: dynamic pattern would be very slow to execute",
+                    ));
+                }
+                return Err(ilike_operator_error(table, &args, "!~")?);
+            }
+            let ConcatArg::Literal(Scalar::Text(pattern)) = pattern else {
+                return Err(ilike_operator_error(
+                    table,
+                    &args,
+                    if *negated { "!~" } else { "~" },
+                )?);
+            };
+            if !replace_text_ok(table, &args[0]) {
+                return Err(ilike_operator_error(
+                    table,
+                    &args,
+                    if *negated { "!~" } else { "~" },
+                )?);
+            }
+            let regex = compile_regex(pattern).map_err(|error| {
+                let position = regex_error_position(pattern, *position, &error.message);
+                Error::at(error.message, position)
+            })?;
+            let value = ResolvedArg::Column {
+                index,
+                tag: table.meta.columns[index].tag,
+            };
+            let matched = match text_of(table, row, &value) {
+                Some(text) => regex.is_match(&text)?,
+                None => false,
+            };
+            Ok(if *negated { !matched } else { matched })
+        }
+        Filter::Like {
+            column,
+            pattern,
+            case_insensitive,
+            negated,
+        } => {
+            let index = table
+                .column_index(column)
+                .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
+            let args = [ConcatArg::Column(column.clone()), pattern.clone()];
+            let value_ok = replace_text_ok(table, &args[0]);
+            let pattern_literal = matches!(
+                pattern,
+                ConcatArg::Literal(Scalar::Text(_)) | ConcatArg::Literal(Scalar::Null)
+            );
+            if !value_ok || !pattern_literal {
+                if value_ok
+                    && matches!(pattern, ConcatArg::Column(_))
+                    && ilike_text_column(table, pattern)
+                {
+                    return Err(Error::new("use constant or bind variable"));
+                }
+                return Err(ilike_operator_error(
+                    table,
+                    &args,
+                    if *case_insensitive { "ilike" } else { "like" },
+                )?);
+            }
+            let pattern = match pattern {
+                ConcatArg::Literal(Scalar::Text(text)) if !text.is_empty() => {
+                    IlikePattern::Tokens(compile_ilike(text, *case_insensitive)?)
+                }
+                _ => IlikePattern::Never,
+            };
+            let value = ResolvedArg::Column {
+                index,
+                tag: table.meta.columns[index].tag,
+            };
+            let matched = like_row(table, row, &value, &pattern, *case_insensitive);
+            Ok(if *negated { !matched } else { matched })
+        }
+        Filter::InList {
+            column,
+            items,
+            negated,
+        } => {
+            let index = table
+                .column_index(column)
+                .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
+            let tag = table.meta.columns[index].tag;
+            let kind = match tag {
+                qdb_types::TAG_LONG
+                | qdb_types::TAG_INT
+                | qdb_types::TAG_SHORT
+                | qdb_types::TAG_BYTE => InKind::Integer,
+                qdb_types::TAG_DOUBLE | qdb_types::TAG_FLOAT => InKind::Float,
+                qdb_types::TAG_STRING
+                | qdb_types::TAG_SYMBOL
+                | qdb_types::TAG_VARCHAR
+                | qdb_types::TAG_CHAR => InKind::Text,
+                other => return Err(in_type_rejected(qdb_types::type_name(other))),
+            };
+            let left_type = qdb_types::type_name(tag);
+            let items = items
+                .iter()
+                .map(|item| in_item(left_type, kind, &ConcatArg::Literal(item.clone())))
+                .collect::<Result<Vec<_>, _>>()?;
+            let value = &table.columns[index][row];
+            let matched = match value {
+                Scalar::Null => items.iter().any(|item| matches!(item, InItem::Null)),
+                Scalar::Long(number) => in_long(*number, &items),
+                Scalar::Int(number) => in_long(i64::from(*number), &items),
+                Scalar::Short(number) => in_long(i64::from(*number), &items),
+                Scalar::Byte(number) => in_long(i64::from(*number), &items),
+                Scalar::Double(number) => in_float(*number, &items),
+                Scalar::Float(number) => in_float(f64::from(*number), &items),
+                Scalar::Text(text) => in_text(text, &items),
+                Scalar::Char(unit) => in_text(&in_char_text(*unit), &items),
+                Scalar::Timestamp(number) | Scalar::Date(number) => in_long(*number, &items),
+                Scalar::Boolean(_) => false,
+            };
+            Ok(if *negated { !matched } else { matched })
+        }
+        Filter::And(left, right) => {
+            if !row_matches_logic_operand(table, row, left)? {
+                Ok(false)
+            } else {
+                row_matches_logic_operand(table, row, right)
+            }
+        }
+        Filter::Or(left, right) => {
+            if row_matches_logic_operand(table, row, left)? {
+                Ok(true)
+            } else {
+                row_matches_logic_operand(table, row, right)
+            }
+        }
+    }
+}
+
+fn row_matches_logic_operand(table: &Table, row: usize, filter: &Filter) -> Result<bool, Error> {
+    if matches!(filter, Filter::BooleanLiteral(None)) {
+        Ok(false)
+    } else {
+        row_matches(table, row, filter)
+    }
+}
+
+fn validate_filter_regex(table: &Table, filter: &Filter) -> Result<(), Error> {
+    match filter {
+        Filter::Regex {
+            column,
+            pattern,
+            negated,
+            position,
+        } => {
+            if table.column_index(column).is_none() {
+                return Err(Error::new(format!("Invalid column: {column}")));
+            }
+            let args = [ConcatArg::Column(column.clone()), pattern.clone()];
+            match pattern {
+                ConcatArg::Literal(Scalar::Text(pattern)) => {
+                    if !replace_text_ok(table, &args[0]) {
+                        return Err(ilike_operator_error(
+                            table,
+                            &args,
+                            if *negated { "!~" } else { "~" },
+                        )?);
+                    }
+                    compile_regex(pattern).map_err(|error| {
+                        let position = regex_error_position(pattern, *position, &error.message);
+                        Error::at(error.message, position)
+                    })?;
+                }
+                ConcatArg::Literal(Scalar::Null) => {
+                    if !replace_text_ok(table, &args[0]) {
+                        return Err(ilike_operator_error(
+                            table,
+                            &args,
+                            if *negated { "!~" } else { "~" },
+                        )?);
+                    }
+                }
+                ConcatArg::Column(_) => {}
+                ConcatArg::Literal(_) => {
+                    return Err(ilike_operator_error(
+                        table,
+                        &args,
+                        if *negated { "!~" } else { "~" },
+                    )?);
+                }
+            }
+        }
+        Filter::Not(inner) => validate_filter_regex(table, inner)?,
+        Filter::And(left, right) | Filter::Or(left, right) => {
+            validate_filter_regex(table, left)?;
+            validate_filter_regex(table, right)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn eval_filter_operand(
+    table: &Table,
+    row: usize,
+    operand: &FilterOperand,
+) -> Result<(Scalar, i32), Error> {
+    match operand {
+        FilterOperand::Literal(value) => Ok((value.clone(), literal_tag(value))),
+        FilterOperand::Arithmetic(expr) => {
+            let (left, left_tag) = eval_filter_arithmetic_operand(table, row, &expr.left)?;
+            let (right, right_tag) = eval_filter_arithmetic_operand(table, row, &expr.right)?;
+            filter_arithmetic_value(&left, left_tag, &right, right_tag, expr.op, expr.position)
+        }
+        FilterOperand::Projection(expr) => {
+            let resolved = resolve_proj(table, expr)?;
+            let value = eval_checked(table, row, &resolved)?;
+            let tag = match &resolved {
+                ResolvedProj::Column { index } => table.meta.columns[*index].tag,
+                _ => resolved.expr_tag(),
+            };
+            Ok((value, tag))
+        }
+    }
+}
+
+fn eval_filter_arithmetic_operand(
+    table: &Table,
+    row: usize,
+    operand: &FilterOperand,
+) -> Result<(Scalar, i32), Error> {
+    match operand {
+        FilterOperand::Arithmetic(expr) => {
+            let (left, left_tag) = eval_filter_arithmetic_operand(table, row, &expr.left)?;
+            let (right, right_tag) = eval_filter_arithmetic_operand(table, row, &expr.right)?;
+            filter_arithmetic_value(&left, left_tag, &right, right_tag, expr.op, expr.position)
+        }
+        FilterOperand::Projection(expr) if matches!(expr.as_ref(), Proj::Column(_)) => {
+            let Proj::Column(name) = expr.as_ref() else {
+                unreachable!();
+            };
+            let index = table
+                .column_index(name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+            let column = &table.meta.columns[index];
+            if column.tag != qdb_types::TAG_SYMBOL {
+                return eval_filter_operand(table, row, operand);
+            }
+            let value = &table.columns[index][row];
+            if value.is_null() {
+                return Ok((Scalar::Null, qdb_types::TAG_INT));
+            }
+            let Scalar::Text(text) = value else {
+                return Err(Error::new("internal: symbol column value"));
+            };
+            let map_index = column
+                .symbol_index
+                .ok_or_else(|| Error::new("internal: symbol column"))?;
+            let key = table.symbol_maps[map_index]
+                .iter()
+                .position(|found| found == text)
+                .ok_or_else(|| Error::new("internal: symbol key"))?;
+            let key = i32::try_from(key).map_err(|_| Error::new("internal: symbol key"))?;
+            Ok((Scalar::Int(key), qdb_types::TAG_SYMBOL))
+        }
+        _ => eval_filter_operand(table, row, operand),
+    }
+}
+
+fn filter_arithmetic_value(
+    left: &Scalar,
+    left_tag: i32,
+    right: &Scalar,
+    right_tag: i32,
+    op: ArithOp,
+    position: usize,
+) -> Result<(Scalar, i32), Error> {
+    let (left_tag, right_tag) = match (left_tag, right_tag) {
+        (qdb_types::TAG_SYMBOL, tag)
+            if matches!(
+                tag,
+                qdb_types::TAG_BYTE
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_LONG
+            ) =>
+        {
+            (qdb_types::TAG_INT, tag)
+        }
+        (tag, qdb_types::TAG_SYMBOL)
+            if matches!(
+                tag,
+                qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT
+            ) =>
+        {
+            (tag, qdb_types::TAG_INT)
+        }
+        _ => (left_tag, right_tag),
+    };
+    let left_temporal = matches!(left_tag, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP);
+    let right_temporal = matches!(right_tag, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP);
+    let left_integral = matches!(
+        left_tag,
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT | qdb_types::TAG_LONG
+    );
+    let right_integral = matches!(
+        right_tag,
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT | qdb_types::TAG_LONG
+    );
+    if !left.is_null() && !right.is_null() {
+        if left_temporal && right_temporal && matches!(op, ArithOp::Add | ArithOp::Sub) {
+            let (left, right) = if op == ArithOp::Add {
+                (
+                    temporal_as_micros(left, left_tag)?,
+                    temporal_as_raw(right, right_tag)?,
+                )
+            } else {
+                (
+                    temporal_as_raw(left, left_tag)?,
+                    temporal_as_raw(right, right_tag)?,
+                )
+            };
+            let result_tag = arithmetic_result_tag(left_tag, right_tag, op);
+            let value = apply_i64(op, left, right).map_or(Scalar::Null, |value| {
+                integer_arithmetic_result(value, result_tag)
+            });
+            return Ok((value, result_tag));
+        }
+        if left_temporal && right_integral && op == ArithOp::Add {
+            let left = temporal_as_micros(left, left_tag)?;
+            let right = scalar_as_i64(right)?;
+            let value = apply_i64(op, left, right).map_or(Scalar::Null, |value| {
+                integer_arithmetic_result(value, qdb_types::TAG_TIMESTAMP)
+            });
+            return Ok((value, qdb_types::TAG_TIMESTAMP));
+        }
+        if left_temporal && right_integral && op == ArithOp::Sub {
+            let left = temporal_as_raw(left, left_tag)?;
+            let right = scalar_as_i64(right)?;
+            let value = apply_i64(op, left, right).map_or(Scalar::Null, |value| {
+                integer_arithmetic_result(value, qdb_types::TAG_LONG)
+            });
+            return Ok((value, qdb_types::TAG_LONG));
+        }
+        if left_integral && right_temporal && matches!(op, ArithOp::Add | ArithOp::Sub) {
+            let left = scalar_as_i64(left)?;
+            let right = temporal_as_raw(right, right_tag)?;
+            let value = apply_i64(op, left, right).map_or(Scalar::Null, |value| {
+                integer_arithmetic_result(value, qdb_types::TAG_LONG)
+            });
+            return Ok((value, qdb_types::TAG_LONG));
+        }
+    }
+    let numeric = |tag| {
+        matches!(
+            tag,
+            qdb_types::TAG_BYTE
+                | qdb_types::TAG_SHORT
+                | qdb_types::TAG_INT
+                | qdb_types::TAG_LONG
+                | qdb_types::TAG_FLOAT
+                | qdb_types::TAG_DOUBLE
+                | qdb_types::TAG_DATE
+                | qdb_types::TAG_TIMESTAMP
+        )
+    };
+    if left.is_null() || right.is_null() {
+        let left_tag = if is_text_tag(left_tag) && numeric(right_tag) {
+            right_tag
+        } else {
+            left_tag
+        };
+        let right_tag = if is_text_tag(right_tag) && numeric(left_tag) {
+            left_tag
+        } else {
+            right_tag
+        };
+        if !numeric(left_tag) || !numeric(right_tag) {
+            return arithmetic_type_error(op, left_tag, right_tag, position);
+        }
+        let result_tag = arithmetic_result_tag(left_tag, right_tag, op);
+        return Ok((Scalar::Null, result_tag));
+    }
+    if is_text_tag(left_tag)
+        && left_tag != qdb_types::TAG_SYMBOL
+        && matches!(left, Scalar::Text(_) | Scalar::Char(_))
+        && numeric(right_tag)
+    {
+        let (left, left_tag) = convert_arithmetic_text(left, left_tag, right_tag)?;
+        return filter_arithmetic_value(&left, left_tag, right, right_tag, op, position);
+    }
+    if is_text_tag(right_tag)
+        && right_tag != qdb_types::TAG_SYMBOL
+        && matches!(right, Scalar::Text(_) | Scalar::Char(_))
+        && numeric(left_tag)
+    {
+        let (right, right_tag) = convert_arithmetic_text(right, right_tag, left_tag)?;
+        return filter_arithmetic_value(left, left_tag, &right, right_tag, op, position);
+    }
+    if !numeric(left_tag) || !numeric(right_tag) {
+        return arithmetic_type_error(op, left_tag, right_tag, position);
+    }
+    let real = matches!(left_tag, qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE)
+        || matches!(right_tag, qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE)
+        || (left_temporal && matches!(right_tag, qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE))
+        || (right_temporal && matches!(left_tag, qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE));
+    let result_tag = arithmetic_result_tag(left_tag, right_tag, op);
+    if result_tag == qdb_types::TAG_FLOAT {
+        let left = scalar_as_f32(left)?;
+        let right = scalar_as_f32(right)?;
+        return Ok((
+            apply_f32(op, left, right).map_or(Scalar::Null, float_arithmetic_result),
+            result_tag,
+        ));
+    }
+    if real {
+        let left = scalar_as_f64(left)?;
+        let right = scalar_as_f64(right)?;
+        return Ok((
+            apply_f64(op, left, right).map_or(Scalar::Null, double_arithmetic_result),
+            result_tag,
+        ));
+    }
+    let left = scalar_as_i64(left)?;
+    let right = scalar_as_i64(right)?;
+    let value = apply_i64(op, left, right).map_or(Scalar::Null, |value| {
+        integer_arithmetic_result(value, result_tag)
+    });
+    Ok((value, result_tag))
+}
+
+fn float_arithmetic_result(value: f32) -> Scalar {
+    if value.is_nan() {
+        Scalar::Null
+    } else {
+        Scalar::Float(value)
+    }
+}
+
+fn double_arithmetic_result(value: f64) -> Scalar {
+    if value.is_nan() {
+        Scalar::Null
+    } else {
+        Scalar::Double(value)
+    }
+}
+
+fn integer_arithmetic_result(value: i64, result_tag: i32) -> Scalar {
+    match result_tag {
+        qdb_types::TAG_INT => {
+            let value = value as i32;
+            if value == i32::MIN {
+                Scalar::Null
+            } else {
+                Scalar::Int(value)
+            }
+        }
+        qdb_types::TAG_TIMESTAMP => {
+            if value == i64::MIN {
+                Scalar::Null
+            } else {
+                Scalar::Timestamp(value)
+            }
+        }
+        _ => {
+            if value == i64::MIN {
+                Scalar::Null
+            } else {
+                Scalar::Long(value)
+            }
+        }
+    }
+}
+
+fn arithmetic_type_error(
+    op: ArithOp,
+    left_tag: i32,
+    right_tag: i32,
+    position: usize,
+) -> Result<(Scalar, i32), Error> {
+    Err(Error::at(
+        format!(
+            "there is no matching operator `{}` with the argument types: {} {} {}",
+            op.spelling(),
+            qdb_types::type_name(left_tag),
+            op.spelling(),
+            qdb_types::type_name(right_tag)
+        ),
+        position,
+    ))
+}
+
+fn arithmetic_result_tag(left_tag: i32, right_tag: i32, op: ArithOp) -> i32 {
+    let left_temporal = matches!(left_tag, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP);
+    let right_temporal = matches!(right_tag, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP);
+    let left_integral = matches!(
+        left_tag,
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT | qdb_types::TAG_LONG
+    );
+    let right_integral = matches!(
+        right_tag,
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT | qdb_types::TAG_LONG
+    );
+    if left_temporal && right_temporal {
+        if op == ArithOp::Add {
+            qdb_types::TAG_TIMESTAMP
+        } else {
+            qdb_types::TAG_LONG
+        }
+    } else if left_temporal && right_integral && op == ArithOp::Add {
+        qdb_types::TAG_TIMESTAMP
+    } else if (left_temporal && right_integral && op == ArithOp::Sub)
+        || (left_integral && right_temporal && matches!(op, ArithOp::Add | ArithOp::Sub))
+    {
+        qdb_types::TAG_LONG
+    } else if matches!(left_tag, qdb_types::TAG_DOUBLE)
+        || matches!(right_tag, qdb_types::TAG_DOUBLE)
+        || ((left_temporal || right_temporal)
+            && (matches!(left_tag, qdb_types::TAG_FLOAT)
+                || matches!(right_tag, qdb_types::TAG_FLOAT)))
+        || ((left_tag == qdb_types::TAG_LONG && right_tag == qdb_types::TAG_FLOAT)
+            || (right_tag == qdb_types::TAG_LONG && left_tag == qdb_types::TAG_FLOAT))
+    {
+        qdb_types::TAG_DOUBLE
+    } else if matches!(left_tag, qdb_types::TAG_FLOAT) || matches!(right_tag, qdb_types::TAG_FLOAT)
+    {
+        qdb_types::TAG_FLOAT
+    } else if left_temporal
+        || right_temporal
+        || left_tag == qdb_types::TAG_LONG
+        || right_tag == qdb_types::TAG_LONG
+    {
+        qdb_types::TAG_LONG
+    } else {
+        qdb_types::TAG_INT
+    }
+}
+
+fn temporal_as_raw(value: &Scalar, tag: i32) -> Result<i64, Error> {
+    match (value, tag) {
+        (Scalar::Date(value), qdb_types::TAG_DATE)
+        | (Scalar::Timestamp(value), qdb_types::TAG_TIMESTAMP) => Ok(*value),
+        _ => Err(Error::new("unsupported temporal arithmetic")),
+    }
+}
+
+fn temporal_as_micros(value: &Scalar, tag: i32) -> Result<i64, Error> {
+    match (value, tag) {
+        (Scalar::Date(value), qdb_types::TAG_DATE) => Ok(value.wrapping_mul(1_000)),
+        (Scalar::Timestamp(value), qdb_types::TAG_TIMESTAMP) => Ok(*value),
+        _ => Err(Error::new("unsupported temporal arithmetic")),
+    }
+}
+
+fn convert_arithmetic_text(
+    value: &Scalar,
+    source_tag: i32,
+    target_tag: i32,
+) -> Result<(Scalar, i32), Error> {
+    let text = match value {
+        Scalar::Text(text) => text.clone(),
+        Scalar::Char(_) => char_text(value)?,
+        _ => return Err(Error::new("internal: text arithmetic value")),
+    };
+    let converted = match target_tag {
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT => {
+            parse_questdb_long(&text)
+                .and_then(|number| i32::try_from(number).ok())
+                .map(Scalar::Int)
+        }
+        qdb_types::TAG_LONG => parse_questdb_long(&text).map(Scalar::Long),
+        qdb_types::TAG_FLOAT => text.parse::<f32>().ok().map(Scalar::Float),
+        qdb_types::TAG_DOUBLE => text.parse::<f64>().ok().map(Scalar::Double),
+        _ => None,
+    };
+    converted.map(|value| (value, target_tag)).ok_or_else(|| {
+        let value = if source_tag == qdb_types::TAG_CHAR {
+            text
+        } else {
+            format!("`{text}`")
+        };
+        Error::at(
+            format!(
+                "inconvertible value: {value} [{} -> {}]",
+                qdb_types::type_name(source_tag),
+                qdb_types::type_name(target_tag)
+            ),
+            0,
+        )
+    })
+}
+
+fn scalar_as_i64(value: &Scalar) -> Result<i64, Error> {
+    match value {
+        Scalar::Byte(value) => Ok(i64::from(*value)),
+        Scalar::Short(value) => Ok(i64::from(*value)),
+        Scalar::Int(value) => Ok(i64::from(*value)),
+        Scalar::Long(value) => Ok(*value),
+        Scalar::Date(value) | Scalar::Timestamp(value) => Ok(*value),
+        _ => Err(Error::new("unsupported integer arithmetic")),
+    }
+}
+
+fn scalar_as_f64(value: &Scalar) -> Result<f64, Error> {
+    match value {
+        Scalar::Byte(value) => Ok(f64::from(*value)),
+        Scalar::Short(value) => Ok(f64::from(*value)),
+        Scalar::Int(value) => Ok(f64::from(*value)),
+        Scalar::Long(value) => Ok(*value as f64),
+        Scalar::Float(value) => Ok(f64::from(*value)),
+        Scalar::Double(value) => Ok(*value),
+        Scalar::Date(value) | Scalar::Timestamp(value) => Ok(*value as f64),
+        _ => Err(Error::new("unsupported floating-point arithmetic")),
+    }
+}
+
+fn scalar_as_f32(value: &Scalar) -> Result<f32, Error> {
+    match value {
+        Scalar::Byte(value) => Ok(f32::from(*value)),
+        Scalar::Short(value) => Ok(f32::from(*value)),
+        Scalar::Int(value) => Ok(*value as f32),
+        Scalar::Long(value) => Ok(*value as f32),
+        Scalar::Float(value) => Ok(*value),
+        _ => Err(Error::new("unsupported floating-point arithmetic")),
+    }
+}
+
+fn scalar_tag(value: &Scalar) -> i32 {
+    match value {
+        Scalar::Null => qdb_types::TAG_LONG,
+        Scalar::Boolean(_) => qdb_types::TAG_BOOLEAN,
+        Scalar::Byte(_) => qdb_types::TAG_BYTE,
+        Scalar::Short(_) => qdb_types::TAG_SHORT,
+        Scalar::Char(_) => qdb_types::TAG_CHAR,
+        Scalar::Int(_) => qdb_types::TAG_INT,
+        Scalar::Long(_) => qdb_types::TAG_LONG,
+        Scalar::Float(_) => qdb_types::TAG_FLOAT,
+        Scalar::Double(_) => qdb_types::TAG_DOUBLE,
+        Scalar::Date(_) => qdb_types::TAG_DATE,
+        Scalar::Timestamp(_) => qdb_types::TAG_TIMESTAMP,
+        Scalar::Text(_) => qdb_types::TAG_STRING,
+    }
+}
+
+fn literal_tag(value: &Scalar) -> i32 {
+    match value {
+        Scalar::Long(value) if i32::try_from(*value).is_ok() => qdb_types::TAG_INT,
+        _ => scalar_tag(value),
+    }
+}
+
+fn filter_boolean_literal_tag(value: &Scalar) -> i32 {
+    match value {
+        Scalar::Text(text) if text.chars().count() == 1 => qdb_types::TAG_CHAR,
+        _ => literal_tag(value),
+    }
+}
+
+fn compare_columns(
+    left: &Scalar,
+    left_tag: i32,
+    right: &Scalar,
+    right_tag: i32,
+    op: CmpOp,
+) -> Result<bool, Error> {
+    let left_boolean = left_tag == qdb_types::TAG_BOOLEAN;
+    let right_boolean = right_tag == qdb_types::TAG_BOOLEAN;
+    if (left_boolean || right_boolean) && !(left_boolean && right_boolean) {
+        return Err(column_operator_error(left_tag, op, right_tag));
+    }
+
+    let left_text = is_text_tag(left_tag);
+    let right_text = is_text_tag(right_tag);
+    let left_numeric = is_numeric_tag(left_tag);
+    let right_numeric = is_numeric_tag(right_tag);
+    if !(left_boolean && right_boolean)
+        && (!(left_numeric || left_text) || !(right_numeric || right_text))
+    {
+        return Err(column_operator_error(left_tag, op, right_tag));
+    }
+
+    if let Some(result) = compare_null_columns(left, left_tag, right, right_tag, op) {
+        return Ok(result);
+    }
+    if (left_tag == qdb_types::TAG_SYMBOL && is_integer_value_tag(right_tag))
+        || (right_tag == qdb_types::TAG_SYMBOL && is_integer_value_tag(left_tag))
+    {
+        if !matches!(op, CmpOp::Eq | CmpOp::NotEq) {
+            let symbol = if left_tag == qdb_types::TAG_SYMBOL {
+                (left, left_tag)
+            } else {
+                (right, right_tag)
+            };
+            let value = column_text(symbol.0, symbol.1)?.unwrap_or_default();
+            return Err(Error::new(format!(
+                "inconvertible value: `{value}` [SYMBOL -> TIMESTAMP_NS]"
+            )));
+        }
+        let (symbol, number) = if left_tag == qdb_types::TAG_SYMBOL {
+            (
+                column_text(left, left_tag)?.unwrap_or_default(),
+                column_i64(right, right_tag, right_tag)?,
+            )
+        } else {
+            (
+                column_text(right, right_tag)?.unwrap_or_default(),
+                column_i64(left, left_tag, left_tag)?,
+            )
+        };
+        let number = number.to_string();
+        let equal = symbol == number;
+        return Ok(if op == CmpOp::Eq { equal } else { !equal });
+    }
+    if (left_tag == qdb_types::TAG_VARCHAR && right_tag == qdb_types::TAG_LONG)
+        || (right_tag == qdb_types::TAG_VARCHAR && left_tag == qdb_types::TAG_LONG)
+    {
+        let (varchar, long, varchar_left) = if left_tag == qdb_types::TAG_VARCHAR {
+            (left, right, true)
+        } else {
+            (right, left, false)
+        };
+        let Scalar::Text(text) = varchar else {
+            return Err(Error::new("internal: varchar column value"));
+        };
+        let mut chars = text.chars();
+        let Some(ch) = chars.next() else {
+            return Err(Error::new("inconvertible value: `` [VARCHAR -> CHAR]"));
+        };
+        if chars.next().is_some() || u32::from(ch) > u32::from(u16::MAX) {
+            return Err(Error::new(format!(
+                "inconvertible value: `{text}` [VARCHAR -> CHAR]"
+            )));
+        }
+        let number = column_i64(long, qdb_types::TAG_LONG, qdb_types::TAG_LONG)?;
+        let char_number = char_to_long(ch as u16);
+        let ordering = if varchar_left {
+            char_number.cmp(&number)
+        } else {
+            number.cmp(&char_number)
+        };
+        return Ok(comparison_result(ordering, op));
+    }
+    if left_boolean {
+        let (Scalar::Boolean(left), Scalar::Boolean(right)) = (left, right) else {
+            return Err(Error::new("internal: boolean column value"));
+        };
+        return Ok(comparison_result(left.cmp(right), op));
+    }
+    if left_text && right_text {
+        let (Some(left), Some(right)) =
+            (column_text(left, left_tag)?, column_text(right, right_tag)?)
+        else {
+            return Err(Error::new("internal: null text comparison"));
+        };
+        let ordering = cmp_text(&left, &right)?;
+        return Ok(comparison_result(ordering, op));
+    }
+
+    // Text compared with a number is converted to the numeric side's type in
+    // QuestDB. This is row-evaluated, so bad text still fails under LIMIT 0.
+    let target_tag = if left_text { right_tag } else { left_tag };
+    let floating = matches!(left_tag, qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE)
+        || matches!(right_tag, qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE);
+
+    let ordering = if floating {
+        match (left.is_null(), right.is_null()) {
+            (true, true) => Ordering::Equal,
+            (true, false) => Ordering::Greater,
+            (false, true) => Ordering::Less,
+            (false, false) => {
+                let left = column_f64(left, left_tag, target_tag)?;
+                let right = column_f64(right, right_tag, target_tag)?;
+                left.partial_cmp(&right)
+                    .ok_or_else(|| Error::new("unsupported numeric comparison"))?
+            }
+        }
+    } else {
+        let mut left = column_i64(left, left_tag, target_tag)?;
+        let mut right = column_i64(right, right_tag, target_tag)?;
+        if left_tag == qdb_types::TAG_DATE && right_tag == qdb_types::TAG_TIMESTAMP {
+            left = left.saturating_mul(1_000);
+        } else if left_tag == qdb_types::TAG_TIMESTAMP && right_tag == qdb_types::TAG_DATE {
+            right = right.saturating_mul(1_000);
+        }
+        left.cmp(&right)
+    };
+    Ok(comparison_result(ordering, op))
+}
+
+fn compare_null_columns(
+    left: &Scalar,
+    left_tag: i32,
+    right: &Scalar,
+    right_tag: i32,
+    op: CmpOp,
+) -> Option<bool> {
+    match (left.is_null(), right.is_null()) {
+        (false, false) => None,
+        (true, false) | (false, true) => Some(match op {
+            CmpOp::Eq => false,
+            CmpOp::NotEq => true,
+            CmpOp::Lt | CmpOp::Gt | CmpOp::LtEq | CmpOp::GtEq => false,
+        }),
+        (true, true) => {
+            let ordering = if is_integer_tag(left_tag) && is_integer_tag(right_tag) {
+                integer_null_sentinel(left_tag).cmp(&integer_null_sentinel(right_tag))
+            } else {
+                Ordering::Equal
+            };
+            Some(comparison_result(ordering, op))
+        }
+    }
+}
+
+fn is_integer_tag(tag: i32) -> bool {
+    matches!(
+        tag,
+        qdb_types::TAG_BYTE
+            | qdb_types::TAG_SHORT
+            | qdb_types::TAG_INT
+            | qdb_types::TAG_LONG
+            | qdb_types::TAG_DATE
+            | qdb_types::TAG_TIMESTAMP
+    )
+}
+
+fn is_integer_value_tag(tag: i32) -> bool {
+    matches!(
+        tag,
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT | qdb_types::TAG_INT | qdb_types::TAG_LONG
+    )
+}
+
+fn integer_null_sentinel(tag: i32) -> i64 {
+    match tag {
+        qdb_types::TAG_INT => i64::from(i32::MIN),
+        qdb_types::TAG_BYTE | qdb_types::TAG_SHORT => 0,
+        _ => i64::MIN,
+    }
+}
+
+fn comparison_result(ordering: Ordering, op: CmpOp) -> bool {
+    match op {
+        CmpOp::Eq => ordering == Ordering::Equal,
+        CmpOp::NotEq => ordering != Ordering::Equal,
+        CmpOp::Lt => ordering == Ordering::Less,
+        CmpOp::Gt => ordering == Ordering::Greater,
+        CmpOp::LtEq => ordering != Ordering::Greater,
+        CmpOp::GtEq => ordering != Ordering::Less,
+    }
+}
+
+fn column_operator_error(left_tag: i32, op: CmpOp, right_tag: i32) -> Error {
+    let op = match op {
+        CmpOp::Eq => "=",
+        CmpOp::NotEq => "!=",
+        CmpOp::Lt => "<",
+        CmpOp::Gt => ">",
+        CmpOp::LtEq => "<=",
+        CmpOp::GtEq => ">=",
+    };
+    let left = qdb_types::type_name(left_tag);
+    let right = qdb_types::type_name(right_tag);
+    Error::new(format!(
+        "there is no matching operator `{op}` with the argument types: {left} {op} {right}"
+    ))
+}
+
+fn is_text_tag(tag: i32) -> bool {
+    matches!(
+        tag,
+        qdb_types::TAG_STRING
+            | qdb_types::TAG_SYMBOL
+            | qdb_types::TAG_VARCHAR
+            | qdb_types::TAG_CHAR
+    )
+}
+
+fn is_numeric_tag(tag: i32) -> bool {
+    matches!(
+        tag,
+        qdb_types::TAG_BYTE
+            | qdb_types::TAG_SHORT
+            | qdb_types::TAG_INT
+            | qdb_types::TAG_LONG
+            | qdb_types::TAG_FLOAT
+            | qdb_types::TAG_DOUBLE
+            | qdb_types::TAG_DATE
+            | qdb_types::TAG_TIMESTAMP
+    )
+}
+
+fn column_text(value: &Scalar, tag: i32) -> Result<Option<String>, Error> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    match tag {
+        qdb_types::TAG_CHAR => Ok(Some(char_text(value)?)),
+        qdb_types::TAG_STRING | qdb_types::TAG_SYMBOL | qdb_types::TAG_VARCHAR => {
+            let Scalar::Text(text) = value else {
+                return Err(Error::new("internal: text column value"));
+            };
+            Ok(Some(text.clone()))
+        }
+        _ => Err(Error::new("internal: non-text column value")),
+    }
+}
+
+fn column_i64(value: &Scalar, source_tag: i32, target_tag: i32) -> Result<i64, Error> {
+    match value {
+        Scalar::Null => Ok(match source_tag {
+            qdb_types::TAG_INT => i64::from(i32::MIN),
+            qdb_types::TAG_BYTE | qdb_types::TAG_SHORT => 0,
+            _ if is_text_tag(source_tag) => match target_tag {
+                qdb_types::TAG_INT => i64::from(i32::MIN),
+                qdb_types::TAG_BYTE | qdb_types::TAG_SHORT => 0,
+                _ => i64::MIN,
+            },
+            _ => i64::MIN,
+        }),
+        Scalar::Byte(number) => Ok(i64::from(*number)),
+        Scalar::Short(number) => Ok(i64::from(*number)),
+        Scalar::Int(number) => Ok(i64::from(*number)),
+        Scalar::Long(number) | Scalar::Date(number) | Scalar::Timestamp(number) => Ok(*number),
+        Scalar::Text(text) if target_tag == qdb_types::TAG_DATE => date_from_literal(value)
+            .map_err(|_| column_conversion_error(text, source_tag, "DATE"))?
+            .ok_or_else(|| column_conversion_error(text, source_tag, "DATE")),
+        Scalar::Text(text) if target_tag == qdb_types::TAG_TIMESTAMP => {
+            let target = if matches!(source_tag, qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR) {
+                "TIMESTAMP_NS"
+            } else {
+                "TIMESTAMP"
+            };
+            timestamp_from_literal(value)
+                .map_err(|_| column_conversion_error(text, source_tag, target))?
+                .ok_or_else(|| column_conversion_error(text, source_tag, target))
+        }
+        Scalar::Text(text) => parse_integer_text(text).ok_or_else(|| {
+            column_conversion_error(text, source_tag, qdb_types::type_name(target_tag))
+        }),
+        Scalar::Char(unit) => {
+            if is_integer_value_tag(target_tag) {
+                Ok(char_to_long(*unit))
+            } else {
+                let text = char_from_unit(*unit)?.to_string();
+                parse_integer_text(&text).ok_or_else(|| {
+                    Error::new(format!(
+                        "inconvertible value: {text} [CHAR -> {}]",
+                        qdb_types::type_name(target_tag)
+                    ))
+                })
+            }
+        }
+        Scalar::Float(_) | Scalar::Double(_) | Scalar::Boolean(_) => {
+            Err(column_operator_error(target_tag, CmpOp::Eq, source_tag))
+        }
+    }
+}
+
+fn column_conversion_error(text: &str, source_tag: i32, target: &str) -> Error {
+    Error::new(format!(
+        "inconvertible value: `{text}` [{} -> {target}]",
+        qdb_types::type_name(source_tag)
+    ))
+}
+
+fn char_to_long(unit: u16) -> i64 {
+    (i64::from(unit) - i64::from(u16::from(b'0'))).clamp(0, 9)
+}
+
+fn column_f64(value: &Scalar, source_tag: i32, target_tag: i32) -> Result<f64, Error> {
+    match value {
+        Scalar::Null => Ok(f64::NAN),
+        Scalar::Byte(number) => Ok(f64::from(*number)),
+        Scalar::Short(number) => Ok(f64::from(*number)),
+        Scalar::Int(number) => Ok(f64::from(*number)),
+        Scalar::Long(number) | Scalar::Date(number) | Scalar::Timestamp(number) => {
+            Ok(*number as f64)
+        }
+        Scalar::Float(number) => Ok(f64::from(*number)),
+        Scalar::Double(number) => Ok(*number),
+        Scalar::Text(text) => parse_questdb_f64(text).ok_or_else(|| {
+            Error::new(format!(
+                "inconvertible value: `{text}` [{} -> {}]",
+                qdb_types::type_name(source_tag),
+                qdb_types::type_name(target_tag)
+            ))
+        }),
+        Scalar::Char(unit) => {
+            let text = char_from_unit(*unit)?.to_string();
+            parse_questdb_f64(&text).ok_or_else(|| {
+                Error::new(format!(
+                    "inconvertible value: {text} [CHAR -> {}]",
+                    qdb_types::type_name(target_tag)
+                ))
+            })
+        }
+        Scalar::Boolean(_) => Err(column_operator_error(target_tag, CmpOp::Eq, source_tag)),
+    }
 }
 
 fn sql_cmp(left: &Scalar, tag: i32, op: CmpOp, literal: &Scalar) -> Result<bool, Error> {
@@ -15579,8 +19492,22 @@ fn sql_cmp(left: &Scalar, tag: i32, op: CmpOp, literal: &Scalar) -> Result<bool,
             CmpOp::LtEq | CmpOp::GtEq => left.is_null(),
         });
     }
+    if is_numeric_tag(tag) && matches!(literal, Scalar::Text(_) | Scalar::Char(_)) {
+        let source_tag = match literal {
+            Scalar::Text(text) if text.chars().count() == 1 => qdb_types::TAG_CHAR,
+            _ => literal_tag(literal),
+        };
+        let (literal, _) = match convert_arithmetic_text(literal, source_tag, tag) {
+            Ok(converted) => converted,
+            Err(_) if matches!(op, CmpOp::Eq | CmpOp::NotEq) => {
+                return Ok(op == CmpOp::NotEq);
+            }
+            Err(error) => return Err(error),
+        };
+        return sql_cmp(left, tag, op, &literal);
+    }
     if left.is_null() {
-        return Ok(false);
+        return Ok(op == CmpOp::NotEq);
     }
     let ordering = match tag {
         qdb_types::TAG_BOOLEAN => cmp_bool(left, literal)?,
@@ -16109,11 +20036,13 @@ fn char_from_unit(unit: u16) -> Result<char, Error> {
 }
 
 /// Ascending order from QuestDB 10.1.0. Integer, string, symbol, date and
-/// timestamp nulls sort first. Float and double nulls sort last, above every
-/// finite value, and `-0.0` sorts before `0.0`.
+/// timestamp nulls sort first. Float/double nulls and NaNs sort last, above
+/// every finite value, and `-0.0` sorts before `0.0`.
 fn compare_asc(left: &Scalar, right: &Scalar, tag: i32) -> Ordering {
     let nulls_last = matches!(tag, qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE);
-    match (left.is_null(), right.is_null()) {
+    let left_null = float_nan(left) || left.is_null();
+    let right_null = float_nan(right) || right.is_null();
+    match (left_null, right_null) {
         (true, true) => Ordering::Equal,
         (true, false) => {
             if nulls_last {
@@ -16130,6 +20059,14 @@ fn compare_asc(left: &Scalar, right: &Scalar, tag: i32) -> Ordering {
             }
         }
         (false, false) => compare_values(left, right),
+    }
+}
+
+fn float_nan(value: &Scalar) -> bool {
+    match value {
+        Scalar::Float(value) => value.is_nan(),
+        Scalar::Double(value) => value.is_nan(),
+        _ => false,
     }
 }
 
@@ -16838,12 +20775,306 @@ mod tests {
         );
         let err = execute(&sensors, "SELECT id, count() FROM sensors").unwrap_err();
         assert!(err.message.contains("unsupported"), "{}", err.message);
-        let err = execute(
+        let expanded = execute(
             &sensors,
             "SELECT id, count() FROM sensors GROUP BY id, note",
         )
-        .unwrap_err();
-        assert!(err.message.contains("multiple GROUP BY"), "{}", err.message);
+        .unwrap();
+        assert_eq!(expanded.rows.len(), 4);
+    }
+
+    #[test]
+    fn group_by_arithmetic_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("group_by_arithmetic_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid GROUP BY arithmetic case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/group_arith_{name}.tsv")))
+                    .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_arithmetic_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = std::fs::read_to_string(sensors.join("group_by_arithmetic_errors_queries.tsv"))
+            .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = fields.next().unwrap().parse::<usize>().unwrap();
+            let error = execute(&sensors, sql).expect_err("expected captured GROUP BY error");
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, Some(expected_position), "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_multiple_keys_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = std::fs::read_to_string(sensors.join("group_by_multi_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid multi-key GROUP BY case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/group_multi_{name}.tsv")))
+                    .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_multiple_keys_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("group_by_multi_errors_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = fields.next().unwrap().parse::<usize>().unwrap();
+            let error =
+                execute(&sensors, sql).expect_err("expected captured multi-key GROUP BY error");
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, Some(expected_position), "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_multiple_aggregates_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("group_by_multi_aggregate_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid multi-aggregate GROUP BY case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/group_multi_agg_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_multiple_aggregate_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("group_by_multi_aggregate_errors_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = match fields.next().unwrap() {
+                "-" => None,
+                position => Some(position.parse::<usize>().unwrap()),
+            };
+            let error = execute(&sensors, sql).expect_err("expected captured grouped error");
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, expected_position, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_special_multiple_aggregates_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("group_by_multi_special_aggregates_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid special aggregate case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/group_multi_special_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_special_aggregate_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = std::fs::read_to_string(
+            sensors.join("group_by_multi_special_aggregate_errors_queries.tsv"),
+        )
+        .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = match fields.next().unwrap() {
+                "-" => None,
+                position => Some(position.parse::<usize>().unwrap()),
+            };
+            let error = execute(&sensors, sql).expect_err("expected captured aggregate error");
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, expected_position, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_weighted_and_pair_aggregates_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("group_by_multi_weighted_aggregates_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid weighted aggregate case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/group_multi_weighted_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_weighted_aggregate_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = std::fs::read_to_string(
+            sensors.join("group_by_multi_weighted_aggregate_errors_queries.tsv"),
+        )
+        .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = match fields.next().unwrap() {
+                "-" => None,
+                position => Some(position.parse::<usize>().unwrap()),
+            };
+            let error = execute(&sensors, sql).expect_err("expected captured weighted error");
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, expected_position, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_without_aggregate_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("group_by_keys_only_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid key-only GROUP BY case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/group_keys_only_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_scalar_projection_keys_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("group_by_keys_scalar_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid scalar key GROUP BY case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/group_keys_scalar_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_function_projection_keys_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("group_by_keys_function_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid function key GROUP BY case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/group_keys_fn_{name}.tsv")))
+                    .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_function_projection_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("group_by_keys_function_errors_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap().replace("\\n", "\n");
+            let expected_position = match fields.next().unwrap() {
+                "-" => None,
+                position => Some(position.parse::<usize>().unwrap()),
+            };
+            let error = match execute(&sensors, sql) {
+                Ok(result) => panic!("{name}: {sql}: expected error, got {result:?}"),
+                Err(error) => error,
+            };
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, expected_position, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn group_by_without_aggregate_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("group_by_keys_only_errors_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = match fields.next().unwrap() {
+                "-" => None,
+                position => Some(position.parse::<usize>().unwrap()),
+            };
+            let error = execute(&sensors, sql).expect_err("expected captured key-only error");
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, expected_position, "{name}: {sql}");
+        }
     }
 
     #[test]
@@ -18301,6 +22532,11 @@ mod tests {
             ),
             (
                 sensors.clone(),
+                "SELECT right(s.note, 2) FROM sensors AS s",
+                "expected/right_qualified_note.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT left(location, 3) FROM sensors",
                 "expected/left_location.tsv",
             ),
@@ -18655,6 +22891,11 @@ mod tests {
             ),
             (
                 sensors.clone(),
+                "SELECT trim(s.note) FROM sensors AS s",
+                "expected/trim_qualified_note.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT trim(location) FROM sensors",
                 "expected/trim_location.tsv",
             ),
@@ -18810,8 +23051,18 @@ mod tests {
             ),
             (
                 sensors.clone(),
+                "SELECT ltrim(s.note) FROM sensors AS s",
+                "expected/ltrim_qualified_note.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT rtrim(note) FROM sensors",
                 "expected/rtrim_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT rtrim(s.note) FROM sensors AS s",
+                "expected/rtrim_qualified_note.tsv",
             ),
             (
                 sensors.clone(),
@@ -18907,6 +23158,11 @@ mod tests {
                 sensors.clone(),
                 "SELECT replace(note, 'a', 'X') FROM sensors",
                 "expected/rep_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT replace(s.note, 'a', 'A') FROM sensors AS s",
+                "expected/rep_qualified_note.tsv",
             ),
             (
                 sensors.clone(),
@@ -20455,6 +24711,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT s.id::long FROM sensors AS s ORDER BY s.ts",
+                "expected/zl_qualified_id.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT id::long FROM sensors",
                 "expected/zl_all.tsv",
             ),
@@ -21176,6 +25437,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT s.ok AND false FROM sensors AS s ORDER BY s.ts",
+                "expected/nd_qualified_flags.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT ok and ok FROM sensors",
                 "expected/nd_all.tsv",
             ),
@@ -21223,6 +25489,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT ~s.id FROM sensors AS s ORDER BY s.ts",
+                "expected/bc_qualified_id.tsv",
+            ),
             (&sensors, "SELECT ~id FROM sensors", "expected/bc_all.tsv"),
             (
                 &sensors,
@@ -21309,6 +25580,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT -s.id FROM sensors AS s ORDER BY s.ts",
+                "expected/ng_qualified_id.tsv",
+            ),
             (&sensors, "SELECT -id FROM sensors", "expected/ng_all.tsv"),
             (
                 &sensors,
@@ -21655,6 +25931,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT s.id + 1 FROM sensors AS s ORDER BY s.ts",
+                "expected/ad_qualified_id.tsv",
+            ),
             (
                 &sensors,
                 "SELECT id + 1 FROM sensors",
@@ -22032,6 +26313,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT s.id = 1 FROM sensors AS s ORDER BY s.ts",
+                "expected/eq_qualified_id.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT id = 1 FROM sensors",
                 "expected/eq_all.tsv",
             ),
@@ -22095,6 +26381,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT s.id IN (1, 2) FROM sensors AS s ORDER BY s.ts",
+                "expected/iq_qualified_id.tsv",
+            ),
             (
                 &sensors,
                 "SELECT id in (1, -1) FROM sensors",
@@ -22179,6 +26470,31 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT s.id BETWEEN 1 AND 2 FROM sensors AS s ORDER BY s.id",
+                "expected/bt_alias_order_operand.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT s.id, s.id BETWEEN 1 AND 2 FROM sensors AS s ORDER BY s.ts",
+                "expected/bt_alias_order_with_source.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT s.id BETWEEN 1 AND 2 FROM sensors AS s",
+                "expected/bt_alias_operator.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT s.id NOT BETWEEN 1 AND 2 FROM sensors AS s",
+                "expected/bt_alias_not_operator.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT between(s.id, 1, 2) FROM sensors AS s",
+                "expected/bt_alias_function.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT between(id, 1, 2) FROM sensors",
                 "expected/bt_all.tsv",
             ),
@@ -22238,6 +26554,19 @@ mod tests {
             let expected = std::fs::read_to_string(dir.join(file)).unwrap();
             assert_eq!(render_tsv(&result), expected, "{sql}");
         }
+        let err = execute(
+            &sensors,
+            "SELECT s.id BETWEEN 1 AND 2 FROM sensors AS s ORDER BY s.ts",
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "Invalid column: id");
+        let err = execute(
+            &sensors,
+            "SELECT between(s.id, 1, 2) FROM sensors AS s ORDER BY s.ts",
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "Invalid column: id");
+
         let err = execute(&sensors, "SELECT between() FROM sensors").unwrap_err();
         assert!(
             err.message
@@ -22268,10 +26597,1748 @@ mod tests {
     }
 
     #[test]
+    fn between_filters_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT s.id FROM sensors AS s WHERE s.id BETWEEN 1 AND 2 ORDER BY s.ts",
+                "expected/wf_alias_between.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors AS s WHERE s.id NOT BETWEEN 1 AND 2 ORDER BY s.ts",
+                "expected/wf_alias_not_between.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors AS s WHERE s.id BETWEEN 1 AND 2 LIMIT 0",
+                "expected/wf_alias_limit0.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id BETWEEN 2 AND 1",
+                "expected/wf_reverse.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id BETWEEN NULL AND 2",
+                "expected/wf_null_low.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id NOT BETWEEN NULL AND 2",
+                "expected/wf_null_low_not.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn compound_where_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT id FROM sensors WHERE id = 1 OR id = 2 ORDER BY ts",
+                "expected/where_or.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = 1 AND ok = true ORDER BY ts",
+                "expected/where_and.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = 1 OR id = 2 AND ok = false ORDER BY ts",
+                "expected/where_precedence.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE (id = 1 OR id = 2) AND ok = false ORDER BY ts",
+                "expected/where_parentheses.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors AS s WHERE s.id = 1 OR s.id = 2 ORDER BY s.ts",
+                "expected/where_alias_or.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = 1 AND id BETWEEN 1 AND 2 ORDER BY ts",
+                "expected/where_between_and.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = NULL OR id = -1 ORDER BY ts",
+                "expected/where_or_null.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn in_filters_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT id FROM sensors WHERE id IN (1, -1) ORDER BY ts",
+                "expected/where_in.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id NOT IN (1, -1) ORDER BY ts",
+                "expected/where_not_in.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id IN (NULL, 1) ORDER BY ts",
+                "expected/where_in_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id NOT IN (NULL, 1) ORDER BY ts",
+                "expected/where_not_in_null.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors AS s WHERE s.id IN (1, -1) ORDER BY s.ts",
+                "expected/where_in_alias.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id IN (1, 1) ORDER BY ts",
+                "expected/where_in_duplicates.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id IN (1, -1) AND ok = false ORDER BY ts",
+                "expected/where_in_and.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = 1 OR id IN (-1, 2) ORDER BY ts",
+                "expected/where_in_or.tsv",
+            ),
+            (
+                "SELECT note FROM sensors WHERE note IN ('alpha', '') ORDER BY ts",
+                "expected/where_in_text.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id NOT IN (1, NULL) OR id = 1 ORDER BY ts",
+                "expected/where_not_in_mixed_null.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let err = execute(&sensors, "SELECT id FROM sensors WHERE id IN ()").unwrap_err();
+        assert!(
+            err.message.contains("too few arguments for 'in'"),
+            "{}",
+            err.message
+        );
+        let err =
+            execute(&sensors, "SELECT id FROM sensors WHERE ok IN (true, false)").unwrap_err();
+        assert!(
+            err.message
+                .contains("there is no matching operator `in` with the argument type: BOOLEAN"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT id FROM sensors WHERE missing IN (1)").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn like_filters_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT id, note FROM sensors WHERE note LIKE 'a%' ORDER BY ts",
+                "expected/where_like_prefix.tsv",
+            ),
+            (
+                "SELECT id, note FROM sensors WHERE note ILIKE 'A%' ORDER BY ts",
+                "expected/where_ilike_prefix.tsv",
+            ),
+            (
+                "SELECT id, note FROM sensors WHERE note NOT LIKE 'a%' ORDER BY ts",
+                "expected/where_not_like_prefix.tsv",
+            ),
+            (
+                "SELECT id, note FROM sensors WHERE note NOT ILIKE 'A%' ORDER BY ts",
+                "expected/where_not_ilike_prefix.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note LIKE NULL ORDER BY ts",
+                "expected/where_like_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note NOT LIKE NULL ORDER BY ts",
+                "expected/where_not_like_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note LIKE '' ORDER BY ts",
+                "expected/where_like_empty.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note NOT LIKE '' ORDER BY ts",
+                "expected/where_not_like_empty.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors AS s WHERE s.note ILIKE 'A%' ORDER BY s.ts",
+                "expected/where_ilike_alias.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note LIKE 'a\\%' ORDER BY ts",
+                "expected/where_like_escaped.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note LIKE 'a_pha' ORDER BY ts",
+                "expected/where_like_underscore.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note LIKE 'a%' AND ok = true ORDER BY ts",
+                "expected/where_like_and.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = 2 OR note ILIKE 'A%' ORDER BY ts",
+                "expected/where_ilike_or.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE location ILIKE 'MA%' ORDER BY ts",
+                "expected/where_ilike_symbol.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note NOT ILIKE 'A%' OR id = 1 ORDER BY ts",
+                "expected/where_not_ilike_or.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+
+        let err = execute(&sensors, "SELECT id FROM sensors WHERE flags LIKE '1%'").unwrap_err();
+        assert!(
+            err.message.contains(
+                "there is no matching operator `like` with the argument types: INT like STRING"
+            ),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT id FROM sensors WHERE note LIKE note").unwrap_err();
+        assert!(
+            err.message.contains("use constant or bind variable"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT id FROM sensors WHERE missing LIKE 'x%'").unwrap_err();
+        assert!(
+            err.message.contains("Invalid column: missing"),
+            "{}",
+            err.message
+        );
+        let err = execute(&sensors, "SELECT id FROM sensors WHERE note LIKE 'a\\'").unwrap_err();
+        assert!(
+            err.message
+                .contains("LIKE pattern must not end with escape character"),
+            "{}",
+            err.message
+        );
+        for (sql, expected) in [
+            (
+                "SELECT id FROM sensors WHERE flags LIKE '1%' LIMIT 0",
+                "there is no matching operator `like` with the argument types: INT like STRING",
+            ),
+            (
+                "SELECT id FROM sensors WHERE missing LIKE 'x%' LIMIT 0",
+                "Invalid column: missing",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note LIKE note LIMIT 0",
+                "use constant or bind variable",
+            ),
+        ] {
+            let err = execute(&sensors, sql).unwrap_err();
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
+    }
+
+    #[test]
+    fn regex_filters_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT id, note FROM sensors WHERE note ~ '^a' ORDER BY ts",
+                "expected/where_regex_prefix.tsv",
+            ),
+            (
+                "SELECT id, note FROM sensors WHERE note ~ 'a.*' ORDER BY ts",
+                "expected/where_regex_search.tsv",
+            ),
+            (
+                "SELECT id, note FROM sensors WHERE note !~ 'a.*' ORDER BY ts",
+                "expected/where_not_regex_search.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note ~ '[a-z]+' ORDER BY ts",
+                "expected/where_regex_class.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note ~ 'alpha|βeta' ORDER BY ts",
+                "expected/where_regex_alt.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note ~ '^β' ORDER BY ts",
+                "expected/where_regex_unicode.tsv",
+            ),
+            (
+                r"SELECT id FROM sensors WHERE note ~ '^\x{03B2}' ORDER BY ts",
+                "expected/where_regex_hex_escape.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note ~ NULL ORDER BY ts",
+                "expected/where_regex_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note !~ NULL ORDER BY ts",
+                "expected/where_not_regex_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note ~ '' ORDER BY ts",
+                "expected/where_regex_empty.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note !~ '' ORDER BY ts",
+                "expected/where_not_regex_empty.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors AS s WHERE s.note ~ '^a' ORDER BY s.ts",
+                "expected/where_regex_alias.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE location ~ '^ma' ORDER BY ts",
+                "expected/where_regex_symbol.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note ~ '^a' AND ok = true ORDER BY ts",
+                "expected/where_regex_and.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = 2 OR note ~ '^a' ORDER BY ts",
+                "expected/where_regex_or.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note !~ '^a' OR id = 1 ORDER BY ts",
+                "expected/where_not_regex_or.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note ~ NULL",
+                "expected/where_regex_null_type.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+
+        let errors = [
+            (
+                "SELECT id FROM sensors WHERE note ~ 'XJ**'",
+                "Dangling meta character '*'",
+            ),
+            (
+                "SELECT id FROM sensors WHERE flags ~ '1%'",
+                "there is no matching operator `~` with the argument types: INT ~ STRING",
+            ),
+            (
+                "SELECT id FROM sensors WHERE flags ~ NULL",
+                "there is no matching operator `~` with the argument types: INT ~ NULL",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note ~ note",
+                "not implemented: dynamic pattern would be very slow to execute",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note !~ note",
+                "there is no matching operator `!~` with the argument types: STRING !~ STRING",
+            ),
+            (
+                "SELECT id FROM sensors WHERE missing ~ 'x'",
+                "Invalid column: missing",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note ~ 'a\\'",
+                "Unescaped trailing backslash near index 2",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note ~ 'XJ**' LIMIT 0",
+                "Dangling meta character '*'",
+            ),
+            (
+                "SELECT id FROM sensors WHERE flags ~ '1%' LIMIT 0",
+                "there is no matching operator `~` with the argument types: INT ~ STRING",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note ~ note LIMIT 0",
+                "not implemented: dynamic pattern would be very slow to execute",
+            ),
+        ];
+        for (sql, expected) in errors {
+            let err = match execute(&sensors, sql) {
+                Err(err) => err,
+                Ok(result) => panic!("expected `{sql}` to fail, got {result:?}"),
+            };
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
+    }
+
+    #[test]
+    fn regex_java_extensions_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_extensions_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/regex_java_{name}.tsv")))
+                    .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_additional_extensions_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_additional_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_nested_classes_and_negative_properties_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_classes_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_anchors_match_before_final_line_terminator() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_newline_queries.tsv")).unwrap();
+        let expected = ["X\n", "alpha\n"];
+        for (line, expected) in cases.lines().zip(expected) {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let sql = sql.replace("__LF__", "\n");
+            let result = execute(&sensors, &sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            assert_eq!(
+                result.rows,
+                vec![vec![Scalar::Text(expected.to_string())]],
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn regex_java_z_anchors_are_rejected_inside_character_classes() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let expected = "Illegal/unsupported escape sequence near index 2\n[\\Z]\n  ^";
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_additional_errors_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let error = execute(&sensors, sql).unwrap_err();
+            let message = if name == "lowercase_z_in_class" {
+                expected.replace("\\Z", "\\z")
+            } else {
+                expected.to_string()
+            };
+            assert_eq!(error.message, message, "{name}: {sql}");
+            assert_eq!(error.position, Some(41), "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn where_regex_invalid_pattern_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("where_regex_invalid_patterns_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap().replace("\\n", "\n");
+            let expected_position = fields.next().unwrap().parse::<usize>().unwrap();
+            let error = match execute(&sensors, sql) {
+                Err(error) => error,
+                Ok(result) => panic!("{name}: {sql}: expected regex error, got {result:?}"),
+            };
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, Some(expected_position), "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn prefix_not_filters_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT id FROM sensors WHERE NOT id = 1 ORDER BY ts",
+                "expected/where_not_eq.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT (id = 1 OR id = -1) ORDER BY ts",
+                "expected/where_not_group.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT id = 1 AND ok = true ORDER BY ts",
+                "expected/where_not_precedence.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = 1 OR NOT id = -1 ORDER BY ts",
+                "expected/where_not_or_rhs.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT NOT (id = 1) ORDER BY ts",
+                "expected/where_not_nested.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT (note ~ '^a') ORDER BY ts",
+                "expected/where_not_regex.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT (id IN (1, -1)) ORDER BY ts",
+                "expected/where_not_in.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT ok ORDER BY ts",
+                "expected/where_not_boolean_column.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE ok ORDER BY ts",
+                "expected/where_boolean_column.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE true ORDER BY ts",
+                "expected/where_boolean_true.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE false ORDER BY ts",
+                "expected/where_boolean_false.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT NULL ORDER BY ts",
+                "expected/where_not_null_literal.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT false ORDER BY ts",
+                "expected/where_not_false_literal.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT (id = 1) AND ok ORDER BY ts",
+                "expected/where_not_and_boolean_column.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors AS s WHERE NOT (s.note ~ '^a') ORDER BY s.ts",
+                "expected/where_not_alias.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT (id = 1) LIMIT 0",
+                "expected/where_not_lim0.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+
+        let errors = [
+            (
+                "SELECT id FROM sensors WHERE NOT (missing = 1) LIMIT 0",
+                "Invalid column: missing",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT id LIMIT 0",
+                "argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: LONG",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id LIMIT 0",
+                "boolean expression expected",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NULL ORDER BY ts",
+                "boolean expression expected",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT (flags ~ 'x') LIMIT 0",
+                "there is no matching operator `~` with the argument types: INT ~ CHAR",
+            ),
+        ];
+        for (sql, expected) in errors {
+            let err = match execute(&sensors, sql) {
+                Err(err) => err,
+                Ok(result) => panic!("expected `{sql}` to fail, got {result:?}"),
+            };
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
+    }
+
+    #[test]
+    fn column_comparison_filters_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT id FROM sensors WHERE id = id ORDER BY ts",
+                "expected/where_cols_id_eq_self.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id <> id ORDER BY ts",
+                "expected/where_cols_id_ne_self.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id >= id ORDER BY ts",
+                "expected/where_cols_id_ge_self.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id <= id ORDER BY ts",
+                "expected/where_cols_id_le_self.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = flags ORDER BY ts",
+                "expected/where_cols_long_int_eq.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id != flags ORDER BY ts",
+                "expected/where_cols_long_int_ne.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading = score ORDER BY ts",
+                "expected/where_cols_double_float_eq.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading > score ORDER BY ts",
+                "expected/where_cols_double_float_gt.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading = id ORDER BY ts",
+                "expected/where_cols_double_long_eq.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note = location ORDER BY ts",
+                "expected/where_cols_string_symbol_eq.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE location < tag ORDER BY ts",
+                "expected/where_cols_symbol_varchar_lt.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = location ORDER BY ts",
+                "expected/where_cols_long_symbol.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = ch ORDER BY ts",
+                "expected/where_cols_long_char.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE day < ts ORDER BY ts",
+                "expected/where_cols_date_timestamp_lt.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE ts < day ORDER BY ts",
+                "expected/where_cols_timestamp_date_lt.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE ok = ok ORDER BY ts",
+                "expected/where_cols_boolean_eq_self.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors AS s WHERE s.reading = s.score ORDER BY s.ts",
+                "expected/where_cols_alias.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = flags OR reading > score AND ok = true ORDER BY ts",
+                "expected/where_cols_compound.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE NOT (id = flags) ORDER BY ts",
+                "expected/where_cols_not.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = flags LIMIT 0",
+                "expected/where_cols_lim0_valid.tsv",
+            ),
+        ];
+        for (sql, file) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(file)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+
+        let errors = [
+            (
+                "SELECT id FROM sensors WHERE id = missing LIMIT 0",
+                "Invalid column: missing",
+            ),
+            (
+                "SELECT id FROM sensors WHERE ok = flags LIMIT 0",
+                "there is no matching operator `=` with the argument types: BOOLEAN = INT",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = note LIMIT 0",
+                "inconvertible value: `alpha` [STRING -> LONG]",
+            ),
+            (
+                "SELECT id FROM sensors WHERE note = ok LIMIT 0",
+                "there is no matching operator `=` with the argument types: STRING = BOOLEAN",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id = tag LIMIT 0",
+                "inconvertible value: `v1` [VARCHAR -> CHAR]",
+            ),
+            (
+                "SELECT id FROM sensors WHERE location < id LIMIT 0",
+                "inconvertible value: `madrid` [SYMBOL -> TIMESTAMP_NS]",
+            ),
+            (
+                "SELECT id FROM sensors WHERE ts = note LIMIT 0",
+                "inconvertible value: `alpha` [STRING -> TIMESTAMP_NS]",
+            ),
+            (
+                "SELECT id FROM sensors WHERE day = note LIMIT 0",
+                "inconvertible value: `alpha` [STRING -> DATE]",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading = note LIMIT 0",
+                "inconvertible value: `alpha` [STRING -> DOUBLE]",
+            ),
+        ];
+        for (sql, expected) in errors {
+            let err = match execute(&sensors, sql) {
+                Err(err) => err,
+                Ok(result) => panic!("expected `{sql}` to fail, got {result:?}"),
+            };
+            assert!(err.message.contains(expected), "{sql}: {}", err.message);
+        }
+    }
+
+    #[test]
+    fn where_arithmetic_comparison_operands_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT id FROM sensors WHERE id + 1 > 2 ORDER BY ts",
+                "expected/where_expr_id_add_gt_2.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id > flags + 1 ORDER BY ts",
+                "expected/where_expr_id_gt_flags_add.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + 1 > flags ORDER BY ts",
+                "expected/where_expr_id_add_gt_flags.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id * 2 = flags ORDER BY ts",
+                "expected/where_expr_id_mul_eq_flags.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + 1 > 1 ORDER BY ts",
+                "expected/where_expr_id_add_gt_1.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id / 1 < 0 ORDER BY ts",
+                "expected/where_expr_id_div_lt_0.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + 1 > 2 OR ok = true ORDER BY ts",
+                "expected/where_expr_or.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors s WHERE s.id + 1 > 1 ORDER BY s.ts",
+                "expected/where_expr_alias.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + NULL = 0 ORDER BY ts",
+                "expected/where_expr_null.tsv",
+            ),
+        ];
+        for (sql, expected_path) in cases {
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let pairs = [
+            ("byte_int", "b", "flags"),
+            ("byte_long", "b", "id"),
+            ("byte_float", "b", "score"),
+            ("byte_double", "b", "reading"),
+            ("short_int", "code", "flags"),
+            ("short_long", "code", "id"),
+            ("short_float", "code", "score"),
+            ("short_double", "code", "reading"),
+            ("int_float", "flags", "score"),
+            ("int_double", "flags", "reading"),
+            ("long_double", "id", "reading"),
+        ];
+        let operators = [
+            ("add", "+", "> 0"),
+            ("sub", "-", "> 0"),
+            ("mul", "*", "< 0"),
+            ("div", "/", "> 0"),
+            ("mod", "%", "!= 0"),
+        ];
+        for (pair, left, right) in pairs {
+            for (name, operator, condition) in operators {
+                let reverse = matches!(pair, "byte_long" | "short_float" | "int_double")
+                    && matches!(name, "sub" | "div" | "mod");
+                let (lhs, rhs) = if reverse {
+                    (right, left)
+                } else {
+                    (left, right)
+                };
+                let sql = format!(
+                    "SELECT id FROM sensors WHERE {lhs} {operator} {rhs} {condition} ORDER BY ts"
+                );
+                let expected_path = format!("expected/where_expr_matrix_{pair}_{name}.tsv");
+                let result = execute(&sensors, &sql)
+                    .unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+                let expected = std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+                assert_eq!(render_tsv(&result), expected, "{sql}");
+            }
+        }
+        let reverse_pairs = [
+            ("byte_short", "b", "code"),
+            ("byte_int", "b", "flags"),
+            ("byte_float", "b", "score"),
+            ("byte_double", "b", "reading"),
+            ("short_int", "code", "flags"),
+            ("short_long", "code", "id"),
+            ("short_double", "code", "reading"),
+            ("int_long", "flags", "id"),
+            ("int_float", "flags", "score"),
+            ("long_float", "id", "score"),
+            ("long_double", "id", "reading"),
+            ("float_double", "score", "reading"),
+        ];
+        let reverse_operators = [
+            ("sub", "-", "> 0"),
+            ("div", "/", "> 0"),
+            ("mod", "%", "!= 0"),
+        ];
+        for (pair, left, right) in reverse_pairs {
+            for (name, operator, condition) in reverse_operators {
+                let sql = format!(
+                    "SELECT id FROM sensors WHERE {right} {operator} {left} {condition} ORDER BY ts"
+                );
+                let expected_path = format!("expected/where_expr_matrix_reverse_{pair}_{name}.tsv");
+                let result = execute(&sensors, &sql)
+                    .unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+                let expected = std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+                assert_eq!(render_tsv(&result), expected, "{sql}");
+            }
+        }
+        let sentinels = [
+            ("SELECT id FROM sensors WHERE b + code - code - 2147483647 - 1 - b = NULL ORDER BY ts", "expected/where_expr_matrix_sentinel_byte_short_pair.tsv"),
+            ("SELECT id FROM sensors WHERE b + flags - flags - 2147483647 - 1 - b = NULL ORDER BY ts", "expected/where_expr_matrix_sentinel_byte_int_pair.tsv"),
+            ("SELECT id FROM sensors WHERE code + flags - flags - 2147483647 - 1 - code = NULL ORDER BY ts", "expected/where_expr_matrix_sentinel_short_int_pair.tsv"),
+            ("SELECT id FROM sensors WHERE id + b - b - 9223372036854775807 - 1 - id = NULL ORDER BY ts", "expected/where_expr_matrix_sentinel_byte_long_pair.tsv"),
+            ("SELECT id FROM sensors WHERE id + code - code - 9223372036854775807 - 1 - id = NULL ORDER BY ts", "expected/where_expr_matrix_sentinel_short_long_pair.tsv"),
+            ("SELECT id FROM sensors WHERE id + flags - flags - 9223372036854775807 - 1 - id = NULL ORDER BY ts", "expected/where_expr_matrix_sentinel_int_long_pair.tsv"),
+            ("SELECT id FROM sensors WHERE b - 2147483647 - 1 - b = NULL ORDER BY ts", "expected/where_expr_matrix_sentinel_byte_int_min.tsv"),
+            ("SELECT id FROM sensors WHERE code - 2147483647 - 1 - code = NULL ORDER BY ts", "expected/where_expr_matrix_sentinel_short_int_min.tsv"),
+            ("SELECT id FROM sensors WHERE flags - 2147483647 - 1 - flags = NULL ORDER BY ts", "expected/where_expr_matrix_sentinel_int_min.tsv"),
+            ("SELECT id FROM sensors WHERE id + flags - flags - 9223372036854775807 - 1 - id = NULL ORDER BY ts", "expected/where_expr_matrix_sentinel_long_int_min.tsv"),
+        ];
+        for (sql, expected_path) in sentinels {
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let same_type_columns = [
+            ("byte", "b"),
+            ("short", "code"),
+            ("int", "flags"),
+            ("long", "id"),
+            ("float", "score"),
+            ("double", "reading"),
+        ];
+        let same_type_operators = [
+            ("add", "+", "> 0"),
+            ("sub", "-", "= 0"),
+            ("mul", "*", "> 0"),
+            ("div", "/", "= 1"),
+            ("mod", "%", "= 0"),
+        ];
+        for (name, column) in same_type_columns {
+            for (operator_name, operator, condition) in same_type_operators {
+                let sql = format!(
+                    "SELECT id FROM sensors WHERE {column} {operator} {column} {condition} ORDER BY ts"
+                );
+                let expected_path =
+                    format!("expected/where_expr_overflow_matrix_{name}_same_{operator_name}.tsv");
+                let result = execute(&sensors, &sql)
+                    .unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+                let expected = std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+                assert_eq!(render_tsv(&result), expected, "{sql}");
+            }
+        }
+        let overflow_cases = [
+            (
+                "SELECT id FROM sensors WHERE cast(id AS INT) + 2147483646 = NULL ORDER BY ts",
+                "expected/where_expr_overflow_matrix_int_add_min.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE 2147483646 + cast(id AS INT) = NULL ORDER BY ts",
+                "expected/where_expr_overflow_matrix_int_add_min_reverse.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE cast(id AS INT) * 1073741824 = NULL ORDER BY ts",
+                "expected/where_expr_overflow_matrix_int_mul_min.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE 1073741824 * cast(id AS INT) = NULL ORDER BY ts",
+                "expected/where_expr_overflow_matrix_int_mul_min_reverse.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + 9223372036854775807 + 1 = NULL ORDER BY ts",
+                "expected/where_expr_overflow_matrix_long_add_min.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE 9223372036854775807 + id + 1 = NULL ORDER BY ts",
+                "expected/where_expr_overflow_matrix_long_add_min_reverse.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id * 9223372036854775807 + id = NULL ORDER BY ts",
+                "expected/where_expr_overflow_matrix_long_mul_min.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE 9223372036854775807 * id + id = NULL ORDER BY ts",
+                "expected/where_expr_overflow_matrix_long_mul_min_reverse.tsv",
+            ),
+        ];
+        for (sql, expected_path) in overflow_cases {
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_function_comparison_operands_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT id FROM sensors WHERE abs(id) > 1 ORDER BY ts",
+                "expected/where_expr_abs_id.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE length(note) > 3 ORDER BY ts",
+                "expected/where_expr_length_note.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE lower(note) = 'alpha' ORDER BY ts",
+                "expected/where_expr_lower_note.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id > abs(flags) ORDER BY ts",
+                "expected/where_expr_id_gt_abs_flags.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE abs(id) < abs(flags) ORDER BY ts",
+                "expected/where_expr_abs_both.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE abs(id) = 1 OR length(note) > 3 ORDER BY ts",
+                "expected/where_expr_func_or.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors s WHERE abs(s.id) > 1 ORDER BY s.ts",
+                "expected/where_expr_abs_alias.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE abs(id) > NULL ORDER BY ts",
+                "expected/where_expr_abs_null.tsv",
+            ),
+        ];
+        for (sql, expected_path) in cases {
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+
+        let error = execute(
+            &sensors,
+            "SELECT id FROM sensors WHERE length(ok) > 1 LIMIT 0",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.message,
+            "there is no matching function `length` with the argument types: (BOOLEAN)"
+        );
+    }
+
+    #[test]
+    fn where_arithmetic_precedence_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT id FROM sensors WHERE id + flags * 2 = code ORDER BY ts",
+                "expected/where_expr_chain_precedence.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + 1 * 2 > 2 ORDER BY ts",
+                "expected/where_expr_constant_precedence.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE (id + flags) * 2 > 20 ORDER BY ts",
+                "expected/where_expr_parenthesized.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE abs(id) + 1 > 2 ORDER BY ts",
+                "expected/where_expr_function_arithmetic.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading * 2 > 2 ORDER BY ts",
+                "expected/where_expr_float_arithmetic.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + 1 + flags > 12 ORDER BY ts",
+                "expected/where_expr_left_associative.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + NULL * 2 = NULL ORDER BY ts",
+                "expected/where_expr_chain_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + 1.5 > 2 ORDER BY ts",
+                "expected/where_expr_decimal_literal.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE score + score > 0 ORDER BY ts",
+                "expected/where_expr_float_columns.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE flags + 1.5 > 2 ORDER BY ts",
+                "expected/where_expr_int_real.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id % 2 = 0 ORDER BY ts",
+                "expected/where_expr_modulo.tsv",
+            ),
+        ];
+        for (sql, expected_path) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        let error = execute(
+            &sensors,
+            "SELECT id FROM sensors WHERE note + 1 > 0 LIMIT 0",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.message,
+            "inconvertible value: `alpha` [STRING -> INT]"
+        );
+    }
+
+    #[test]
+    fn where_arithmetic_coercions_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT id FROM sensors WHERE location + 1 > 0 ORDER BY ts",
+                "expected/where_expr_symbol_key.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + 9223372036854775807 > 0 ORDER BY ts",
+                "expected/where_expr_long_overflow.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE flags + 2147483647 > 0 ORDER BY ts",
+                "expected/where_expr_int_overflow.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id / 0 > 0 ORDER BY ts",
+                "expected/where_expr_div_zero.tsv",
+            ),
+            (
+                "SELECT s.id FROM sensors s WHERE abs(s.id) + 1 > 2 ORDER BY s.ts",
+                "expected/where_expr_function_alias.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE score * 16777217 = 20971520.0 ORDER BY ts",
+                "expected/where_expr_float_rounding.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE score * 16777217 > 20971520.0 ORDER BY ts",
+                "expected/where_expr_float_rounding_gt.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE cast(id AS FLOAT) + 1 > 0 ORDER BY ts",
+                "expected/where_expr_float_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE cast(id AS INT) + 1 > 0 ORDER BY ts",
+                "expected/where_expr_int_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE ts + 1 > ts ORDER BY ts",
+                "expected/where_expr_ts_plus_int.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE ts - ts = 0 ORDER BY ts",
+                "expected/where_expr_ts_minus_ts.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE day + 1 > day ORDER BY ts",
+                "expected/where_expr_day_plus_int.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE day - day = 0 ORDER BY ts",
+                "expected/where_expr_day_minus_day.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE day + 1.0 > 0 ORDER BY ts",
+                "expected/where_expr_day_plus_double.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE day + ts > 0 ORDER BY ts",
+                "expected/where_expr_day_plus_ts.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE ts - day > 0 ORDER BY ts",
+                "expected/where_expr_ts_minus_day.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE day - ts > 0 ORDER BY ts",
+                "expected/where_expr_day_minus_ts_gt0.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE 1 + ts > ts ORDER BY ts",
+                "expected/where_expr_int_plus_ts.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE ts * 2 > 0 ORDER BY ts",
+                "expected/where_expr_ts_mul_int.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE day * 2 > 0 ORDER BY ts",
+                "expected/where_expr_day_mul_int.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE (id - 9223372036854775807 - 1 - id) = NULL ORDER BY ts",
+                "expected/where_expr_long_min_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE (id - 9223372036854775807 - 1 - id) / -1 = NULL ORDER BY ts",
+                "expected/where_expr_long_min_div_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE (cast(id AS INT) - 2147483647 - 1 - cast(id AS INT)) = NULL ORDER BY ts",
+                "expected/where_expr_int_min_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE (cast(id AS INT) - 2147483647 - 1 - cast(id AS INT)) / -1 = NULL ORDER BY ts",
+                "expected/where_expr_int_min_div_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE ts + 9223372036854775807 < 0 ORDER BY ts",
+                "expected/where_expr_ts_overflow_neg.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE day + 9223372036854775807 < 0 ORDER BY ts",
+                "expected/where_expr_day_overflow_neg.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE day + 9223372036854775807 > 0 ORDER BY ts",
+                "expected/where_expr_day_overflow_pos.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE b + code > 5 ORDER BY ts",
+                "expected/where_expr_byte_short.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE code / b > 1 ORDER BY ts",
+                "expected/where_expr_byte_short_div.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE b % 2 = 1 ORDER BY ts",
+                "expected/where_expr_byte_byte_mod.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE score / 0.0 > 0 ORDER BY ts",
+                "expected/where_expr_float_div0.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE score % 0.0 > 0 ORDER BY ts",
+                "expected/where_expr_float_mod0.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading / 0.0 > 0 ORDER BY ts",
+                "expected/where_expr_double_div0.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading % 0.0 > 0 ORDER BY ts",
+                "expected/where_expr_double_mod0.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE (cast(score AS FLOAT) + 1) * 2 > 0 ORDER BY ts",
+                "expected/where_expr_nested_null_float.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE (cast(reading AS DOUBLE) / 0.0) + 1 > 0 ORDER BY ts",
+                "expected/where_expr_nested_null_double.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE (cast(id AS FLOAT) + NULL) * 2 = NULL ORDER BY ts",
+                "expected/where_expr_null_nested.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + 1.5 > 2 ORDER BY ts",
+                "expected/where_expr_int_double_add.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE 1.5 + id > 2 ORDER BY ts",
+                "expected/where_expr_double_int_add.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id / 2.0 > 0.5 ORDER BY ts",
+                "expected/where_expr_int_double_div.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id % 2.0 = 1.0 ORDER BY ts",
+                "expected/where_expr_int_double_mod.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE score % 2 > 0.5 ORDER BY ts",
+                "expected/where_expr_float_int_mod.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading % 2.0 = 1.5 ORDER BY ts",
+                "expected/where_expr_double_double_mod.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading * 1e308 * 1e308 > 1e308 ORDER BY ts",
+                "expected/where_expr_inf_compare.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading * 1e308 * 1e308 = reading * 1e308 * 1e308 ORDER BY ts",
+                "expected/where_expr_inf_eq_inf.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE (reading * 1e308 * 1e308) - (reading * 1e308 * 1e308) > 0 ORDER BY ts",
+                "expected/where_expr_nan_gt.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE (reading * 1e308 * 1e308) - (reading * 1e308 * 1e308) = NULL ORDER BY ts",
+                "expected/where_expr_nan_eq_null.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading < 1.7976931348623157e308 ORDER BY ts",
+                "expected/where_expr_scientific_max_finite.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading > 4.9e-324 ORDER BY ts",
+                "expected/where_expr_scientific_min_subnormal.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading * 1E+2 > 0 ORDER BY ts",
+                "expected/where_expr_scientific_signed.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE ts - -9223372036854775808 > 0 ORDER BY ts",
+                "expected/where_expr_ts_minus_long_min.tsv",
+            ),
+        ];
+        for (sql, expected_path) in cases {
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+
+        let errors = [
+            (
+                "SELECT id FROM sensors WHERE ch + 1 > 0 LIMIT 0",
+                "inconvertible value: A [CHAR -> INT]",
+                0,
+            ),
+            (
+                "SELECT id FROM sensors WHERE ok + 1 > 0 LIMIT 0",
+                "there is no matching operator `+` with the argument types: BOOLEAN + INT",
+                32,
+            ),
+            (
+                "SELECT id FROM sensors WHERE location + 0.5 > 0 LIMIT 0",
+                "there is no matching operator `+` with the argument types: SYMBOL + DOUBLE",
+                38,
+            ),
+            (
+                "SELECT id FROM sensors WHERE note + 1 > 0 LIMIT 0",
+                "inconvertible value: `alpha` [STRING -> INT]",
+                0,
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + (ok + flags) > 0 LIMIT 0",
+                "there is no matching operator `+` with the argument types: BOOLEAN + INT",
+                38,
+            ),
+            (
+                "SELECT id FROM sensors WHERE (id + flags) + ok > 0 LIMIT 0",
+                "there is no matching operator `+` with the argument types: LONG + BOOLEAN",
+                42,
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading * 1e999 > 0 ORDER BY ts",
+                "invalid constant: 1e999",
+                39,
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading * 1e-999 > 0 ORDER BY ts",
+                "invalid constant: 1e-999",
+                39,
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading * 1e > 0 ORDER BY ts",
+                "invalid constant: 1e",
+                39,
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading * 1e+ > 0 ORDER BY ts",
+                "invalid constant: 1e+",
+                39,
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading * -1e999 > 0 ORDER BY ts",
+                "invalid constant: 1e999",
+                40,
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading > 1e999 ORDER BY ts",
+                "invalid constant: 1e999",
+                39,
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading > 1e-999 ORDER BY ts",
+                "invalid constant: 1e-999",
+                39,
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading > 1e ORDER BY ts",
+                "invalid constant: 1e",
+                39,
+            ),
+            (
+                "SELECT id FROM sensors WHERE 1e999 < reading ORDER BY ts",
+                "invalid constant: 1e999",
+                29,
+            ),
+        ];
+        for (sql, expected, expected_position) in errors {
+            let error = match execute(&sensors, sql) {
+                Ok(_) => panic!("expected error: {sql}"),
+                Err(error) => error,
+            };
+            assert_eq!(error.message, expected, "{sql}");
+            assert_eq!(error.position, Some(expected_position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_arithmetic_type_matrix_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT id FROM sensors WHERE b + code > 0 ORDER BY ts",
+                "expected/where_expr_matrix_byte_short_add.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE b - code < 0 ORDER BY ts",
+                "expected/where_expr_matrix_byte_short_sub.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE b * code < 0 ORDER BY ts",
+                "expected/where_expr_matrix_byte_short_mul.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE b / code > 0 ORDER BY ts",
+                "expected/where_expr_matrix_byte_short_div.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE b % code != 0 ORDER BY ts",
+                "expected/where_expr_matrix_byte_short_mod.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE flags + id > 0 ORDER BY ts",
+                "expected/where_expr_matrix_int_long_add.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE flags - id > 0 ORDER BY ts",
+                "expected/where_expr_matrix_int_long_sub.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE flags * id < 0 ORDER BY ts",
+                "expected/where_expr_matrix_int_long_mul.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE flags / id > 0 ORDER BY ts",
+                "expected/where_expr_matrix_int_long_div.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE flags % id != 0 ORDER BY ts",
+                "expected/where_expr_matrix_int_long_mod.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id + score > 0 ORDER BY ts",
+                "expected/where_expr_matrix_long_float_add.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id - score > 0 ORDER BY ts",
+                "expected/where_expr_matrix_long_float_sub.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id * score < 0 ORDER BY ts",
+                "expected/where_expr_matrix_long_float_mul.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id / score > 0 ORDER BY ts",
+                "expected/where_expr_matrix_long_float_div.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE id % score < 0 ORDER BY ts",
+                "expected/where_expr_matrix_long_float_mod.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE score + reading > 0 ORDER BY ts",
+                "expected/where_expr_matrix_float_double_add.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE score - reading < 0 ORDER BY ts",
+                "expected/where_expr_matrix_float_double_sub.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE score * reading < 0 ORDER BY ts",
+                "expected/where_expr_matrix_float_double_mul.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE score / reading > 0 ORDER BY ts",
+                "expected/where_expr_matrix_float_double_div.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE score % reading < 0 ORDER BY ts",
+                "expected/where_expr_matrix_float_double_mod.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE flags != 0 ORDER BY ts",
+                "expected/where_expr_matrix_int_null_ne_zero.tsv",
+            ),
+            (
+                "SELECT id FROM sensors WHERE reading != 0 ORDER BY ts",
+                "expected/where_expr_matrix_double_null_ne_zero.tsv",
+            ),
+        ];
+        for (sql, expected_path) in cases {
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_arithmetic_result_types_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let columns = [
+            ("byte", "b"),
+            ("short", "code"),
+            ("int", "flags"),
+            ("long", "id"),
+            ("float", "score"),
+            ("double", "reading"),
+        ];
+        let operators = [
+            ("add", "+"),
+            ("sub", "-"),
+            ("mul", "*"),
+            ("div", "/"),
+            ("mod", "%"),
+        ];
+        for (name, column) in columns {
+            for (operator_name, operator) in operators {
+                let sql =
+                    format!("SELECT typeof({column} {operator} {column}) FROM sensors LIMIT 1");
+                let expected_path =
+                    format!("expected/where_expr_arithmetic_type_same_{name}_{operator_name}.tsv");
+                let result = execute(&sensors, &sql)
+                    .unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+                let expected = std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+                assert_eq!(render_tsv(&result), expected, "{sql}");
+            }
+        }
+        for left_index in 0..columns.len() {
+            let (left_name, left_column) = columns[left_index];
+            for &(right_name, right_column) in &columns[left_index + 1..] {
+                let pair = format!("{left_name}_{right_name}");
+                for (operator_name, operator) in operators {
+                    for (direction, lhs, rhs) in [
+                        ("forward", left_column, right_column),
+                        ("reverse", right_column, left_column),
+                    ] {
+                        let sql =
+                            format!("SELECT typeof({lhs} {operator} {rhs}) FROM sensors LIMIT 1");
+                        let expected_path = format!(
+                            "expected/where_expr_arithmetic_type_{pair}_{operator_name}_{direction}.tsv"
+                        );
+                        let result = execute(&sensors, &sql)
+                            .unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+                        let expected =
+                            std::fs::read_to_string(sensors.join(expected_path)).unwrap();
+                        assert_eq!(render_tsv(&result), expected, "{sql}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn where_arithmetic_temporal_result_types_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let temporal = [("date", "day"), ("timestamp", "ts")];
+        let numeric = [
+            ("byte", "b"),
+            ("short", "code"),
+            ("int", "flags"),
+            ("long", "id"),
+            ("float", "score"),
+            ("double", "reading"),
+        ];
+        let operators = [
+            ("add", "+"),
+            ("sub", "-"),
+            ("mul", "*"),
+            ("div", "/"),
+            ("mod", "%"),
+        ];
+        for (name, column) in temporal {
+            for (operator_name, operator) in operators {
+                let sql =
+                    format!("SELECT typeof({column} {operator} {column}) FROM sensors LIMIT 1");
+                let path = format!(
+                    "expected/where_expr_arithmetic_temporal_type_same_{name}_{operator_name}.tsv"
+                );
+                let result = execute(&sensors, &sql)
+                    .unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+                let expected = std::fs::read_to_string(sensors.join(path)).unwrap();
+                assert_eq!(render_tsv(&result), expected, "{sql}");
+            }
+        }
+        for left_index in 0..temporal.len() {
+            let (left_name, left_column) = temporal[left_index];
+            for &(right_name, right_column) in &temporal[left_index + 1..] {
+                let pair = format!("{left_name}_{right_name}");
+                for (operator_name, operator) in operators {
+                    for (direction, lhs, rhs) in [
+                        ("forward", left_column, right_column),
+                        ("reverse", right_column, left_column),
+                    ] {
+                        let sql =
+                            format!("SELECT typeof({lhs} {operator} {rhs}) FROM sensors LIMIT 1");
+                        let path = format!(
+                            "expected/where_expr_arithmetic_temporal_type_{pair}_{operator_name}_{direction}.tsv"
+                        );
+                        let result = execute(&sensors, &sql)
+                            .unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+                        let expected = std::fs::read_to_string(sensors.join(path)).unwrap();
+                        assert_eq!(render_tsv(&result), expected, "{sql}");
+                    }
+                }
+            }
+        }
+        for (temporal_name, temporal_column) in temporal {
+            for (numeric_name, numeric_column) in numeric {
+                let pair = format!("{temporal_name}_{numeric_name}");
+                for (operator_name, operator) in operators {
+                    for (direction, lhs, rhs) in [
+                        ("forward", temporal_column, numeric_column),
+                        ("reverse", numeric_column, temporal_column),
+                    ] {
+                        let sql =
+                            format!("SELECT typeof({lhs} {operator} {rhs}) FROM sensors LIMIT 1");
+                        let path = format!(
+                            "expected/where_expr_arithmetic_temporal_type_{pair}_{operator_name}_{direction}.tsv"
+                        );
+                        let result = execute(&sensors, &sql)
+                            .unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+                        let expected = std::fs::read_to_string(sensors.join(path)).unwrap();
+                        assert_eq!(render_tsv(&result), expected, "{sql}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn where_arithmetic_temporal_values_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = std::fs::read_to_string(
+            sensors.join("where_expr_arithmetic_temporal_value_queries.tsv"),
+        )
+        .unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid temporal value case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn select_arithmetic_expressions_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("select_expr_arithmetic_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid SELECT arithmetic case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/sel_arith_{name}.tsv")))
+                    .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn select_arithmetic_numeric_matrix_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("select_expr_arithmetic_matrix_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid SELECT arithmetic matrix case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn select_arithmetic_temporal_matrix_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = std::fs::read_to_string(
+            sensors.join("select_expr_arithmetic_temporal_matrix_queries.tsv"),
+        )
+        .unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid SELECT temporal arithmetic case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            let rendered = render_tsv(&result);
+            let actual_lines = rendered.lines().collect::<Vec<_>>();
+            let expected_lines = expected.lines().collect::<Vec<_>>();
+            assert_eq!(actual_lines.first(), expected_lines.first(), "{sql}");
+            assert_eq!(actual_lines.len(), expected_lines.len(), "{sql}");
+            for (actual, expected) in actual_lines.iter().zip(&expected_lines).skip(1) {
+                if actual != expected {
+                    let actual_number = actual.parse::<f64>();
+                    let expected_number = expected.parse::<f64>();
+                    assert_eq!(
+                        actual_number.map(f64::to_bits),
+                        expected_number.map(f64::to_bits),
+                        "{sql}: actual {actual:?}, expected {expected:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn select_arithmetic_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("select_expr_arithmetic_errors_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = fields.next().unwrap().parse::<usize>().unwrap();
+            let error = execute(&sensors, sql).expect_err("expected captured arithmetic error");
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, Some(expected_position), "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn select_arithmetic_overflow_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("select_expr_arithmetic_edge_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid SELECT arithmetic edge case: {line}"));
+            let result =
+                execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {}", error.message));
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/sel_arith_edge_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
     fn wmid_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT wmid(s.id, s.reading, s.score, s.id) FROM sensors AS s ORDER BY s.ts",
+                "expected/wm_alias_args.tsv",
+            ),
             (
                 &sensors,
                 "SELECT wmid(flags, reading, score, id) FROM sensors",
@@ -22376,6 +28443,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT spread_bps(s.reading, s.score) FROM sensors AS s ORDER BY s.ts",
+                "expected/bp_alias_reading_score.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT spread_bps(reading, score) FROM sensors",
                 "expected/bp_all.tsv",
             ),
@@ -22474,6 +28546,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT spread(s.reading, s.score) FROM sensors AS s ORDER BY s.ts",
+                "expected/sd_alias_reading_score.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT spread(reading, score) FROM sensors",
                 "expected/sb_all.tsv",
             ),
@@ -22568,6 +28645,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT mid(s.reading, s.score) FROM sensors AS s ORDER BY s.ts",
+                "expected/mi_alias_reading_score.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT mid(reading, score) FROM sensors",
                 "expected/mp_all.tsv",
             ),
@@ -22658,6 +28740,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT timestamp_sequence(s.ts, 1) FROM sensors AS s",
+                "expected/tq_qualified_ts.tsv",
+            ),
             (
                 &sensors,
                 "SELECT timestamp_sequence(0, 1000000) FROM sensors",
@@ -22912,6 +28999,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT bar(s.flags, 0, 42, 4) FROM sensors AS s",
+                "expected/bn_qualified_flags.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT bar(flags, 0, 42, 4) FROM sensors",
                 "expected/bn_all.tsv",
             ),
@@ -23014,6 +29106,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT switch(s.id, 1, 'one', 'other') FROM sensors AS s",
+                "expected/sx_qualified_id.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT switch(id, 1, 'one', 'other') FROM sensors",
                 "expected/sx_all.tsv",
             ),
@@ -23106,6 +29203,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT like(s.note, 'a%') FROM sensors AS s",
+                "expected/lk_qualified_note.tsv",
+            ),
             (
                 &sensors,
                 "SELECT like(note, 'a%') FROM sensors",
@@ -23278,6 +29380,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT ilike(s.note, 'A%') FROM sensors AS s",
+                "expected/ik_qualified_note.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT ilike(note, 'A%') FROM sensors",
                 "expected/ik_all.tsv",
             ),
@@ -23448,6 +29555,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT glob(s.note, 'a*') FROM sensors AS s",
+                "expected/gl_qualified_note.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT glob(note, 'a*') FROM sensors",
                 "expected/gl_all.tsv",
             ),
@@ -23608,6 +29720,11 @@ mod tests {
             ),
             (
                 sensors.clone(),
+                "SELECT starts_with(s.note, 'a'), starts_with(s.note, '') FROM sensors AS s",
+                "expected/sw_qualified_note.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT starts_with(note, 'β') FROM sensors",
                 "expected/sw_beta.tsv",
             ),
@@ -23744,6 +29861,11 @@ mod tests {
             ),
             (
                 sensors.clone(),
+                "SELECT strpos(s.note, 'a'), strpos(s.note, '') FROM sensors AS s",
+                "expected/sp_qualified_note.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT strpos(note, 'ph') FROM sensors",
                 "expected/sp_ph.tsv",
             ),
@@ -23828,6 +29950,11 @@ mod tests {
                 "expected/sp_position.tsv",
             ),
             (
+                sensors.clone(),
+                "SELECT position(s.note, 'a'), position(s.note, '') FROM sensors AS s",
+                "expected/sp_qualified_position.tsv",
+            ),
+            (
                 days.clone(),
                 "SELECT strpos(note, 'a') FROM days",
                 "expected/sp_note.tsv",
@@ -23890,6 +30017,11 @@ mod tests {
                 sensors.clone(),
                 "SELECT split_part(note, 'a', 1) FROM sensors",
                 "expected/part_note.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT split_part(s.note, 'a', 1), split_part(s.note, 'a', 2) FROM sensors AS s",
+                "expected/part_qualified_note.tsv",
             ),
             (
                 sensors.clone(),
@@ -24328,6 +30460,11 @@ mod tests {
             ),
             (
                 sensors.clone(),
+                "SELECT quote_ident(s.note) FROM sensors AS s",
+                "expected/qi_qualified_note.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT quote_ident('a\"b') FROM sensors LIMIT 1",
                 "expected/qi_quote.tsv",
             ),
@@ -24575,6 +30712,11 @@ mod tests {
             ),
             (
                 sensors.clone(),
+                "SELECT size_pretty(s.id) FROM sensors AS s",
+                "expected/sz_qualified_id.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT size_pretty(0) FROM sensors LIMIT 1",
                 "expected/sz_zero.tsv",
             ),
@@ -24715,6 +30857,11 @@ mod tests {
             ),
             (
                 sensors.clone(),
+                "SELECT abs(s.id) FROM sensors AS s",
+                "expected/abs_qualified_id.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT abs(reading) FROM sensors",
                 "expected/abs_reading.tsv",
             ),
@@ -24839,6 +30986,11 @@ mod tests {
                 sensors.clone(),
                 "SELECT round(reading) FROM sensors",
                 "expected/rd_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT round(s.reading) FROM sensors AS s",
+                "expected/rd_qualified_reading.tsv",
             ),
             (
                 sensors.clone(),
@@ -24991,6 +31143,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT floor(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/fl_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT floor(reading) FROM sensors",
                 "expected/fl_reading.tsv",
             ),
@@ -25139,6 +31296,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT ceil(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/ce_qualified_reading.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT ceil(reading) FROM sensors",
@@ -25302,6 +31464,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT sign(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/sg_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT sign(reading) FROM sensors",
                 "expected/sg_reading.tsv",
             ),
@@ -25450,6 +31617,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT sqrt(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/sq_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT sqrt(reading) FROM sensors",
                 "expected/sq_reading.tsv",
             ),
@@ -25578,6 +31750,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT power(s.reading, 2) FROM sensors AS s ORDER BY s.ts",
+                "expected/pw_qualified_reading.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT power(reading, 2) FROM sensors",
@@ -25746,6 +31923,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT ln(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/ln_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT ln(reading) FROM sensors",
                 "expected/ln_reading.tsv",
             ),
@@ -25880,6 +32062,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT log(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/lg_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT log(reading) FROM sensors",
                 "expected/lg_reading.tsv",
             ),
@@ -26012,6 +32199,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT exp(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/ex_qualified_reading.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT exp(reading) FROM sensors",
@@ -26226,6 +32418,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT greatest(s.reading, s.score) FROM sensors AS s",
+                "expected/gt_qualified_reading_score.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT greatest(id, flags) FROM sensors",
                 "expected/gt_id_flags.tsv",
             ),
@@ -26389,6 +32586,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT least(s.reading, s.score) FROM sensors AS s",
+                "expected/ls_qualified_reading_score.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT least(id, flags) FROM sensors",
@@ -26566,6 +32768,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT round_down(s.reading, 1) FROM sensors AS s",
+                "expected/rdn_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT round_down(reading, 0) FROM sensors",
                 "expected/rdn_reading.tsv",
             ),
@@ -26733,6 +32940,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT round_up(s.reading, 1) FROM sensors AS s",
+                "expected/rup_qualified_reading.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT round_up(reading, 0) FROM sensors",
@@ -26904,6 +33116,7 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (sensors.clone(), "SELECT round_half_even(s.reading, 1) FROM sensors AS s", "expected/rhe_qualified_reading.tsv"),
             (sensors.clone(), "SELECT round_half_even(reading, 0) FROM sensors", "expected/rhe_reading.tsv"),
             (sensors.clone(), "SELECT round_half_even(reading, 1) FROM sensors", "expected/rhe_reading_scale.tsv"),
             (sensors.clone(), "SELECT round_half_even(score, 0) FROM sensors", "expected/rhe_score.tsv"),
@@ -26986,6 +33199,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT coalesce(s.reading, s.score) FROM sensors AS s",
+                "expected/ca_qualified_reading_score.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT coalesce(id, flags) FROM sensors",
@@ -27182,6 +33400,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT nullif(s.reading, s.score) FROM sensors AS s",
+                "expected/ni_qualified_reading_score.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT nullif(id, 1) FROM sensors",
@@ -27622,6 +33845,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT dateadd('d', 1, s.ts) FROM sensors AS s",
+                "expected/da_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT dateadd('d', 1, ts) FROM sensors",
                 "expected/da_day.tsv",
             ),
@@ -27785,6 +34013,7 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (sensors.clone(), "SELECT datediff('d', s.ts, s.ts) FROM sensors AS s", "expected/df_qualified_ts.tsv"),
             (sensors.clone(), "SELECT datediff('d', ts, ts) FROM sensors", "expected/df_day.tsv"),
             (sensors.clone(), "SELECT datediff('s', ts, '2020-01-02T03:04:06.000000Z') FROM sensors", "expected/df_second.tsv"),
             (sensors.clone(), "SELECT datediff('h', ts, '2020-01-02T06:04:05.000000Z') FROM sensors", "expected/df_hour.tsv"),
@@ -27845,6 +34074,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT year(s.ts) FROM sensors AS s",
+                "expected/yr_qualified_ts.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT year(ts) FROM sensors",
@@ -27930,6 +34164,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT to_str(s.ts, 'yyyy-MM-dd HH:mm:ss.SSSUUU') FROM sensors AS s ORDER BY s.ts",
+                "expected/tostr_qualified_ts.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT to_str(ts, 'yyyy-MM-dd') FROM sensors",
@@ -28085,6 +34324,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT sha256(s.tag) FROM sensors AS s ORDER BY s.ts",
+                "expected/s2_qualified_tag.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT sha256('abc') FROM sensors LIMIT 1",
                 "expected/s2_abc.tsv",
             ),
@@ -28183,6 +34427,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT sin(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/sn_qualified_reading.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT sin(0) FROM sensors LIMIT 1",
@@ -28416,6 +34665,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT cos(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/co_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT cos(0) FROM sensors LIMIT 1",
                 "expected/co_zero_lit.tsv",
             ),
@@ -28640,6 +34894,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT tan(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/tn_qualified_reading.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT tan(0) FROM sensors LIMIT 1",
@@ -28868,6 +35127,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT asin(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/an_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT asin(0) FROM sensors LIMIT 1",
                 "expected/an_zero_lit.tsv",
             ),
@@ -29063,6 +35327,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT acos(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/ac_qualified_reading.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT acos(0) FROM sensors LIMIT 1",
@@ -29262,6 +35531,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT atan(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/at_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT atan(0) FROM sensors LIMIT 1",
                 "expected/at_zero_lit.tsv",
             ),
@@ -29457,6 +35731,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT atan2(s.reading, s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/a2_qualified_reading.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT atan2(0, 1) FROM sensors LIMIT 1",
@@ -29725,6 +36004,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT degrees(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/dg_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT degrees(0) FROM sensors LIMIT 1",
                 "expected/dg_zero.tsv",
             ),
@@ -29940,6 +36224,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT radians(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/ra_qualified_reading.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT radians(0) FROM sensors LIMIT 1",
@@ -30159,6 +36448,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT cot(s.reading) FROM sensors AS s ORDER BY s.ts",
+                "expected/ct_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT cot(0) FROM sensors LIMIT 1",
                 "expected/ct_zero.tsv",
             ),
@@ -30375,6 +36669,31 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT typeof(s.ts) FROM sensors AS s ORDER BY s.ts",
+                "expected/ty_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(json_extract(s.tag, '$')) FROM sensors AS s ORDER BY s.ts",
+                "expected/ty_json_qualified_tag.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(to_uuid(s.id, s.id)) FROM sensors AS s ORDER BY s.ts",
+                "expected/ty_uuid_qualified_id.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(make_geohash(s.reading, 41.0, 5)) FROM sensors AS s ORDER BY s.ts",
+                "expected/ty_geohash_qualified_reading.tsv",
+            ),
+            (
+                sensors.clone(),
+                "SELECT typeof(to_char(from_base64(s.tag))) FROM sensors AS s ORDER BY s.ts",
+                "expected/ty_to_char_qualified_tag.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT typeof(1) FROM sensors LIMIT 1",
                 "expected/ty_int.tsv",
             ),
@@ -30556,6 +36875,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT not(s.ok) FROM sensors AS s ORDER BY s.ts",
+                "expected/no_alias_flags.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT not(ok) FROM sensors",
                 "expected/nt_ok.tsv",
             ),
@@ -30718,6 +37042,218 @@ mod tests {
             "{}",
             err.message
         );
+    }
+
+    #[test]
+    fn not_prefix_projection_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = std::fs::read_to_string(sensors.join("not_projection_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid NOT projection case: {line}"));
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/not_projection_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn not_prefix_projection_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("not_projection_errors_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = match fields.next().unwrap() {
+                "-" => None,
+                position => Some(position.parse::<usize>().unwrap()),
+            };
+            let error = match execute(&sensors, sql) {
+                Ok(result) => panic!("{name}: {sql}: expected error, got {result:?}"),
+                Err(error) => error,
+            };
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, expected_position, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn not_prefix_nested_projection_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("not_projection_nested_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid nested NOT projection case: {line}"));
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/not_projection_nested_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn not_prefix_nested_projection_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("not_projection_nested_errors_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = match fields.next().unwrap() {
+                "-" => None,
+                position => Some(position.parse::<usize>().unwrap()),
+            };
+            let error = match execute(&sensors, sql) {
+                Ok(result) => panic!("{name}: {sql}: expected error, got {result:?}"),
+                Err(error) => error,
+            };
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, expected_position, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn not_prefix_boolean_projection_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("not_projection_boolean_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid boolean NOT projection case: {line}"));
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/not_projection_boolean_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn not_prefix_boolean_projection_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("not_projection_boolean_errors_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = match fields.next().unwrap() {
+                "-" => None,
+                position => Some(position.parse::<usize>().unwrap()),
+            };
+            let error = match execute(&sensors, sql) {
+                Ok(result) => panic!("{name}: {sql}: expected error, got {result:?}"),
+                Err(error) => error,
+            };
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, expected_position, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn boolean_projection_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("boolean_projection_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("invalid boolean projection case: {line}"));
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/boolean_projection_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn boolean_projection_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("boolean_projection_errors_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = match fields.next().unwrap() {
+                "-" => None,
+                position => Some(position.parse::<usize>().unwrap()),
+            };
+            let error = match execute(&sensors, sql) {
+                Ok(result) => panic!("{name}: {sql}: expected error, got {result:?}"),
+                Err(error) => error,
+            };
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, expected_position, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn boolean_projection_predicates_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("boolean_projection_predicates_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/boolean_projection_predicate_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn boolean_projection_predicate_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = std::fs::read_to_string(
+            sensors.join("boolean_projection_predicates_errors_queries.tsv"),
+        )
+        .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap().replace("\\n", "\n");
+            let expected_position = match fields.next().unwrap() {
+                "-" => None,
+                position => Some(position.parse::<usize>().unwrap()),
+            };
+            let error = match execute(&sensors, sql) {
+                Ok(result) => panic!("{name}: {sql}: expected error, got {result:?}"),
+                Err(error) => error,
+            };
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, expected_position, "{name}: {sql}");
+        }
     }
 
     #[test]
@@ -32664,6 +39200,16 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT rpad(s.note, 5, '_') FROM sensors AS s",
+                "expected/rp_qualified_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT lpad(s.note, 5, '_') FROM sensors AS s",
+                "expected/lp_qualified_note.tsv",
+            ),
             (
                 &sensors,
                 "SELECT corr(reading, score) FROM sensors",
@@ -39847,6 +46393,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT sha1(s.tag) FROM sensors AS s ORDER BY s.ts",
+                "expected/s1_qualified_tag.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT sha1('abc') FROM sensors LIMIT 1",
                 "expected/s1_abc.tsv",
             ),
@@ -39947,6 +46498,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT md5(s.tag) FROM sensors AS s ORDER BY s.ts",
+                "expected/m5_qualified_tag.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT md5('abc') FROM sensors LIMIT 1",
                 "expected/m5_abc.tsv",
             ),
@@ -40045,6 +46601,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT to_date(s.note, 'yyyy-MM-dd') FROM sensors AS s ORDER BY s.id",
+                "expected/td_qualified_note.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT to_date('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1",
@@ -40211,6 +46772,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT extract(year FROM s.ts) FROM sensors AS s ORDER BY s.ts",
+                "expected/xt_qualified_ts.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT extract(year FROM ts) FROM sensors",
@@ -40502,6 +47068,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT to_timestamp(s.note, 'yyyy-MM-dd') FROM sensors AS s ORDER BY s.id",
+                "expected/tp_qualified_note.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT to_timestamp('2020-01-02', 'yyyy-MM-dd') FROM sensors LIMIT 1",
                 "expected/tp_date.tsv",
             ),
@@ -40640,6 +47211,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT day_of_week_sunday_first(s.ts) FROM sensors AS s",
+                "expected/ds_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT day_of_week_sunday_first(ts) FROM sensors",
                 "expected/ds_ts.tsv",
             ),
@@ -40757,6 +47333,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT is_end_of_month(s.ts) FROM sensors AS s",
+                "expected/em_qualified_ts.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT is_end_of_month(ts) FROM sensors",
@@ -40877,6 +47458,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT days_in_month(s.ts) FROM sensors AS s",
+                "expected/dm_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT days_in_month(ts) FROM sensors",
                 "expected/dm_ts.tsv",
             ),
@@ -40989,6 +47575,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT is_leap_year(s.ts) FROM sensors AS s",
+                "expected/ly_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT is_leap_year(ts) FROM sensors",
                 "expected/ly_ts.tsv",
             ),
@@ -41089,6 +47680,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT timestamp_ceil('d', s.ts) FROM sensors AS s",
+                "expected/tc_qualified_ts.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT timestamp_ceil('d', ts) FROM sensors",
@@ -41233,6 +47829,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT timestamp_floor('d', s.ts) FROM sensors AS s",
+                "expected/tf_qualified_ts.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT timestamp_floor('d', ts) FROM sensors",
@@ -41412,6 +48013,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT date_trunc('day', s.ts) FROM sensors AS s",
+                "expected/dt_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT date_trunc('day', ts) FROM sensors",
                 "expected/dt_day.tsv",
             ),
@@ -41562,6 +48168,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT week_of_year(s.ts) FROM sensors AS s",
+                "expected/wy_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT week_of_year(ts) FROM sensors",
                 "expected/wy_ts.tsv",
             ),
@@ -41657,6 +48268,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT day_of_week(s.ts) FROM sensors AS s",
+                "expected/dw_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT day_of_week(ts) FROM sensors",
                 "expected/dw_ts.tsv",
             ),
@@ -41745,6 +48361,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT nanos(s.ts) FROM sensors AS s",
+                "expected/na_qualified_ts.tsv",
+            ),
             (
                 &sensors,
                 "SELECT nanos(ts) FROM sensors",
@@ -42458,6 +49079,14 @@ mod tests {
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
             (
+                "SELECT pg_catalog.pg_get_expr(s.note, s.flags, s.ok) FROM sensors AS s ORDER BY s.ts",
+                "expected/ge_qualified_optional.tsv",
+            ),
+            (
+                "SELECT pg_catalog.pg_get_expr(s.note, s.flags) FROM sensors AS s ORDER BY s.ts",
+                "expected/ge_qualified_args.tsv",
+            ),
+            (
                 "SELECT pg_catalog.pg_get_expr(note, 1) FROM sensors",
                 "expected/ge_all.tsv",
             ),
@@ -42559,6 +49188,10 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                "SELECT pg_catalog.pg_get_partkeydef(s.flags) FROM sensors AS s ORDER BY s.ts",
+                "expected/kf_qualified_flags.tsv",
+            ),
             (
                 "SELECT pg_catalog.pg_get_partkeydef(1) FROM sensors",
                 "expected/kf_all.tsv",
@@ -42803,6 +49436,10 @@ mod tests {
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
             (
+                "SELECT pg_catalog.age(s.id) FROM sensors AS s ORDER BY s.ts",
+                "expected/ag_qualified_id.tsv",
+            ),
+            (
                 "SELECT pg_catalog.age(1) FROM sensors",
                 "expected/ag_all.tsv",
             ),
@@ -42909,6 +49546,10 @@ mod tests {
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
             (
+                "SELECT pg_catalog.pg_table_is_visible(s.flags) FROM sensors AS s ORDER BY s.ts",
+                "expected/tv_qualified_flags.tsv",
+            ),
+            (
                 "SELECT pg_catalog.pg_table_is_visible(1) FROM sensors",
                 "expected/tv_all.tsv",
             ),
@@ -43002,6 +49643,10 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                "SELECT pg_catalog.pg_get_userbyid(s.flags) FROM sensors AS s ORDER BY s.ts",
+                "expected/ub_qualified_flags.tsv",
+            ),
             (
                 "SELECT pg_catalog.pg_get_userbyid(1) FROM sensors",
                 "expected/ub_all.tsv",
@@ -43153,6 +49798,10 @@ mod tests {
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
             (
+                "SELECT to_char(from_base64(s.tag)) FROM sensors AS s WHERE s.id = 1",
+                "expected/th_qualified_tag.tsv",
+            ),
+            (
                 "SELECT to_char(null) FROM sensors LIMIT 1",
                 "expected/th_null.tsv",
             ),
@@ -43246,6 +49895,14 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                "SELECT json_extract(s.tag, '$') FROM sensors AS s ORDER BY s.ts",
+                "expected/je_qualified_tag.tsv",
+            ),
+            (
+                "SELECT json_extract('123abc', '$') FROM sensors LIMIT 1",
+                "expected/je_num_suffix.tsv",
+            ),
             (
                 "SELECT json_extract('{\"a\":1}', '$.a') FROM sensors LIMIT 1",
                 "expected/je_a1.tsv",
@@ -43373,6 +50030,10 @@ mod tests {
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
             (
+                "SELECT to_uuid(s.id, s.id) FROM sensors AS s ORDER BY s.ts",
+                "expected/uu_qualified_id.tsv",
+            ),
+            (
                 "SELECT to_uuid(1, 2) FROM sensors LIMIT 1",
                 "expected/uu_12.tsv",
             ),
@@ -43493,6 +50154,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT make_geohash(s.reading, s.reading, 5) FROM sensors AS s ORDER BY s.ts",
+                "expected/mg_qualified_reading.tsv",
+            ),
             (
                 &sensors,
                 "SELECT make_geohash(2.0, 41.0, 20) FROM sensors LIMIT 1",
@@ -43754,6 +50420,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT within_box(s.id, s.id, s.id, s.id, s.id, s.id) FROM sensors AS s ORDER BY s.ts",
+                "expected/wb_qualified_id.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT within_box(0, 0, -1, -1, 1, 1) FROM sensors LIMIT 1",
                 "expected/wb_in.tsv",
             ),
@@ -43862,6 +50533,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT within_radius(s.id, s.id, s.id, s.id, s.id) FROM sensors AS s ORDER BY s.ts",
+                "expected/wn_qualified_id.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT within_radius(0, 0, 3, 4, 5) FROM sensors LIMIT 1",
                 "expected/wn_in.tsv",
             ),
@@ -43968,6 +50644,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT geo_within_radius_latlon(s.id, s.id, s.id, s.id, s.id) FROM sensors AS s ORDER BY s.ts",
+                "expected/gw_qualified_id.tsv",
+            ),
             (
                 &sensors,
                 "SELECT geo_within_radius_latlon(0, 0, 0, 1, 200000) FROM sensors LIMIT 1",
@@ -44090,6 +50771,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT geo_distance_meters(s.flags, s.flags, s.flags, s.flags) FROM sensors AS s ORDER BY s.ts",
+                "expected/gd_qualified_flags.tsv",
+            ),
             (
                 &sensors,
                 "SELECT geo_distance_meters(0, 0, 0, 0) FROM sensors LIMIT 1",
@@ -44217,6 +50903,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT netmask(s.tag) FROM sensors AS s ORDER BY s.ts",
+                "expected/nm_qualified_tag.tsv",
+            ),
             (
                 &sensors,
                 "SELECT netmask('192.168.1.1/24') FROM sensors LIMIT 1",
@@ -44756,6 +51447,10 @@ mod tests {
         }
         let mismatches = [
             (
+                "SELECT current_setting(s.note) FROM sensors AS s ORDER BY s.ts",
+                "argument type mismatch for function `current_setting` at #1 expected: STRING constant, actual: STRING",
+            ),
+            (
                 "SELECT current_setting(note) FROM sensors",
                 "argument type mismatch for function `current_setting` at #1 expected: STRING constant, actual: STRING",
             ),
@@ -44791,6 +51486,11 @@ mod tests {
                 &sensors,
                 "SELECT regexp_replace(note, 'a', 'b') FROM sensors",
                 "expected/rr_note.tsv",
+            ),
+            (
+                &sensors,
+                "SELECT regexp_replace(s.note, 'a', 'A') FROM sensors AS s",
+                "expected/rr_qualified_note.tsv",
             ),
             (
                 &sensors,
@@ -44872,10 +51572,91 @@ mod tests {
     }
 
     #[test]
+    fn regexp_replace_java_replacements_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            "all_matches",
+            "capture_one",
+            "capture_zero",
+            "capture_reorder_unicode",
+            "capture_named",
+            "replacement_escape",
+            "optional_capture",
+            "invalid_group_without_match",
+            "column_unicode",
+            "group_by_capture",
+            "greedy_group_number",
+            "lookbehind_pattern",
+        ];
+        let queries = std::fs::read_to_string(sensors.join("regexp_replace_queries.tsv")).unwrap();
+        let queries = queries
+            .lines()
+            .map(|line| line.split_once('\t').unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(queries.len(), cases.len());
+        for ((name, sql), expected_name) in queries.into_iter().zip(cases) {
+            assert_eq!(name, expected_name);
+            let result = execute(&sensors, sql).unwrap();
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/regexp_replace_{name}.tsv")),
+            )
+            .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn regexp_replace_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let errors = [
+            (
+                "SELECT regexp_replace('alpha', '(a)', '$2') FROM sensors LIMIT 1",
+                "regexp_replace failed [position=7, ex=No group 2]",
+                None,
+            ),
+            (
+                "SELECT regexp_replace('alpha', '(?<x>a)', '${missing}') FROM sensors LIMIT 1",
+                "regexp_replace failed [position=7, ex=No group with name {missing}]",
+                None,
+            ),
+            (
+                "SELECT regexp_replace('alpha', 'a', '\\') FROM sensors LIMIT 1",
+                "regexp_replace failed [position=7, ex=character to be escaped is missing]",
+                None,
+            ),
+            (
+                "SELECT regexp_replace(note, '[', 'x') FROM sensors",
+                "Unclosed character class near index 0\n[\n^",
+                Some(29),
+            ),
+            (
+                "SELECT regexp_replace(note, location, 'x') FROM sensors",
+                "not implemented: dynamic pattern would be very slow to execute",
+                Some(28),
+            ),
+            (
+                "SELECT regexp_replace(note, 'a', location) FROM sensors",
+                "not implemented: dynamic replacement would be slow to execute",
+                Some(33),
+            ),
+        ];
+        for (sql, expected_message, expected_position) in errors {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, expected_message, "{sql}");
+            assert_eq!(error.position, expected_position, "{sql}");
+        }
+    }
+
+    #[test]
     fn ft_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                &sensors,
+                "SELECT format_type(s.flags, s.flags) FROM sensors AS s ORDER BY s.ts",
+                "expected/ft_qualified_flags.tsv",
+            ),
             (
                 &sensors,
                 "SELECT format_type(20, 0) FROM sensors",
@@ -45448,6 +52229,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT to_pg_date(s.note) FROM sensors AS s",
+                "expected/pg_qualified_note.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT to_pg_date('2020-01-02') FROM sensors LIMIT 1",
                 "expected/pg_lit.tsv",
             ),
@@ -45602,6 +52388,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT to_timezone(s.ts, 'Europe/Madrid') FROM sensors AS s",
+                "expected/tz_qualified_ts.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT to_timezone(ts, 'UTC') FROM sensors",
                 "expected/tz_utc.tsv",
             ),
@@ -45751,6 +52542,11 @@ mod tests {
         let cases = [
             (
                 &sensors,
+                "SELECT to_utc(s.ts, 'UTC') FROM sensors AS s",
+                "expected/uc_qualified_ts.tsv",
+            ),
+            (
+                &sensors,
                 "SELECT to_utc(ts, 'UTC') FROM sensors",
                 "expected/uc_utc.tsv",
             ),
@@ -45893,6 +52689,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT micros(s.ts) FROM sensors AS s",
+                "expected/mc_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT micros(ts) FROM sensors",
                 "expected/mc_ts.tsv",
             ),
@@ -45976,6 +52777,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT millis(s.ts) FROM sensors AS s",
+                "expected/ms_qualified_ts.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT millis(ts) FROM sensors",
@@ -46063,6 +52869,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT second(s.ts) FROM sensors AS s",
+                "expected/se_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT second(ts) FROM sensors",
                 "expected/se_ts.tsv",
             ),
@@ -46146,6 +52957,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT minute(s.ts) FROM sensors AS s",
+                "expected/mi_qualified_ts.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT minute(ts) FROM sensors",
@@ -46233,6 +53049,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT hour(s.ts) FROM sensors AS s",
+                "expected/hr_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT hour(ts) FROM sensors",
                 "expected/hr_ts.tsv",
             ),
@@ -46318,6 +53139,11 @@ mod tests {
         let cases = [
             (
                 sensors.clone(),
+                "SELECT day(s.ts) FROM sensors AS s",
+                "expected/dy_qualified_ts.tsv",
+            ),
+            (
+                sensors.clone(),
                 "SELECT day(ts) FROM sensors",
                 "expected/dy_ts.tsv",
             ),
@@ -46400,6 +53226,11 @@ mod tests {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
         let cases = [
+            (
+                sensors.clone(),
+                "SELECT month(s.ts) FROM sensors AS s",
+                "expected/mo_qualified_ts.tsv",
+            ),
             (
                 sensors.clone(),
                 "SELECT month(ts) FROM sensors",

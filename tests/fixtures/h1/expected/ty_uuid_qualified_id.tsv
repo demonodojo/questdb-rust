@@ -1,0 +1,5 @@
+typeof(to_uuid(s.id, s.id))
+UUID
+UUID
+UUID
+UUID

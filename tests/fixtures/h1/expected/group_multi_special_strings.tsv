@@ -1,0 +1,4 @@
+location	string_agg(note, '|')	count()	first(note)
+NULL	NULL	1	NULL
+madrid	alpha|	2	alpha
+東京	βeta	1	βeta

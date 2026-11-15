@@ -1,0 +1,2 @@
+{"query":"SELECT regexp_replace('alpha\n', 'alpha\\Z', 'X') FROM sensors LIMIT 1","columns":[{"name":"regexp_replace('alpha\n', 'alpha\\Z', 'X')","type":"STRING"}],"timestamp":-1,"dataset":[["X\n"]],"count":1}
+{"query":"SELECT regexp_replace('alpha\n', 'alpha\\z', 'X') FROM sensors LIMIT 1","columns":[{"name":"regexp_replace('alpha\n', 'alpha\\z', 'X')","type":"STRING"}],"timestamp":-1,"dataset":[["alpha\n"]],"count":1}

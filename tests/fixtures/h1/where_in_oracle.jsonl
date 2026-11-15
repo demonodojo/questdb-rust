@@ -1,0 +1,13 @@
+{"query":"SELECT id FROM sensors WHERE id IN (1, -1) ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"SELECT id FROM sensors WHERE id NOT IN (1, -1) ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2],[null]],"count":2}
+{"query":"SELECT id FROM sensors WHERE id IN (NULL, 1) ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null]],"count":2}
+{"query":"SELECT id FROM sensors WHERE id NOT IN (NULL, 1) ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[2],[-1]],"count":2}
+{"query":"SELECT s.id FROM sensors AS s WHERE s.id IN (1, -1) ORDER BY s.ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"SELECT id FROM sensors WHERE id IN (1, 1) ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"SELECT id FROM sensors WHERE id IN (1, -1) AND ok = false ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[-1]],"count":1}
+{"query":"SELECT id FROM sensors WHERE id = 1 OR id IN (-1, 2) ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[-1]],"count":3}
+{"query":"SELECT note FROM sensors WHERE note IN ('alpha', '') ORDER BY ts","columns":[{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[["alpha"],[""]],"count":2}
+{"query":"SELECT id FROM sensors WHERE id NOT IN (1, NULL) OR id = 1 ORDER BY ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[-1]],"count":3}
+{"query":"SELECT id FROM sensors WHERE id IN ()","error":"too few arguments for 'in'","position":32}
+{"query":"SELECT id FROM sensors WHERE ok IN (true, false)","error":"there is no matching operator `in` with the argument type: BOOLEAN","position":32}
+{"query":"SELECT id FROM sensors WHERE missing IN (1)","error":"Invalid column: missing","position":29}

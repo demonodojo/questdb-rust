@@ -1,0 +1,7 @@
+and_in	SELECT id, ok AND id IN (1, 2) AS v FROM sensors ORDER BY id
+or_is_null	SELECT s.id, s.ok OR s.note IS NULL AS matched FROM sensors AS s ORDER BY matched, s.id
+and_between	SELECT id, ok AND id BETWEEN 1 AND 3 AS v FROM sensors ORDER BY id
+or_like	SELECT id, ok OR note LIKE 'a%' AS v FROM sensors ORDER BY id
+and_ilike	SELECT id, ok AND note ILIKE '%A%' AS v FROM sensors ORDER BY id
+or_regex	SELECT id, ok OR note ~ 'a.*' AS v FROM sensors ORDER BY id
+nested_predicate	SELECT id, (ok AND id IN (1, 2)) OR note IS NULL AS v FROM sensors ORDER BY id

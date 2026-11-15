@@ -1,0 +1,3 @@
+ok	and_true	or_false	and_null	or_null	not_ok
+false	false	false	false	false	true
+true	true	true	false	true	false

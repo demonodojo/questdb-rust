@@ -1,0 +1,5 @@
+note ~ '^[\H]+$'
+false
+true
+true
+false

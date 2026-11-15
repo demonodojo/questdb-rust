@@ -1,0 +1,2 @@
+{"query":"SELECT id FROM sensors GROUP BY location","error":"column must appear in GROUP BY clause or aggregate function","position":7}
+{"query":"SELECT location FROM sensors GROUP BY location ORDER BY id","error":"ORDER BY expressions must appear in select list. Invalid column: id","position":56}

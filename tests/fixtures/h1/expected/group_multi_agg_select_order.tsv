@@ -1,0 +1,4 @@
+max(id)	city	count()	min(score)	sum(flags)
+2	NULL	1	NULL	NULL
+1	madrid	2	0.0	10
+-1	東京	1	-1.5	42

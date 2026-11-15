@@ -1,0 +1,5 @@
+rpad(s.note, 5, '_')
+alpha
+NULL
+_____
+βeta_

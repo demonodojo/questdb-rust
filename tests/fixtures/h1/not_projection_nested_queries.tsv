@@ -1,0 +1,7 @@
+in	SELECT id, NOT (id IN (1, -1)) AS n FROM sensors ORDER BY id
+is_null	SELECT id, NOT (id IS NULL) AS n FROM sensors ORDER BY id
+is_not_null	SELECT id, NOT (id IS NOT NULL) AS n FROM sensors ORDER BY id
+between	SELECT id, NOT (id BETWEEN 1 AND 1) AS n FROM sensors ORDER BY id
+double_not	SELECT id, NOT NOT (id = 1) AS n FROM sensors ORDER BY id
+like_null	SELECT id, NOT (note LIKE NULL) AS n FROM sensors ORDER BY id
+not_like_nested	SELECT id, NOT (note NOT LIKE 'a%') AS n FROM sensors ORDER BY id

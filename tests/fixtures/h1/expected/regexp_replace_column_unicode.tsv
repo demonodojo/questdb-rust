@@ -1,0 +1,5 @@
+id	regexp_replace(note, '(β)', '<$1>')
+NULL	
+-1	<β>eta
+1	alpha
+2	NULL

@@ -1,0 +1,3 @@
+{"query":"SELECT id + 1, count() FROM sensors GROUP BY flags + 1","error":"column must appear in GROUP BY clause or aggregate function","position":7}
+{"query":"SELECT id + 1, count() FROM sensors GROUP BY unknown + 1","error":"Invalid column: unknown","position":45}
+{"query":"SELECT id + note, count() FROM sensors GROUP BY id + note","error":"inconvertible value: `alpha` [STRING -> LONG]","position":0}

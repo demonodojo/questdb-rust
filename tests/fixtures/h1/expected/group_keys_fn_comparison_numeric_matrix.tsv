@@ -1,0 +1,5 @@
+id	eq	ne	lt	gt	le	ge	is_null	not_null
+NULL	false	true	false	false	false	false	true	false
+-1	false	true	true	false	true	false	false	true
+1	true	false	false	false	true	true	false	true
+2	false	true	false	true	false	true	false	true

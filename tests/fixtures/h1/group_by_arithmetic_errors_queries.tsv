@@ -1,0 +1,3 @@
+key_mismatch	SELECT id + 1, count() FROM sensors GROUP BY flags + 1	column must appear in GROUP BY clause or aggregate function	7
+unknown_key	SELECT id + 1, count() FROM sensors GROUP BY unknown + 1	Invalid column: unknown	45
+incompatible_key	SELECT id + note, count() FROM sensors GROUP BY id + note	inconvertible value: `alpha` [STRING -> LONG]	0

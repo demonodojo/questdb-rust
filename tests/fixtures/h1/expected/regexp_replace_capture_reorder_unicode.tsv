@@ -1,0 +1,2 @@
+regexp_replace('βeta 東京', '(β)(eta)', '$2-$1')
+eta-β 東京

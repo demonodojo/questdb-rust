@@ -1,0 +1,5 @@
+{"query":"SELECT id, ok AND flags AS v FROM sensors","error":"expression type mismatch, expected: BOOLEAN, actual: INT","position":18}
+{"query":"SELECT id, ok AND id AS v FROM sensors","error":"expression type mismatch, expected: BOOLEAN, actual: LONG","position":18}
+{"query":"SELECT id, ok OR note AS v FROM sensors","error":"expression type mismatch, expected: BOOLEAN, actual: STRING","position":17}
+{"query":"SELECT id, ok AND 'x' AS v FROM sensors","error":"expression type mismatch, expected: BOOLEAN, actual: CHAR","position":18}
+{"query":"SELECT id, ok AND missing AS v FROM sensors","error":"Invalid column: missing","position":18}

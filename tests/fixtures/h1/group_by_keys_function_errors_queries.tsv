@@ -1,0 +1,138 @@
+ungrouped_source	SELECT length(note) FROM sensors GROUP BY location	column must appear in GROUP BY clause or aggregate function	14
+ungrouped_upper	SELECT upper(note) FROM sensors GROUP BY location	column must appear in GROUP BY clause or aggregate function	13
+ungrouped_left_count	SELECT left(note, id) FROM sensors GROUP BY note	column must appear in GROUP BY clause or aggregate function	18
+ungrouped_substring_start	SELECT substring(note, id, 1) FROM sensors GROUP BY note	column must appear in GROUP BY clause or aggregate function	23
+ungrouped_lpad_width	SELECT lpad(note, id) FROM sensors GROUP BY note	column must appear in GROUP BY clause or aggregate function	18
+ungrouped_regexp_pattern	SELECT regexp_replace(note, location, 'x') FROM sensors GROUP BY note	column must appear in GROUP BY clause or aggregate function	28
+dynamic_regexp_replacement	SELECT regexp_replace(note, 'a', location) FROM sensors GROUP BY note, location	not implemented: dynamic replacement would be slow to execute	0
+ungrouped_starts_with_prefix	SELECT starts_with(note, location) FROM sensors GROUP BY note	column must appear in GROUP BY clause or aggregate function	25
+ungrouped_split_part_delimiter	SELECT split_part(note, location, 1) FROM sensors GROUP BY note	column must appear in GROUP BY clause or aggregate function	24
+ungrouped_quote_ident_source	SELECT quote_ident(note) FROM sensors GROUP BY location	column must appear in GROUP BY clause or aggregate function	19
+ungrouped_ilike_source	SELECT ilike(note, 'A%') FROM sensors GROUP BY location	column must appear in GROUP BY clause or aggregate function	13
+like_dynamic_pattern	SELECT like(note, location) FROM sensors GROUP BY note, location	use constant or bind variable	0
+glob_dynamic_pattern	SELECT glob(note, location) FROM sensors GROUP BY note, location	there is no matching function `glob` with the argument types: (STRING, SYMBOL)	7
+switch_nonconstant_case	SELECT switch(id, flags, 'x', 'other') FROM sensors GROUP BY id, flags	constant expected	0
+switch_ungrouped_key	SELECT switch(id, 1, 'one', 'other') FROM sensors GROUP BY location	column must appear in GROUP BY clause or aggregate function	14
+bar_ungrouped_value	SELECT bar(reading, 0, 42, 4) FROM sensors GROUP BY id	column must appear in GROUP BY clause or aggregate function	11
+strpos_ungrouped_needle	SELECT strpos(note, location) FROM sensors GROUP BY note	column must appear in GROUP BY clause or aggregate function	20
+mid_ungrouped_source	SELECT mid(reading, score) FROM sensors GROUP BY reading	column must appear in GROUP BY clause or aggregate function	20
+spread_bps_ungrouped_source	SELECT spread_bps(reading, score) FROM sensors GROUP BY reading	column must appear in GROUP BY clause or aggregate function	27
+wmid_ungrouped_source	SELECT wmid(flags, reading, score, code) FROM sensors GROUP BY flags, reading, score	column must appear in GROUP BY clause or aggregate function	35
+round_ungrouped_scale	SELECT round(reading, code) FROM sensors GROUP BY reading	column must appear in GROUP BY clause or aggregate function	22
+sqrt_ungrouped_input	SELECT sqrt(code) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	12
+power_ungrouped_exponent	SELECT power(reading, score) FROM sensors GROUP BY reading	column must appear in GROUP BY clause or aggregate function	22
+ungrouped_sign	SELECT sign(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	12
+ungrouped_ln	SELECT ln(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	10
+ungrouped_log	SELECT log(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	11
+ungrouped_exp	SELECT exp(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	11
+ungrouped_sin	SELECT sin(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	11
+ungrouped_cos	SELECT cos(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	11
+ungrouped_tan	SELECT tan(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	11
+ungrouped_asin	SELECT asin(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	12
+ungrouped_acos	SELECT acos(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	12
+ungrouped_atan	SELECT atan(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	12
+ungrouped_degrees	SELECT degrees(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	15
+ungrouped_radians	SELECT radians(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	15
+ungrouped_cot	SELECT cot(reading) FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	11
+ungrouped_atan2	SELECT atan2(reading, score) FROM sensors GROUP BY score	column must appear in GROUP BY clause or aggregate function	13
+ungrouped_greatest	SELECT greatest(reading, score) FROM sensors GROUP BY reading	column must appear in GROUP BY clause or aggregate function	25
+ungrouped_least	SELECT least(reading, score) FROM sensors GROUP BY score	column must appear in GROUP BY clause or aggregate function	13
+ungrouped_round_down_scale	SELECT round_down(reading, code) FROM sensors GROUP BY reading	column must appear in GROUP BY clause or aggregate function	27
+ungrouped_round_up_scale	SELECT round_up(reading, code) FROM sensors GROUP BY reading	column must appear in GROUP BY clause or aggregate function	25
+ungrouped_round_half_even_scale	SELECT round_half_even(reading, code) FROM sensors GROUP BY reading	column must appear in GROUP BY clause or aggregate function	32
+ungrouped_coalesce	SELECT coalesce(reading, score) AS value FROM sensors GROUP BY reading	column must appear in GROUP BY clause or aggregate function	25
+ungrouped_nullif	SELECT nullif(reading, score) AS value FROM sensors GROUP BY reading	column must appear in GROUP BY clause or aggregate function	23
+ungrouped_cast	SELECT CAST(id AS INT) AS value FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	12
+ungrouped_year	SELECT year(day) AS value FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	12
+ungrouped_month	SELECT month(day) AS value FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	13
+ungrouped_day	SELECT day(day) AS value FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	11
+ungrouped_hour	SELECT hour(day) AS value FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	12
+ungrouped_minute	SELECT minute(day) AS value FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	14
+ungrouped_second	SELECT second(day) AS value FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	14
+ungrouped_millis	SELECT millis(day) AS value FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	14
+ungrouped_micros	SELECT micros(day) AS value FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	14
+ungrouped_nanos	SELECT nanos(day) AS value FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	13
+ungrouped_dateadd	SELECT dateadd('d', 1, ts) AS value FROM sensors GROUP BY day	column must appear in GROUP BY clause or aggregate function	23
+ungrouped_datediff	SELECT datediff('d', ts, day) AS value FROM sensors GROUP BY day	column must appear in GROUP BY clause or aggregate function	21
+ungrouped_extract	SELECT extract(year FROM ts) AS value FROM sensors GROUP BY day	column must appear in GROUP BY clause or aggregate function	25
+ungrouped_timestamp_floor	SELECT timestamp_floor('d', ts) AS value FROM sensors GROUP BY day	column must appear in GROUP BY clause or aggregate function	28
+ungrouped_timestamp_ceil	SELECT timestamp_ceil('d', ts) AS value FROM sensors GROUP BY day	column must appear in GROUP BY clause or aggregate function	27
+utc_ungrouped_source	SELECT to_utc(ts, 'Europe/Madrid') AS utc_ts FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	14
+timezone_ungrouped_source	SELECT to_timezone(ts, 'Europe/Madrid') AS local_ts FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	19
+pg_date_ungrouped_source	SELECT to_pg_date(note) AS pg_day FROM sensors AS s GROUP BY s.ts	column must appear in GROUP BY clause or aggregate function	18
+leap_ungrouped_source	SELECT is_leap_year(ts) AS leap FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	20
+days_month_ungrouped_source	SELECT days_in_month(day) AS month_days FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	21
+to_str_ungrouped_source	SELECT to_str(ts, 'yyyy') AS date_text FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	14
+end_month_ungrouped_source	SELECT is_end_of_month(ts) AS month_end FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	23
+sunday_first_ungrouped_source	SELECT day_of_week_sunday_first(ts) AS weekday FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	32
+to_date_ungrouped_source	SELECT to_date(note, 'yyyy-MM-dd') AS parsed_day FROM sensors AS s GROUP BY s.ts	column must appear in GROUP BY clause or aggregate function	15
+to_timestamp_ungrouped_source	SELECT to_timestamp(note, 'yyyy-MM-dd') AS parsed_ts FROM sensors AS s GROUP BY s.ts	column must appear in GROUP BY clause or aggregate function	20
+md5_ungrouped_source	SELECT md5(note) AS digest FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	11
+sha1_ungrouped_source	SELECT sha1(note) AS digest FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	12
+sha256_ungrouped_source	SELECT sha256(note) AS digest FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	14
+uuid_ungrouped_source	SELECT to_uuid(id, flags) AS uuid FROM sensors AS s GROUP BY s.id	column must appear in GROUP BY clause or aggregate function	19
+json_ungrouped_source	SELECT json_extract(tag, '$') AS extracted FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	20
+to_char_ungrouped_source	SELECT to_char(from_base64(tag)) AS decoded FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	27
+to_lowercase_ungrouped	SELECT to_lowercase(location) AS folded FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	20
+to_uppercase_ungrouped	SELECT to_uppercase(location) AS folded FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	20
+length_bytes_ungrouped	SELECT length_bytes(note) AS byte_count FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	20
+size_pretty_ungrouped	SELECT size_pretty(id) AS pretty FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	19
+geo_netmask_ungrouped	SELECT netmask(note) AS mask FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	15
+geo_distance_ungrouped	SELECT geo_distance_meters(reading, reading, 0, 0) AS meters FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	36
+geo_radius_latlon_ungrouped	SELECT geo_within_radius_latlon(reading, reading, 0, 0, 1000) AS inside FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	41
+geo_within_radius_ungrouped	SELECT within_radius(reading, reading, 0, 0, 1000) AS inside FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	30
+geo_within_box_ungrouped	SELECT within_box(reading, reading, 0, 0, 100, 100) AS inside FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	27
+geo_make_geohash_ungrouped	SELECT make_geohash(reading, reading, 4) AS hash FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	29
+pg_group_format_type_ungrouped	SELECT format_type(note, -1) AS type_name FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	19
+pg_group_partkeydef_ungrouped	SELECT pg_get_partkeydef(note) AS part_key FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	25
+pg_group_get_expr_ungrouped	SELECT pg_get_expr(note, 1) AS expression FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	19
+pg_group_current_setting_column	SELECT current_setting(note) FROM sensors GROUP BY note	argument type mismatch for function `current_setting` at #1 expected: STRING constant, actual: STRING	0
+pg_group_userbyid_ungrouped	SELECT pg_catalog.pg_get_userbyid(flags) AS role FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	34
+pg_group_table_visible_ungrouped	SELECT pg_catalog.pg_table_is_visible(flags) AS visible FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	38
+pg_group_age_ungrouped	SELECT pg_catalog.age(id) AS age FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	22
+pg_group_userbyid_arity	SELECT pg_catalog.pg_get_userbyid(1, 2) AS role FROM sensors GROUP BY location	wrong number of arguments for function `pg_catalog.pg_get_userbyid`; expected: 1, provided: 2	7
+pg_group_table_visible_arity	SELECT pg_catalog.pg_table_is_visible(1, 2) AS visible FROM sensors GROUP BY location	wrong number of arguments for function `pg_catalog.pg_table_is_visible`; expected: 1, provided: 2	7
+pg_group_age_arity	SELECT pg_catalog.age(1, 2) AS age FROM sensors GROUP BY location	wrong number of arguments for function `pg_catalog.age`; expected: 1, provided: 2	7
+typeof_ungrouped	SELECT typeof(s.reading) AS value_type FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	14
+not_ungrouped	SELECT not(s.ok) AS inverse FROM sensors AS s GROUP BY s.location	column must appear in GROUP BY clause or aggregate function	11
+typeof_arity	SELECT typeof(s.note, 'x') AS value_type FROM sensors AS s GROUP BY s.note	exactly one argument expected	7
+day_of_week_ungrouped	SELECT day_of_week(s.ts) AS weekday FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	19
+week_of_year_ungrouped	SELECT week_of_year(s.ts) AS week FROM sensors AS s GROUP BY s.note	column must appear in GROUP BY clause or aggregate function	20
+between_low_ungrouped	SELECT id BETWEEN flags AND 3 AS matched FROM sensors GROUP BY id	column must appear in GROUP BY clause or aggregate function	18
+between_alias_ungrouped	SELECT s.id BETWEEN s.flags AND 3 AS matched FROM sensors AS s GROUP BY s.flags	column must appear in GROUP BY clause or aggregate function	7
+in_alias_ungrouped	SELECT s.id IN (1, 3) AS matched FROM sensors AS s GROUP BY s.flags	column must appear in GROUP BY clause or aggregate function	7
+between_exact_key_rejected	SELECT id BETWEEN 2 AND 3 AS matched FROM sensors GROUP BY id BETWEEN 2 AND 3 ORDER BY matched	literal expected	62
+between_function_key_rejected	SELECT between(id,2,3) AS inside FROM sensors GROUP BY between(id,2,3)	literal expected	55
+between_text_type	SELECT note BETWEEN 'a' AND 'z' AS matched FROM sensors GROUP BY note	there is no matching operator `between` with the argument type: STRING	12
+comparison_left_ungrouped	SELECT id > 1 AS matched FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	7
+comparison_right_ungrouped	SELECT id > flags AS matched FROM sensors GROUP BY id	column must appear in GROUP BY clause or aggregate function	12
+is_null_ungrouped	SELECT id IS NULL AS missing FROM sensors GROUP BY flags	column must appear in GROUP BY clause or aggregate function	7
+comparison_text_numeric_type	SELECT note > 1 AS matched FROM sensors GROUP BY note	inconvertible value: `alpha` [STRING -> INT]	0
+comparison_bool_numeric_type	SELECT ok > 1 AS matched FROM sensors GROUP BY ok	there is no matching operator `>` with the argument types: BOOLEAN > INT	10
+and_ungrouped	SELECT ok AND true AS both FROM sensors GROUP BY id	column must appear in GROUP BY clause or aggregate function	7
+and_int_type	SELECT ok AND flags FROM sensors GROUP BY ok, flags	expression type mismatch, expected: BOOLEAN, actual: INT	0
+or_string_type	SELECT ok OR note FROM sensors GROUP BY ok, note	expression type mismatch, expected: BOOLEAN, actual: STRING	0
+like_ungrouped_source	SELECT s.note LIKE 'a%' AS matched FROM sensors AS s GROUP BY s.id	column must appear in GROUP BY clause or aggregate function	7
+ilike_dynamic_pattern	SELECT note ILIKE location AS matched FROM sensors GROUP BY note, location	use constant or bind variable	0
+regex_dynamic_pattern	SELECT note ~ note AS matched FROM sensors GROUP BY note	not implemented: dynamic pattern would be very slow to execute	0
+regex_invalid_pattern	SELECT note ~ '[' AS matched FROM sensors GROUP BY note	Unclosed character class near index 0\n[\n^	15
+prefix_not_int_type	SELECT NOT flags AS n FROM sensors GROUP BY flags	argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: INT	0
+prefix_not_missing_qualified	SELECT NOT s.missing AS n FROM sensors AS s GROUP BY s.id	Invalid column: s.missing	11
+prefix_not_ungrouped	SELECT NOT s.ok AS n FROM sensors AS s GROUP BY s.id	column must appear in GROUP BY clause or aggregate function	11
+prefix_not_like_type	SELECT NOT (id LIKE '1%') AS n FROM sensors GROUP BY id	there is no matching operator `like` with the argument types: LONG like STRING	15
+prefix_not_ilike_type	SELECT NOT (id ILIKE '1%') AS n FROM sensors GROUP BY id	there is no matching operator `ilike` with the argument types: LONG ilike STRING	15
+prefix_not_regex_type	SELECT NOT (id ~ '1') AS n FROM sensors GROUP BY id	there is no matching operator `~` with the argument types: LONG ~ CHAR	15
+prefix_not_missing_inlist	SELECT NOT (s.missing IN (1)) AS n FROM sensors AS s GROUP BY s.id	Invalid column: s.missing	12
+prefix_not_ungrouped_pattern	SELECT NOT (note LIKE location) AS n FROM sensors GROUP BY note	column must appear in GROUP BY clause or aggregate function	22
+prefix_not_dynamic_like	SELECT NOT (note LIKE location) AS n FROM sensors GROUP BY note, location	use constant or bind variable	0
+prefix_not_dynamic_regex	SELECT NOT (note ~ note) AS n FROM sensors GROUP BY note	not implemented: dynamic pattern would be very slow to execute	0
+prefix_not_invalid_regex	SELECT NOT (note ~ '[') AS n FROM sensors GROUP BY note	Unclosed character class near index 0\n[\n^	20
+prefix_not_missing_is_null	SELECT NOT (s.missing IS NULL) AS n FROM sensors AS s GROUP BY s.id	Invalid column: s.missing	12
+prefix_not_between_type	SELECT NOT (id BETWEEN 'x' AND 'z') AS n FROM sensors GROUP BY id	there is no matching operator `between` with the argument type: LONG	15
+prefix_not_double_int_type	SELECT NOT NOT flags AS n FROM sensors GROUP BY flags	argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: INT	0
+prefix_not_is_null_ungrouped	SELECT NOT (s.note IS NULL) AS n FROM sensors AS s GROUP BY s.id	column must appear in GROUP BY clause or aggregate function	12
+prefix_not_arith_char_conversion	SELECT NOT (id + 1 > 'x') AS n FROM sensors GROUP BY id	inconvertible value: x [CHAR -> LONG]	0
+prefix_not_arith_symbol_type	SELECT NOT (id + location > 2) AS n FROM sensors GROUP BY id, location	there is no matching operator `+` with the argument types: LONG + SYMBOL	15
+prefix_not_arith_string_value	SELECT NOT (note + 1 > 2) AS n FROM sensors GROUP BY note	inconvertible value: `alpha` [STRING -> INT]	0
+prefix_not_arith_missing_qualified	SELECT NOT (s.missing + 1 > 2) AS n FROM sensors AS s GROUP BY s.id	Invalid column: s.missing	12
+prefix_not_arith_symbol_limit0	SELECT NOT (id + location > 2) AS n FROM sensors GROUP BY id, location LIMIT 0	there is no matching operator `+` with the argument types: LONG + SYMBOL	15

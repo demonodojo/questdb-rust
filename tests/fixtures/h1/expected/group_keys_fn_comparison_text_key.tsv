@@ -1,0 +1,4 @@
+location	is_madrid	not_tokyo	is_null	not_null
+NULL	false	true	true	false
+madrid	true	true	false	true
+東京	false	false	false	true

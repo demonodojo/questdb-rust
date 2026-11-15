@@ -1,0 +1,5 @@
+not(s.id between (1, 2))
+false
+false
+true
+true

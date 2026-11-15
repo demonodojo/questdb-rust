@@ -1,0 +1,5 @@
+id	flags	gt
+NULL	0	false
+-1	42	false
+1	10	false
+2	NULL	false

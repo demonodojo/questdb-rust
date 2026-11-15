@@ -1,0 +1,4 @@
+location	bool_and(ok)	bool_or(ok)	bit_and(id)	bit_or(id)	bit_xor(id)	count()
+NULL	false	false	2	2	2	1
+madrid	true	true	1	1	1	2
+東京	false	false	-1	-1	-1	1

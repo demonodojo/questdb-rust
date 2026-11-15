@@ -1,0 +1,11 @@
+{"query":"SELECT id FROM sensors WHERE note ~ '['","error":"Unclosed character class near index 0\n[\n^","position":37}
+{"query":"SELECT id FROM sensors WHERE note !~ '['","error":"Unclosed character class near index 0\n[\n^","position":38}
+{"query":"SELECT id FROM sensors WHERE ok = true AND note ~ '['","error":"Unclosed character class near index 0\n[\n^","position":51}
+{"query":"SELECT s.id FROM sensors AS s WHERE s.id = 1 OR s.note !~ '['","error":"Unclosed character class near index 0\n[\n^","position":59}
+{"query":"SELECT id FROM sensors WHERE ok = true AND (note ~ '[')","error":"Unclosed character class near index 0\n[\n^","position":52}
+{"query":"SELECT id FROM sensors WHERE id = 999 AND note ~ '['","error":"Unclosed character class near index 0\n[\n^","position":50}
+{"query":"SELECT id FROM sensors WHERE false AND note ~ '['","error":"Unclosed character class near index 0\n[\n^","position":47}
+{"query":"SELECT id FROM sensors WHERE note ~ '[' LIMIT 0","error":"Unclosed character class near index 0\n[\n^","position":37}
+{"query":"SELECT id FROM sensors WHERE note ~ 'a\\'","error":"Unescaped trailing backslash near index 2\na\\","position":39}
+{"query":"SELECT id FROM sensors WHERE note ~ 'XJ**'","error":"Dangling meta character '*' near index 3\nXJ**\n   ^","position":40}
+{"query":"SELECT id FROM sensors WHERE note ~ '(abc'","error":"Unclosed group near index 4\n(abc","position":41}

@@ -1,0 +1,12 @@
+{"query":"select id from sensors where b + code > 5 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1]],"count":1}
+{"query":"select id from sensors where code / b > 1 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null]],"count":2}
+{"query":"select id from sensors where b % 2 = 1 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[-1]],"count":2}
+{"query":"select id from sensors where score / 0.0 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where score % 0.0 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where reading / 0.0 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where reading % 0.0 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where (cast(score as float) + 1) * 2 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[null]],"count":2}
+{"query":"select id from sensors where (cast(reading as double) / 0.0) + 1 > 0 order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"select id from sensors where (cast(id as float) + null) * 2 = null order by ts","columns":[{"name":"id","type":"LONG"}],"timestamp":-1,"dataset":[[1],[2],[null],[-1]],"count":4}
+{"query":"select id from sensors where id + (ok + flags) > 0 limit 0","error":"there is no matching operator `+` with the argument types: BOOLEAN + INT","position":38}
+{"query":"select id from sensors where (id + flags) + ok > 0 limit 0","error":"there is no matching operator `+` with the argument types: LONG + BOOLEAN","position":42}

@@ -1,0 +1,3 @@
+type	SELECT NOT flags AS n FROM sensors	argument type mismatch for function `not` at #1 expected: BOOLEAN, actual: INT	11
+missing_qualified	SELECT NOT s.missing AS n FROM sensors AS s	Invalid column: s.missing	11
+like_type	SELECT NOT (id LIKE 'a%') AS n FROM sensors	there is no matching operator `like` with the argument types: LONG like STRING	15

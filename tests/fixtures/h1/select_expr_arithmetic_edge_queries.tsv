@@ -1,0 +1,4 @@
+int_max_left	SELECT id::int + 2147483647 AS value FROM sensors ORDER BY ts
+int_max_right	SELECT 2147483647 + id::int AS value FROM sensors ORDER BY ts
+long_max_left	SELECT id::long + 9223372036854775807 AS value FROM sensors ORDER BY ts
+long_max_right	SELECT 9223372036854775807 + id::long AS value FROM sensors ORDER BY ts

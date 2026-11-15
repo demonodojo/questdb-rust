@@ -1,0 +1,4 @@
+location	vwap(score, flags)	twap(score, ts)	sum(flags)	count()
+NULL	NULL	NULL	NULL	1
+madrid	1.25	1.25	10	2
+東京	-1.5	-1.5	42	1

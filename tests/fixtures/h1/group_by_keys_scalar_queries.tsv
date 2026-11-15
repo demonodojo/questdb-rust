@@ -1,0 +1,3 @@
+abs	SELECT abs(id) FROM sensors GROUP BY abs(id) ORDER BY abs(id)
+lower	SELECT lower(location) FROM sensors GROUP BY lower(location) ORDER BY lower(location)
+abs_group_column	SELECT abs(id) FROM sensors GROUP BY id ORDER BY abs(id)

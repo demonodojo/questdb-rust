@@ -1,0 +1,5 @@
+starts_with(s.note, 'a')	starts_with(s.note, '')
+true	true
+false	false
+false	true
+false	true

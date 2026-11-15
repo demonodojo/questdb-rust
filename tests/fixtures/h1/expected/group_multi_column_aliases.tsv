@@ -1,0 +1,5 @@
+sensor_id	city	count()
+2	NULL	1
+NULL	madrid	1
+1	madrid	1
+-1	東京	1

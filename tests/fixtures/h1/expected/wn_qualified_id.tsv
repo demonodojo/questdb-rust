@@ -1,0 +1,5 @@
+within_radius(s.id, s.id, s.id, s.id, s.id)
+true
+true
+false
+false

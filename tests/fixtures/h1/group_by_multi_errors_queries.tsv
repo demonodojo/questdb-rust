@@ -1,0 +1,3 @@
+ungrouped_select	SELECT flags, count() FROM sensors GROUP BY id, location	column must appear in GROUP BY clause or aggregate function	7
+order_ungrouped	SELECT id, location, count() FROM sensors GROUP BY id, location ORDER BY flags	ORDER BY expressions must appear in select list. Invalid column: flags	73
+unknown_order	SELECT id, location, count() FROM sensors GROUP BY id, location ORDER BY missing	Invalid column: missing	73

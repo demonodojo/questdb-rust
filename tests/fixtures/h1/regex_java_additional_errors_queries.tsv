@@ -1,0 +1,2 @@
+capital_Z_in_class	SELECT note FROM sensors WHERE note ~ '[\Z]' ORDER BY id
+lowercase_z_in_class	SELECT note FROM sensors WHERE note ~ '[\z]' ORDER BY id

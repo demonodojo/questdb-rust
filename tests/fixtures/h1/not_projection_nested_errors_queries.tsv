@@ -1,0 +1,3 @@
+in_type	SELECT id, NOT (id IN ('x')) AS n FROM sensors ORDER BY id	cannot compare LONG with type CHAR	23
+between_type	SELECT id, NOT (id BETWEEN 'x' AND 1) AS n FROM sensors	there is no matching operator `between` with the argument type: LONG	19
+missing_qualified	SELECT id, NOT (s.missing IS NULL) AS n FROM sensors AS s	Invalid column: s.missing	16

@@ -1,0 +1,6 @@
+{"query":"SELECT ok + id FROM sensors LIMIT 0","error":"there is no matching operator `+` with the argument types: BOOLEAN + LONG","position":10}
+{"query":"SELECT id + ok FROM sensors LIMIT 0","error":"there is no matching operator `+` with the argument types: LONG + BOOLEAN","position":10}
+{"query":"SELECT missing + 1 FROM sensors LIMIT 0","error":"Invalid column: missing","position":7}
+{"query":"SELECT id + missing FROM sensors LIMIT 0","error":"Invalid column: missing","position":12}
+{"query":"SELECT note + id FROM sensors LIMIT 1","error":"inconvertible value: `alpha` [STRING -> LONG]","position":0}
+{"query":"SELECT ok * flags FROM sensors LIMIT 0","error":"there is no matching operator `*` with the argument types: BOOLEAN * INT","position":10}

@@ -18,7 +18,7 @@ Comprueba `git -C reference/questdb rev-parse HEAD` contra el commit de `docs/up
 Inspecciona `tools/run_differential.sh` antes de describir su cobertura:
 
 - `captured-oracle` compara el TSV del port con archivos `expected/*.tsv` capturados de QuestDB. Es evidencia reproducible sin servidor vivo.
-- La sección `live-reference` actual compara **solo el número de filas** por `/exec`. No acredita igualdad de valores, tipos ni encabezados. Si el servidor no está disponible el script lo informa, pero puede terminar con código 0 por la parte capturada.
+- El bloque inicial `live-reference` compara **solo el número de filas** para su lista general de consultas; no acredita igualdad de valores, tipos ni encabezados. Más adelante el runner tiene manifiestos específicos que comparan respuestas completas (`columns`, `dataset`, `count`) y errores (`error`, `position`). Si el servidor no está disponible, esos cotejos vivos no se ejecutan aunque pase la parte capturada.
 - Para verificar una función nueva consulta `/exec` con la misma SQL y conserva la respuesta original: `columns` (nombres y tipos), `dataset` (valores), `count` y, si falla, el error con su posición. Compara esos elementos explícitamente; no basta la cuenta de filas.
 
 Para comprobar lo ya capturado sin escribir temporales fuera del repositorio:
@@ -28,7 +28,7 @@ mkdir -p target/oracle-tmp
 TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh
 ```
 
-Si hace falta arrancar la referencia, revisa `tools/run_reference.sh` y usa una raíz aislada bajo `reference/runtime/` con `QDB_REFERENCE_ROOT`. El endpoint predeterminado del runner es `http://127.0.0.1:19011/exec`; puede cambiarse con `QDB_HTTP`. Comprueba proceso y dataset antes de cargar SQL. Lee `tools/generate_fixtures.sh` antes de regenerar: modifica fixtures y su comportamiento no debe suponerse genérico para todos los hitos.
+Si hace falta arrancar la referencia, revisa `tools/run_reference.sh` y usa una raíz aislada bajo `reference/runtime/` con `QDB_REFERENCE_ROOT`. El endpoint predeterminado del runner es `http://127.0.0.1:19011/exec`; puede cambiarse con `QDB_HTTP`. Comprueba proceso y dataset antes de cargar SQL. Configura `TMPDIR="$PWD/target/oracle-tmp"`; las temporales del runner quedan bajo `target/oracle-tmp/`. Lee `tools/generate_fixtures.sh` antes de regenerar: modifica fixtures y su comportamiento no debe suponerse genérico para todos los hitos.
 
 ## Capturar y resolver diferencias
 

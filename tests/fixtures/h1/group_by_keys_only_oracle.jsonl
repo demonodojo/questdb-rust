@@ -1,0 +1,8 @@
+{"query":"SELECT location FROM sensors GROUP BY location ORDER BY location","columns":[{"name":"location","type":"SYMBOL"}],"timestamp":-1,"dataset":[[null],["madrid"],["東京"]],"count":3}
+{"query":"SELECT location, ok FROM sensors GROUP BY location, ok ORDER BY location, ok","columns":[{"name":"location","type":"SYMBOL"},{"name":"ok","type":"BOOLEAN"}],"timestamp":-1,"dataset":[[null,false],["madrid",true],["東京",false]],"count":3}
+{"query":"SELECT location FROM sensors WHERE id > 0 GROUP BY location ORDER BY location","columns":[{"name":"location","type":"SYMBOL"}],"timestamp":-1,"dataset":[[null],["madrid"]],"count":2}
+{"query":"SELECT location FROM sensors GROUP BY location, ok ORDER BY location","columns":[{"name":"location","type":"SYMBOL"}],"timestamp":-1,"dataset":[[null],["madrid"],["東京"]],"count":3}
+{"query":"SELECT s.location AS city FROM sensors s GROUP BY s.location ORDER BY city","columns":[{"name":"city","type":"SYMBOL"}],"timestamp":-1,"dataset":[[null],["madrid"],["東京"]],"count":3}
+{"query":"SELECT location FROM sensors GROUP BY location ORDER BY location DESC LIMIT 2","columns":[{"name":"location","type":"SYMBOL"}],"timestamp":-1,"dataset":[["東京"],["madrid"]],"count":2}
+{"query":"SELECT id + 1 FROM sensors GROUP BY id + 1 ORDER BY id + 1","columns":[{"name":"id + 1","type":"LONG"}],"timestamp":-1,"dataset":[[null],[0],[2],[3]],"count":4}
+{"query":"SELECT id + 1, location FROM sensors GROUP BY id + 1, location ORDER BY id + 1, location","columns":[{"name":"id + 1","type":"LONG"},{"name":"location","type":"SYMBOL"}],"timestamp":-1,"dataset":[[null,"madrid"],[0,"東京"],[2,"madrid"],[3,null]],"count":4}

@@ -1,0 +1,2 @@
+regexp_replace('zzz', '(a)', '$2')
+zzz

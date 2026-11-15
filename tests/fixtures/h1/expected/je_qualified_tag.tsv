@@ -1,0 +1,5 @@
+json_extract(s.tag, '$')
+NULL
+NULL
+NULL
+0123456789ABCDEF
