@@ -1,0 +1,4 @@
+{"query":"SELECT id FROM sensors WHERE note ~ '(?q)\\d'","error":"Unknown inline modifier near index 2\n(?q)\\d\n  ^","position":39}
+{"query":"SELECT id FROM sensors WHERE note ~ '\\w{2,1}'","error":"Illegal repetition range near index 6\n\\w{2,1}\n      ^","position":43}
+{"query":"SELECT id FROM sensors WHERE note ~ '[\\d'","error":"Unclosed character class near index 2\n[\\d\n  ^","position":39}
+{"query":"SELECT id FROM sensors WHERE note ~ '(?U\\d'","error":"Unknown inline modifier near index 3\n(?U\\d\n   ^","position":40}

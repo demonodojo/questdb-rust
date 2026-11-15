@@ -1,0 +1,28 @@
+{"query":"SELECT regexp_replace('α!a_3!', '\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["α!|a_3|!"]],"count":1}
+{"query":"SELECT regexp_replace('α!a_3!', '\\B', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|α|!a|_|3!|"]],"count":1}
+{"query":"SELECT regexp_replace('α!a_3!', '(?U)\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|α|!|a_3|!"]],"count":1}
+{"query":"SELECT regexp_replace('α!a_3!', '(?U)\\B', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["α!a|_|3!|"]],"count":1}
+{"query":"SELECT regexp_replace('áb', '\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|áb|"]],"count":1}
+{"query":"SELECT regexp_replace('áb', '\\B', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["a|́|b"]],"count":1}
+{"query":"SELECT regexp_replace('́a', '\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["́|a|"]],"count":1}
+{"query":"SELECT regexp_replace('á̈b', '(?U)\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|á̈b|"]],"count":1}
+{"query":"SELECT regexp_replace('a‌b', '\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|a|‌|b|"]],"count":1}
+{"query":"SELECT regexp_replace('a‌b', '(?U)\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|a‌b|"]],"count":1}
+{"query":"SELECT regexp_replace('٣a', '\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["٣|a|"]],"count":1}
+{"query":"SELECT regexp_replace('٣a', '(?U)\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|٣a|"]],"count":1}
+{"query":"SELECT regexp_replace('‿a', '(?U)\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|‿a|"]],"count":1}
+{"query":"SELECT regexp_replace('αa', '(?U)\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|αa|"]],"count":1}
+{"query":"SELECT regexp_replace('α!a', '(?i)\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["α!|a|"]],"count":1}
+{"query":"SELECT regexp_replace('α!a', '(?iu)\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["α!|a|"]],"count":1}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '\\bβ' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[],"count":0}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '(?U)\\bβ' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[-1,"βeta"]],"count":1}
+{"query":"SELECT id, location FROM sensors WHERE location ~ '(?U)\\b東' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"location","type":"SYMBOL"}],"timestamp":-1,"dataset":[[-1,"東京"]],"count":1}
+{"query":"SELECT id, note ~ '(?U)\\bβ' AS has_beta FROM sensors ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"has_beta","type":"BOOLEAN"}],"timestamp":-1,"dataset":[[null,false],[-1,true],[1,false],[2,false]],"count":4}
+{"query":"SELECT regexp_replace('K', '(?i)\\bK', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["K"]],"count":1}
+{"query":"SELECT regexp_replace('K!kK', '(?i)\\bK\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|!|K"]],"count":1}
+{"query":"SELECT regexp_replace('K', '(?i)\\b[K]\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["K"]],"count":1}
+{"query":"SELECT regexp_replace('A', '(?i)\\b[Ka]\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|"]],"count":1}
+{"query":"SELECT regexp_replace('K', '(?i)\\b[\\x{212A}]\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["K"]],"count":1}
+{"query":"SELECT regexp_replace('A', '(?i)\\b[\\x{212A}\\x{61}]\\b', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|"]],"count":1}
+{"query":"SELECT regexp_replace('K', '(?i)\\B[K]', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["K"]],"count":1}
+{"query":"SELECT regexp_replace('α', '(?i)\\B[\\p{L}]', '|') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["|"]],"count":1}

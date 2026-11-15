@@ -1,0 +1,4 @@
+{"query":"SELECT id FROM sensors WHERE note ~ '\\p{InGreek_And_Coptic}'","error":"Unknown character property name {InGreek_And_Coptic} near index 21\n\\p{InGreek_And_Coptic}\n                     ^","position":58}
+{"query":"SELECT regexp_replace('AB', '\\P{InASCII}', 'X') AS result FROM sensors LIMIT 1","error":"Unknown character property name {InASCII} near index 10\n\\P{InASCII}\n          ^","position":39}
+{"query":"SELECT id FROM sensors WHERE note ~ '[\\p{InArabic_Ext_A}]'","error":"Unknown character property name {InArabic_Ext_A} near index 18\n[\\p{InArabic_Ext_A}]\n                  ^","position":55}
+{"query":"SELECT id FROM sensors WHERE note ~ '\\p{InBeria_Erfe}'","error":"Unknown character property name {InBeria_Erfe} near index 15\n\\p{InBeria_Erfe}\n               ^","position":52}

@@ -1,0 +1,16 @@
+{"query":"SELECT id, note FROM sensors WHERE note ~ '^\\x61' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[1,"alpha"]],"count":1}
+{"query":"SELECT regexp_replace('\u0007', '\\a', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('\u001b', '\\e', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('\u0001', '\\cA', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('!', '\\ca', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '^\\x{03b2}' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[-1,"βeta"]],"count":1}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '^\\u03b2' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[-1,"βeta"]],"count":1}
+{"query":"SELECT regexp_replace('AβΩ', '\\x{03b2}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["AXΩ"]],"count":1}
+{"query":"SELECT regexp_replace('ABA', '\\0101', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XBX"]],"count":1}
+{"query":"SELECT regexp_replace('AΩ', '\\N{LATIN CAPITAL LETTER A}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XΩ"]],"count":1}
+{"query":"SELECT regexp_replace('\b', '\\N{BACKSPACE}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('AΩB', '[\\N{LATIN CAPITAL LETTER A}\\N{GREEK CAPITAL LETTER OMEGA}]', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XXB"]],"count":1}
+{"query":"SELECT regexp_replace('\\x01A', '\\cA', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["\\x01A"]],"count":1}
+{"query":"SELECT regexp_replace('A', '\\u0041', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('?7', '\\0777', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('\\N{NOT A REAL NAME}', '\\Q\\N{NOT A REAL NAME}\\E', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}

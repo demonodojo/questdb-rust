@@ -1,0 +1,16 @@
+bell_filter	SELECT id, note FROM sensors WHERE note ~ '^\x61' ORDER BY id
+bell_projection	SELECT regexp_replace('', '\a', 'X') AS result FROM sensors LIMIT 1
+escape_projection	SELECT regexp_replace('', '\e', 'X') AS result FROM sensors LIMIT 1
+control_projection	SELECT regexp_replace('', '\cA', 'X') AS result FROM sensors LIMIT 1
+control_lowercase	SELECT regexp_replace('!', '\ca', 'X') AS result FROM sensors LIMIT 1
+hex_brace_filter	SELECT id, note FROM sensors WHERE note ~ '^\x{03b2}' ORDER BY id
+unicode_filter	SELECT id, note FROM sensors WHERE note ~ '^\u03b2' ORDER BY id
+hex_brace_replace	SELECT regexp_replace('AβΩ', '\x{03b2}', 'X') AS result FROM sensors LIMIT 1
+octal_replace	SELECT regexp_replace('ABA', '\0101', 'X') AS result FROM sensors LIMIT 1
+named_replace	SELECT regexp_replace('AΩ', '\N{LATIN CAPITAL LETTER A}', 'X') AS result FROM sensors LIMIT 1
+named_alias_projection	SELECT regexp_replace('', '\N{BACKSPACE}', 'X') AS result FROM sensors LIMIT 1
+class_named_replace	SELECT regexp_replace('AΩB', '[\N{LATIN CAPITAL LETTER A}\N{GREEK CAPITAL LETTER OMEGA}]', 'X') AS result FROM sensors LIMIT 1
+control_replace	SELECT regexp_replace('\x01A', '\cA', 'X') AS result FROM sensors LIMIT 1
+unicode_replace	SELECT regexp_replace('A', '\u0041', 'X') AS result FROM sensors LIMIT 1
+octal_length_limit	SELECT regexp_replace('?7', '\0777', 'X') AS result FROM sensors LIMIT 1
+quoted_unknown_name	SELECT regexp_replace('\N{NOT A REAL NAME}', '\Q\N{NOT A REAL NAME}\E', 'X') AS result FROM sensors LIMIT 1

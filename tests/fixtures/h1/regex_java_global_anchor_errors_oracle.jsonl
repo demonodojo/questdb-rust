@@ -1,0 +1,1 @@
+{"query":"SELECT regexp_replace('G', '[\\G]', 'X') AS result FROM sensors LIMIT 1","error":"Illegal/unsupported escape sequence near index 2\n[\\G]\n  ^","position":30}

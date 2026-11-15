@@ -1,0 +1,16 @@
+{"query":"SELECT regexp_replace('Aあ漢', '\\p{InHiragana}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["AX漢"]],"count":1}
+{"query":"SELECT regexp_replace('Aあ漢', '\\P{InHiragana}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XあX"]],"count":1}
+{"query":"SELECT regexp_replace('AΩЖ', '\\p{InGreek}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["AXЖ"]],"count":1}
+{"query":"SELECT regexp_replace('AéΩ', '\\p{InLatin-1 Supplement}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["AXΩ"]],"count":1}
+{"query":"SELECT regexp_replace('Aあ漢', '\\p{InCJK_Unified_Ideographs}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["AあX"]],"count":1}
+{"query":"SELECT regexp_replace('A𮯰B', '\\p{InCJK_Unified_Ideographs_Extension_I}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["AXB"]],"count":1}
+{"query":"SELECT regexp_replace('A􀀀B', '\\p{InSupplementary_Private_Use_Area_B}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["AXB"]],"count":1}
+{"query":"SELECT regexp_replace('Aあ漢', '[\\p{InHiragana}]', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["AX漢"]],"count":1}
+{"query":"SELECT regexp_replace('Aあ漢', '[\\P{InHiragana}]', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XあX"]],"count":1}
+{"query":"SELECT note ~ '\\p{InHiragana}+' AS matches FROM sensors ORDER BY id","columns":[{"name":"matches","type":"BOOLEAN"}],"timestamp":-1,"dataset":[[false],[false],[false],[false]],"count":4}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '[\\p{InGreek}]+' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[-1,"βeta"]],"count":1}
+{"query":"SELECT note ~ '\\P{InCyrillic}+' AS matches FROM sensors ORDER BY id","columns":[{"name":"matches","type":"BOOLEAN"}],"timestamp":-1,"dataset":[[false],[true],[true],[false]],"count":4}
+{"query":"SELECT regexp_replace('A😀B', '\\p{InHigh_Surrogates}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["A😀B"]],"count":1}
+{"query":"SELECT regexp_replace('A😀B', '\\P{InHigh_Surrogates}', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XXX"]],"count":1}
+{"query":"SELECT regexp_replace('A😀B', '[\\p{InHigh_Surrogates}]', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["A😀B"]],"count":1}
+{"query":"SELECT regexp_replace('A😀B', '[\\P{InLow_Surrogates}]', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XXX"]],"count":1}

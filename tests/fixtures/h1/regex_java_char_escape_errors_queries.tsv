@@ -1,0 +1,6 @@
+bad_control	SELECT id FROM sensors WHERE note ~ '\c'	Illegal control escape sequence near index 1\n\c\n ^	38
+bad_hex	SELECT id FROM sensors WHERE note ~ '\xZ1'	Illegal hexadecimal escape sequence near index 2\n\xZ1\n  ^	39
+bad_unicode	SELECT id FROM sensors WHERE note ~ '\u12'	Illegal Unicode escape sequence near index 4\n\u12	41
+unknown_name	SELECT id FROM sensors WHERE note ~ '\N{NO SUCH NAME}'	Unknown character name [NO SUCH NAME] near index 15\n\N{NO SUCH NAME}\n               ^	52
+unclosed_name	SELECT id FROM sensors WHERE note ~ '\N{NO NAME'	Unclosed character name escape sequence near index 9\n\N{NO NAME\n         ^	46
+bad_octal	SELECT id FROM sensors WHERE note ~ '\08'	Illegal octal escape sequence near index 2\n\08\n  ^	39

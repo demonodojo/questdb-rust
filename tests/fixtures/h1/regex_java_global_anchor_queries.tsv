@@ -1,0 +1,6 @@
+global_g_contiguous	SELECT regexp_replace('abc', '\G.', 'X') AS result FROM sensors LIMIT 1
+global_g_start_fail	SELECT regexp_replace('xabc', '\Ga', 'X') AS result FROM sensors LIMIT 1
+global_g_zero_width	SELECT regexp_replace('abc', '\G(?=.)', 'X') AS result FROM sensors LIMIT 1
+global_g_unicode	SELECT regexp_replace('😀ab', '\G.', 'X') AS result FROM sensors LIMIT 1
+global_g_filter	SELECT id FROM sensors WHERE note ~ '\G.*' ORDER BY id
+global_g_alternative	SELECT regexp_replace('xabc', '\Gabc|bc', 'X') AS result FROM sensors LIMIT 1

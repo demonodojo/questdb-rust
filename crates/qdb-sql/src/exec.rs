@@ -871,9 +871,26 @@ enum UtcZone {
 enum CompiledRegex {
     Linear(regex::Regex),
     Backtracking(fancy_regex::Regex),
+    GraphemeSimple(GraphemeRegex),
+    GraphemeDynamic {
+        source_pattern: String,
+        template: Box<CompiledRegex>,
+    },
+    GlobalAnchor {
+        source_pattern: String,
+        initial: Box<CompiledRegex>,
+    },
 }
 
-type RegexCaptureSpans = Vec<Vec<Option<(usize, usize)>>>;
+#[derive(Clone, Copy)]
+enum GraphemeRegex {
+    Each,
+    OneOrMore,
+    Boundary,
+}
+
+type RegexCaptureSpan = Vec<Option<(usize, usize)>>;
+type RegexCaptureSpans = Vec<RegexCaptureSpan>;
 
 impl CompiledRegex {
     fn is_match(&self, text: &str) -> Result<bool, Error> {
@@ -882,6 +899,14 @@ impl CompiledRegex {
             Self::Backtracking(regex) => regex
                 .is_match(text)
                 .map_err(|error| Error::new(error.to_string())),
+            Self::GraphemeSimple(regex) => Ok(match regex {
+                GraphemeRegex::Each | GraphemeRegex::OneOrMore => !text.is_empty(),
+                GraphemeRegex::Boundary => true,
+            }),
+            Self::GraphemeDynamic { source_pattern, .. } => {
+                compile_materialized_java_grapheme_regex(source_pattern, text, 0)?.is_match(text)
+            }
+            Self::GlobalAnchor { initial, .. } => initial.is_match(text),
         }
     }
 
@@ -899,6 +924,9 @@ impl CompiledRegex {
                 .capture_names()
                 .map(|name| name.map(str::to_string))
                 .collect(),
+            Self::GraphemeSimple(_) => vec![None],
+            Self::GraphemeDynamic { template, .. } => template.capture_names(),
+            Self::GlobalAnchor { initial, .. } => initial.capture_names(),
         }
     }
 
@@ -932,10 +960,101 @@ impl CompiledRegex {
                         .map_err(|error| Error::new(error.to_string()))
                 })
                 .collect(),
+            Self::GraphemeSimple(regex) => {
+                use unicode_segmentation::UnicodeSegmentation;
+                Ok(match regex {
+                    GraphemeRegex::Each => text
+                        .grapheme_indices(true)
+                        .map(|(start, grapheme)| vec![Some((start, start + grapheme.len()))])
+                        .collect(),
+                    GraphemeRegex::OneOrMore => (!text.is_empty())
+                        .then(|| vec![Some((0, text.len()))])
+                        .into_iter()
+                        .collect(),
+                    GraphemeRegex::Boundary => {
+                        let mut boundaries = text
+                            .grapheme_indices(true)
+                            .map(|(start, _)| vec![Some((start, start))])
+                            .collect::<Vec<_>>();
+                        boundaries.push(vec![Some((text.len(), text.len()))]);
+                        boundaries
+                    }
+                })
+            }
+            Self::GraphemeDynamic { source_pattern, .. } => {
+                compile_materialized_java_grapheme_regex(source_pattern, text, 0)?
+                    .capture_spans(text)
+            }
+            Self::GlobalAnchor { initial, .. } => initial.capture_spans(text),
+        }
+    }
+
+    fn capture_spans_at(
+        &self,
+        text: &str,
+        position: usize,
+    ) -> Result<Option<RegexCaptureSpan>, Error> {
+        match self {
+            Self::Linear(regex) => Ok(regex.captures_at(text, position).map(|captures| {
+                (0..captures.len())
+                    .map(|index| {
+                        captures
+                            .get(index)
+                            .map(|matched| (matched.start(), matched.end()))
+                    })
+                    .collect()
+            })),
+            Self::Backtracking(regex) => regex
+                .captures_from_pos(text, position)
+                .map(|captures| {
+                    captures.map(|captures| {
+                        (0..captures.len())
+                            .map(|index| {
+                                captures
+                                    .get(index)
+                                    .map(|matched| (matched.start(), matched.end()))
+                            })
+                            .collect()
+                    })
+                })
+                .map_err(|error| Error::new(error.to_string())),
+            Self::GraphemeSimple(_) => Ok(self
+                .capture_spans(text)?
+                .into_iter()
+                .find(|captures| captures[0].is_some_and(|(start, _)| start >= position))),
+            Self::GraphemeDynamic { source_pattern, .. } => {
+                compile_materialized_java_grapheme_regex(source_pattern, text, 0)?
+                    .capture_spans_at(text, position)
+            }
+            Self::GlobalAnchor { initial, .. } => initial.capture_spans_at(text, position),
         }
     }
 
     fn replace_all_java(&self, text: &str, replacement: &str) -> Result<String, String> {
+        if let Self::GlobalAnchor {
+            source_pattern,
+            initial,
+        } = self
+        {
+            return replace_all_java_global_anchor(
+                text,
+                replacement,
+                source_pattern,
+                &initial.capture_names(),
+            );
+        }
+        if let Self::GraphemeDynamic { source_pattern, .. } = self {
+            let compiled = compile_materialized_java_grapheme_regex(source_pattern, text, 0)
+                .map_err(|error| error.message)?;
+            if source_pattern.starts_with(r"\b{g}") && !source_pattern.contains(r"\G") {
+                return replace_all_java_after_grapheme_boundary_prefix(
+                    &compiled,
+                    text,
+                    replacement,
+                );
+            }
+            return compiled.replace_all_java(text, replacement);
+        }
         let names = self.capture_names();
         let matches = self.capture_spans(text).map_err(|error| error.message)?;
         let mut result = String::with_capacity(text.len());
@@ -951,6 +1070,84 @@ impl CompiledRegex {
         result.push_str(&text[copied_until..]);
         Ok(result)
     }
+}
+
+fn replace_all_java_after_grapheme_boundary_prefix(
+    regex: &CompiledRegex,
+    text: &str,
+    replacement: &str,
+) -> Result<String, String> {
+    let names = regex.capture_names();
+    let mut result = String::with_capacity(text.len());
+    let mut copied_until = 0;
+    let mut search_from = 0;
+
+    while let Some(captures) = regex
+        .capture_spans_at(text, search_from)
+        .map_err(|error| error.message)?
+    {
+        let Some((start, end)) = captures.first().copied().flatten() else {
+            break;
+        };
+        result.push_str(&text[copied_until..start]);
+        append_java_replacement(&mut result, text, &captures, &names, replacement)?;
+        copied_until = end;
+
+        let Some(next) = text.get(end..).and_then(|tail| tail.chars().next()) else {
+            break;
+        };
+        search_from = end + next.len_utf8();
+    }
+
+    result.push_str(&text[copied_until..]);
+    Ok(result)
+}
+
+fn replace_all_java_global_anchor(
+    text: &str,
+    replacement: &str,
+    pattern: &str,
+    names: &[Option<String>],
+) -> Result<String, String> {
+    let mut result = String::with_capacity(text.len());
+    let mut copied_until = 0;
+    let mut search_from = 0;
+    let mut previous_match_end = 0;
+
+    loop {
+        let global_anchor_position = text[..previous_match_end].chars().count();
+        let (translated, _) =
+            translate_java_regex_escapes(pattern, global_anchor_position, Some(text));
+        let regex =
+            compile_translated_regex(pattern, &translated).map_err(|error| error.message)?;
+        let Some(captures) = regex
+            .capture_spans_at(text, search_from)
+            .map_err(|error| error.message)?
+        else {
+            break;
+        };
+        let Some((start, end)) = captures.first().copied().flatten() else {
+            break;
+        };
+
+        result.push_str(&text[copied_until..start]);
+        append_java_replacement(&mut result, text, &captures, names, replacement)?;
+        copied_until = end;
+        previous_match_end = end;
+
+        if start == end {
+            if end == text.len() {
+                break;
+            }
+            let next_char_bytes = text[end..].chars().next().map(char::len_utf8).unwrap_or(0);
+            search_from = end + next_char_bytes;
+        } else {
+            search_from = end;
+        }
+    }
+
+    result.push_str(&text[copied_until..]);
+    Ok(result)
 }
 
 fn append_java_replacement(
@@ -10336,42 +10533,329 @@ fn compile_regex(pattern: &str) -> Result<CompiledRegex, Error> {
     if let Some(error) = java_anchor_in_character_class_error(pattern) {
         return Err(error);
     }
-    let translated = translate_java_regex_escapes(pattern);
-    match regex::Regex::new(&translated) {
-        Ok(regex) => Ok(CompiledRegex::Linear(regex)),
-        Err(error) => match fancy_regex::RegexBuilder::new(&translated)
-            .backtrack_limit(usize::MAX)
-            .build()
-        {
-            Ok(regex) => Ok(CompiledRegex::Backtracking(regex)),
-            Err(_) => Err(legacy_regex_compile_error(pattern, error)),
-        },
+    if let Some(error) = java_unknown_block_property_error(pattern) {
+        return Err(error);
+    }
+    if let Some(error) = java_character_escape_error(pattern) {
+        return Err(error);
+    }
+    if let Some(error) = java_inline_flag_error(pattern) {
+        return Err(error);
+    }
+    if let Some(error) = java_invalid_repetition_range_error(pattern) {
+        return Err(error);
+    }
+    match pattern {
+        r"\X" => return Ok(CompiledRegex::GraphemeSimple(GraphemeRegex::Each)),
+        r"\X+" => return Ok(CompiledRegex::GraphemeSimple(GraphemeRegex::OneOrMore)),
+        r"\b{g}" => return Ok(CompiledRegex::GraphemeSimple(GraphemeRegex::Boundary)),
+        _ => {}
+    }
+    if pattern.contains(r"\X") || pattern.contains(r"\b{g}") {
+        let (translated, uses_global_anchor) = translate_java_regex_escapes(pattern, 0, Some("a"));
+        let compiled = compile_translated_regex(pattern, &translated)?;
+        let template = if uses_global_anchor {
+            CompiledRegex::GlobalAnchor {
+                source_pattern: pattern.to_owned(),
+                initial: Box::new(compiled),
+            }
+        } else {
+            compiled
+        };
+        return Ok(CompiledRegex::GraphemeDynamic {
+            source_pattern: pattern.to_owned(),
+            template: Box::new(template),
+        });
+    }
+    let (translated, uses_global_anchor) = translate_java_regex_escapes(pattern, 0, None);
+    let compiled = compile_translated_regex(pattern, &translated)?;
+    if uses_global_anchor {
+        Ok(CompiledRegex::GlobalAnchor {
+            source_pattern: pattern.to_owned(),
+            initial: Box::new(compiled),
+        })
+    } else {
+        Ok(compiled)
     }
 }
 
-fn translate_java_regex_escapes(pattern: &str) -> String {
+fn compile_materialized_java_grapheme_regex(
+    pattern: &str,
+    text: &str,
+    global_anchor_position: usize,
+) -> Result<CompiledRegex, Error> {
+    let (translated, uses_global_anchor) =
+        translate_java_regex_escapes(pattern, global_anchor_position, Some(text));
+    let compiled = compile_translated_regex(pattern, &translated)?;
+    Ok(if uses_global_anchor {
+        CompiledRegex::GlobalAnchor {
+            source_pattern: pattern.to_owned(),
+            initial: Box::new(compiled),
+        }
+    } else {
+        compiled
+    })
+}
+
+fn java_grapheme_atom_occurrences_are_aligned(
+    text: &str,
+    graphemes: &[&str],
+    ascii_case_insensitive: bool,
+) -> bool {
+    use unicode_segmentation::UnicodeSegmentation;
+
+    if graphemes.len() > 64 || text.chars().count() > 4096 {
+        return false;
+    }
+    let boundaries = text
+        .grapheme_indices(true)
+        .map(|(start, _)| start)
+        .chain(std::iter::once(text.len()))
+        .collect::<Vec<_>>();
+    text.char_indices().all(|(start, _)| {
+        graphemes.iter().all(|grapheme| {
+            let mut end = start;
+            for expected in grapheme.chars() {
+                let Some(actual) = text.get(end..).and_then(|tail| tail.chars().next()) else {
+                    return true;
+                };
+                if actual != expected
+                    && !(ascii_case_insensitive && actual.eq_ignore_ascii_case(&expected))
+                {
+                    return true;
+                }
+                end += actual.len_utf8();
+            }
+            boundaries.binary_search(&start).is_ok() && boundaries.binary_search(&end).is_ok()
+        })
+    })
+}
+
+fn java_grapheme_atom(text: &str, modes: JavaRegexModes) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+
+    let mut graphemes = text.graphemes(true).collect::<Vec<_>>();
+    graphemes.sort_unstable_by(|left, right| {
+        right
+            .chars()
+            .count()
+            .cmp(&left.chars().count())
+            .then_with(|| left.cmp(right))
+    });
+    let grapheme_count = graphemes.len();
+    graphemes.dedup();
+    if graphemes.is_empty() {
+        return r"[\s\S]".to_owned();
+    }
+
+    let each_scalar_is_a_grapheme = graphemes
+        .iter()
+        .all(|grapheme| grapheme.chars().count() == 1)
+        && grapheme_count == text.chars().count();
+    let every_occurrence_is_a_grapheme = (!modes.case_insensitive
+        || java_ascii_case_insensitive(modes))
+        && java_grapheme_atom_occurrences_are_aligned(
+            text,
+            &graphemes,
+            java_ascii_case_insensitive(modes),
+        );
+    let mut alternatives = String::from("(?:");
+    for (index, grapheme) in graphemes.into_iter().enumerate() {
+        if index != 0 {
+            alternatives.push('|');
+        }
+        for ch in grapheme.chars() {
+            push_escaped_regex_char(&mut alternatives, ch);
+        }
+    }
+    alternatives.push(')');
+    if each_scalar_is_a_grapheme || every_occurrence_is_a_grapheme {
+        return alternatives;
+    }
+    let boundary = java_grapheme_boundary_assertion(text);
+    format!("(?:(?:{boundary}){alternatives}(?={boundary}))")
+}
+
+fn java_grapheme_boundary_is_redundant(chars: &[char], index: usize) -> bool {
+    if index == 0 && java_grapheme_atom_starts_at(chars, index + 5) {
+        return true;
+    }
+
+    if index > 0 && chars[index - 1] == '^' && !is_regex_escaped(chars, index - 1) {
+        return true;
+    }
+
+    let mut atom_end = index;
+    match chars.get(atom_end.wrapping_sub(1)) {
+        Some('+' | '*' | '?') => atom_end -= 1,
+        Some('}') => {
+            let Some(open) = chars[..atom_end - 1].iter().rposition(|ch| *ch == '{') else {
+                return false;
+            };
+            if !chars[open + 1..atom_end - 1]
+                .iter()
+                .all(|ch| ch.is_ascii_digit() || *ch == ',')
+            {
+                return false;
+            }
+            atom_end = open;
+        }
+        _ => {}
+    }
+    java_grapheme_atom_ends_at(chars, atom_end)
+}
+
+fn java_grapheme_atom_starts_at(chars: &[char], start: usize) -> bool {
+    chars.get(start..start + 2) == Some(&['\\', 'X'])
+        || chars.get(start..start + 6) == Some(&['(', '?', ':', '\\', 'X', ')'])
+}
+
+fn java_grapheme_atom_ends_at(chars: &[char], end: usize) -> bool {
+    (end >= 2 && chars[end - 2..end] == ['\\', 'X'])
+        || (end >= 6 && chars[end - 6..end] == ['(', '?', ':', '\\', 'X', ')'])
+}
+
+fn java_grapheme_boundary_assertion(text: &str) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+
+    let character_count = text.chars().count();
+    if text.graphemes(true).count() == character_count {
+        return r"(?:\A|(?<=.))".to_owned();
+    }
+
+    let mut result = String::from("(?:\\A");
+    for (start, _) in text.grapheme_indices(true).skip(1) {
+        let position = text[..start].chars().count();
+        result.push_str(&format!(r"|(?<=\A[\s\S]{{{position}}})"));
+    }
+    let position = text.chars().count();
+    if position != 0 {
+        result.push_str(&format!(r"|(?<=\A[\s\S]{{{position}}})"));
+    }
+    result.push(')');
+    result
+}
+
+fn compile_translated_regex(pattern: &str, translated: &str) -> Result<CompiledRegex, Error> {
+    match regex::Regex::new(translated) {
+        Ok(regex) => Ok(CompiledRegex::Linear(regex)),
+        Err(error) => {
+            let regex = fancy_regex::RegexBuilder::new(translated)
+                .backtrack_limit(usize::MAX)
+                .build()
+                .or_else(|_| {
+                    // fancy-regex supports the lookarounds used for Java boundaries,
+                    // but cannot parse a scoped change to Rust's Unicode mode. The
+                    // Java character classes have already been expanded explicitly.
+                    let fallback = translated.replace("-u", "");
+                    fancy_regex::RegexBuilder::new(&fallback)
+                        .backtrack_limit(usize::MAX)
+                        .build()
+                });
+            match regex {
+                Ok(regex) => Ok(CompiledRegex::Backtracking(regex)),
+                Err(_) => Err(legacy_regex_compile_error(pattern, error)),
+            }
+        }
+    }
+}
+
+fn translate_java_regex_escapes(
+    pattern: &str,
+    global_anchor_position: usize,
+    grapheme_text: Option<&str>,
+) -> (String, bool) {
     const HORIZONTAL: &str =
         r"\x{9}-\x{d}\x{20}\x{85}\x{a0}\x{1680}\x{180e}\x{2000}-\x{200a}\x{202f}\x{205f}\x{3000}";
     let chars = pattern.chars().collect::<Vec<_>>();
     let mut translated = String::with_capacity(pattern.len());
     let mut index = 0;
+    let mut uses_global_anchor = false;
+    let mut modes = JavaRegexModes::default();
+    let mut groups = Vec::<(JavaRegexModes, usize)>::new();
     while index < chars.len() {
-        if chars[index] == '[' {
-            if let Some(end) = regex_class_end(&chars, index) {
+        if modes.comments && !is_regex_escaped(&chars, index) {
+            if java_comment_whitespace(chars[index]) {
+                index += 1;
+                continue;
+            }
+            if chars[index] == '#' {
+                while index < chars.len() && !java_line_terminator(chars[index]) {
+                    index += 1;
+                }
+                continue;
+            }
+        }
+        if chars[index] == '(' && !is_regex_escaped(&chars, index) {
+            if chars.get(index + 1) == Some(&'?')
+                && chars.get(index + 2) == Some(&'<')
+                && !matches!(chars.get(index + 3), Some('=' | '!'))
+            {
+                if let Some(relative_end) = chars[index + 3..].iter().position(|ch| *ch == '>') {
+                    let end = index + 3 + relative_end;
+                    translated.extend(&chars[index..=end]);
+                    index = end + 1;
+                    continue;
+                }
+            }
+            if let Some(flags) = java_inline_flags(&chars, index, modes) {
+                modes = flags.modes;
+                if flags.scoped {
+                    groups.push((flags.previous_modes, flags.close_count));
+                    translated.push_str(&flags.prefix);
+                } else {
+                    translated.push_str(&flags.prefix);
+                }
+                index = flags.next;
+                continue;
+            }
+            groups.push((modes, 1));
+            translated.push('(');
+            index += 1;
+            continue;
+        }
+        if chars[index] == ')' && !is_regex_escaped(&chars, index) {
+            if let Some((previous, close_count)) = groups.pop() {
+                translated.extend(std::iter::repeat_n(')', close_count));
+                modes = previous;
+            } else {
+                translated.push(')');
+            }
+            index += 1;
+            continue;
+        }
+        if chars[index] == '[' && !is_regex_escaped(&chars, index) {
+            if let Some(end) = regex_class_end_mode(&chars, index, modes.comments) {
                 translated.push_str(&translate_java_character_class(
                     &chars[index + 1..end],
                     HORIZONTAL,
+                    modes.unicode_classes,
+                    modes.comments,
+                    java_ascii_case_insensitive(modes),
                 ));
                 index = end + 1;
                 continue;
             }
         }
         if chars[index] == '\\' && index + 1 < chars.len() {
+            if let Some((escape, next)) = translate_java_character_escape(&chars, index) {
+                if java_ascii_case_insensitive(modes) {
+                    translated.push_str(&java_ascii_case_literal(&escape));
+                } else {
+                    translated.push_str(&escape);
+                }
+                index = next;
+                continue;
+            }
             match chars[index + 1] {
                 'Q' => {
                     let (quoted, next) = take_quoted_regex_literal(&chars, index + 2);
                     for ch in quoted {
-                        push_escaped_regex_char(&mut translated, ch);
+                        if java_ascii_case_insensitive(modes) {
+                            translated.push_str(&java_ascii_case_char(ch));
+                        } else {
+                            push_escaped_regex_char(&mut translated, ch);
+                        }
                     }
                     index = next;
                     continue;
@@ -10390,6 +10874,51 @@ fn translate_java_regex_escapes(pattern: &str) -> String {
                     index += 2;
                     continue;
                 }
+                'd' | 'D' | 's' | 'S' | 'w' | 'W' => {
+                    translated.push_str(&java_predefined_class(
+                        chars[index + 1],
+                        modes.unicode_classes,
+                        false,
+                    ));
+                    index += 2;
+                    continue;
+                }
+                'b' | 'B' => {
+                    if chars[index + 1] == 'b'
+                        && chars.get(index + 2..index + 5) == Some(&['{', 'g', '}'])
+                    {
+                        if java_grapheme_boundary_is_redundant(&chars, index) {
+                            translated.push_str("(?:)");
+                        } else {
+                            translated.push_str(&java_grapheme_boundary_assertion(
+                                grapheme_text.unwrap_or(""),
+                            ));
+                        }
+                        index += 5;
+                        continue;
+                    }
+                    translated.push_str(&java_word_boundary_escape(
+                        chars[index + 1],
+                        modes.unicode_classes,
+                    ));
+                    index += 2;
+                    continue;
+                }
+                'X' => {
+                    translated.push_str(&java_grapheme_atom(grapheme_text.unwrap_or(""), modes));
+                    index += 2;
+                    continue;
+                }
+                'G' => {
+                    uses_global_anchor = true;
+                    if global_anchor_position == 0 {
+                        translated.push_str(r"\A");
+                    } else {
+                        translated.push_str(&format!(r"(?<=\A[\s\S]{{{global_anchor_position}}})"));
+                    }
+                    index += 2;
+                    continue;
+                }
                 'Z' => {
                     translated.push_str(r"(?=(?:\r\n|[\n\r\x{85}\x{2028}\x{2029}])?\z)");
                     index += 2;
@@ -10398,12 +10927,21 @@ fn translate_java_regex_escapes(pattern: &str) -> String {
                 'p' | 'P' => {
                     if let Some((property, next)) = regex_property(&chars, index + 2) {
                         if let Some((start, end)) = java_block_range(&property) {
-                            translated.push('[');
-                            if chars[index + 1] == 'P' {
-                                translated.push('^');
+                            let negated = chars[index + 1] == 'P';
+                            if is_surrogate_block(start, end) {
+                                translated.push_str(if negated {
+                                    JAVA_SCALAR_VALUE_CLASS
+                                } else {
+                                    JAVA_EMPTY_SCALAR_CLASS
+                                });
+                            } else {
+                                translated.push('[');
+                                if negated {
+                                    translated.push('^');
+                                }
+                                translated.push_str(&format!(r"\x{{{start:x}}}-\x{{{end:x}}}"));
+                                translated.push(']');
                             }
-                            translated.push_str(&format!(r"\x{{{start:x}}}-\x{{{end:x}}}"));
-                            translated.push(']');
                             index = next;
                             continue;
                         }
@@ -10412,13 +10950,337 @@ fn translate_java_regex_escapes(pattern: &str) -> String {
                 _ => {}
             }
         }
-        translated.push(chars[index]);
+        if !is_regex_escaped(&chars, index) {
+            match chars[index] {
+                '.' => {
+                    if modes.dot_all {
+                        translated.push_str("(?s:.)");
+                    } else if modes.unix_lines {
+                        translated.push_str(r"[^\n]");
+                    } else {
+                        translated.push_str(r"[^\n\r\x{85}\x{2028}\x{2029}]");
+                    }
+                    index += 1;
+                    continue;
+                }
+                '^' if modes.multiline => {
+                    translated.push_str(&java_multiline_start(modes.unix_lines));
+                    index += 1;
+                    continue;
+                }
+                '$' if modes.multiline => {
+                    translated.push_str(&java_dollar_anchor(modes.multiline, modes.unix_lines));
+                    index += 1;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        if java_ascii_case_insensitive(modes) && chars[index].is_alphabetic() {
+            translated.push_str(&java_ascii_case_char(chars[index]));
+        } else {
+            translated.push(chars[index]);
+        }
         index += 1;
     }
-    translated
+    (translated, uses_global_anchor)
+}
+
+fn java_ascii_case_insensitive(modes: JavaRegexModes) -> bool {
+    modes.case_insensitive && !modes.unicode_case && !modes.unicode_classes
+}
+
+fn java_ascii_case_char(ch: char) -> String {
+    if ch.is_ascii_alphabetic() {
+        format!(
+            "(?-i:[{}{}])",
+            ch.to_ascii_lowercase(),
+            ch.to_ascii_uppercase()
+        )
+    } else {
+        let mut literal = String::new();
+        push_escaped_regex_char(&mut literal, ch);
+        format!("(?-i:{literal})")
+    }
+}
+
+fn java_ascii_case_literal(escaped: &str) -> String {
+    // Character escapes are normally control characters, but Unicode escapes may
+    // carry a cased codepoint. Disable Unicode case folding around their literal.
+    format!("(?-i:{escaped})")
+}
+
+#[derive(Clone, Copy, Default)]
+struct JavaRegexModes {
+    unicode_classes: bool,
+    case_insensitive: bool,
+    unicode_case: bool,
+    unix_lines: bool,
+    multiline: bool,
+    dot_all: bool,
+    comments: bool,
+}
+
+struct JavaInlineFlags {
+    modes: JavaRegexModes,
+    previous_modes: JavaRegexModes,
+    scoped: bool,
+    close_count: usize,
+    next: usize,
+    prefix: String,
+}
+
+fn is_regex_escaped(chars: &[char], index: usize) -> bool {
+    let mut slash_count = 0;
+    let mut previous = index;
+    while previous > 0 && chars[previous - 1] == '\\' {
+        slash_count += 1;
+        previous -= 1;
+    }
+    slash_count % 2 == 1
+}
+
+fn java_line_terminator(ch: char) -> bool {
+    matches!(ch, '\r' | '\n' | '\u{85}' | '\u{2028}' | '\u{2029}')
+}
+
+fn java_comment_whitespace(ch: char) -> bool {
+    matches!(ch, '\t'..='\r' | ' ')
+}
+
+fn java_multiline_start(unix_lines: bool) -> String {
+    if unix_lines {
+        r"(?:\A|(?<=\n))".to_owned()
+    } else {
+        r"(?:\A|(?<=\r\n)|(?<=[\n\r\x{85}\x{2028}\x{2029}])(?!\n))".to_owned()
+    }
+}
+
+fn java_dollar_anchor(multiline: bool, unix_lines: bool) -> String {
+    if multiline {
+        if unix_lines {
+            r"(?=\n|\z)".to_owned()
+        } else {
+            r"(?=(?!\n)(?:\r\n|[\n\r\x{85}\x{2028}\x{2029}]|\z))".to_owned()
+        }
+    } else if unix_lines {
+        r"(?=(?:\n)?\z)".to_owned()
+    } else {
+        r"(?=(?:\r\n|[\n\r\x{85}\x{2028}\x{2029}])?\z)".to_owned()
+    }
+}
+
+fn java_inline_flags(
+    chars: &[char],
+    start: usize,
+    previous: JavaRegexModes,
+) -> Option<JavaInlineFlags> {
+    if chars.get(start + 1) != Some(&'?') {
+        return None;
+    }
+    let mut index = start + 2;
+    let mut add = true;
+    let mut saw_flag = false;
+    let mut modes = previous;
+    while index < chars.len() {
+        match chars[index] {
+            '-' => add = false,
+            ':' | ')' => break,
+            flag @ ('d' | 'i' | 'm' | 's' | 'u' | 'x' | 'U') => {
+                saw_flag = true;
+                match flag {
+                    'i' => modes.case_insensitive = add,
+                    'u' => modes.unicode_case = add,
+                    'U' => modes.unicode_classes = add,
+                    'd' => modes.unix_lines = add,
+                    'm' => modes.multiline = add,
+                    's' => modes.dot_all = add,
+                    'x' => modes.comments = add,
+                    _ => unreachable!(),
+                }
+            }
+            _ => return None,
+        }
+        index += 1;
+    }
+    if !saw_flag || index >= chars.len() || !matches!(chars[index], ':' | ')') {
+        return None;
+    }
+
+    let scoped = chars[index] == ':';
+    let rust_case_flags = if modes.case_insensitive {
+        if modes.unicode_case || modes.unicode_classes {
+            "(?iu".to_owned()
+        } else {
+            "(?i-u".to_owned()
+        }
+    } else {
+        "(?u-i".to_owned()
+    };
+    let mut prefix = String::new();
+    let mut close_count = 0;
+    if scoped {
+        prefix.push_str(&rust_case_flags);
+        prefix.push(':');
+        close_count += 1;
+        Some(JavaInlineFlags {
+            modes,
+            previous_modes: previous,
+            scoped,
+            close_count,
+            next: index + 1,
+            prefix,
+        })
+    } else {
+        if modes.case_insensitive {
+            prefix.push_str(&rust_case_flags);
+            prefix.push(')');
+        } else {
+            prefix.push_str("(?-i)(?u)");
+        }
+        Some(JavaInlineFlags {
+            modes,
+            previous_modes: previous,
+            scoped,
+            close_count,
+            next: index + 1,
+            prefix,
+        })
+    }
+}
+
+fn java_regex_validation_pattern(pattern: &str) -> String {
+    let chars = pattern.chars().collect::<Vec<_>>();
+    let mut sanitized = chars.clone();
+    let mut modes = JavaRegexModes::default();
+    let mut groups = Vec::<JavaRegexModes>::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if modes.comments && !is_regex_escaped(&chars, index) {
+            if java_comment_whitespace(chars[index]) {
+                sanitized[index] = ' ';
+                index += 1;
+                continue;
+            }
+            if chars[index] == '#' {
+                while index < chars.len() && !java_line_terminator(chars[index]) {
+                    sanitized[index] = ' ';
+                    index += 1;
+                }
+                continue;
+            }
+        }
+        if chars[index] == '\\' && !is_regex_escaped(&chars, index) {
+            if chars.get(index + 1) == Some(&'Q') {
+                let (_, next) = take_quoted_regex_literal(&chars, index + 2);
+                index = next;
+            } else {
+                index += 2;
+            }
+            continue;
+        }
+        if chars[index] == '[' && !is_regex_escaped(&chars, index) {
+            if let Some(end) = regex_class_end_mode(&chars, index, modes.comments) {
+                if modes.comments {
+                    let mut class_index = index + 1;
+                    while class_index < end {
+                        if chars[class_index] == '#' && !is_regex_escaped(&chars, class_index) {
+                            while class_index < end && !java_line_terminator(chars[class_index]) {
+                                sanitized[class_index] = ' ';
+                                class_index += 1;
+                            }
+                        } else if java_comment_whitespace(chars[class_index]) {
+                            sanitized[class_index] = ' ';
+                            class_index += 1;
+                        } else {
+                            class_index += 1;
+                        }
+                    }
+                }
+                index = end + 1;
+                continue;
+            }
+        }
+        if chars[index] == ')' && !is_regex_escaped(&chars, index) {
+            modes = groups.pop().unwrap_or(modes);
+            index += 1;
+            continue;
+        }
+        if chars[index] == '(' && !is_regex_escaped(&chars, index) {
+            if let Some(flags) = java_inline_flags(&chars, index, modes) {
+                if flags.scoped {
+                    groups.push(flags.previous_modes);
+                }
+                modes = flags.modes;
+                index = flags.next;
+                continue;
+            }
+            groups.push(modes);
+        }
+        index += 1;
+    }
+    sanitized.into_iter().collect()
+}
+
+fn java_predefined_class(escape: char, unicode_classes: bool, inside_class: bool) -> String {
+    let (positive, negative) = if unicode_classes {
+        match escape.to_ascii_lowercase() {
+            'd' => (r"\p{Nd}".to_owned(), r"\P{Nd}".to_owned()),
+            's' => (r"\p{White_Space}".to_owned(), r"\P{White_Space}".to_owned()),
+            'w' => (
+                r"[\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\x{200c}-\x{200d}]".to_owned(),
+                r"[^\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\x{200c}-\x{200d}]".to_owned(),
+            ),
+            _ => unreachable!(),
+        }
+    } else {
+        match escape.to_ascii_lowercase() {
+            'd' => (r"0-9".to_owned(), r"[^0-9]".to_owned()),
+            's' => (
+                r"\x{20}\t\n\x{b}\f\r".to_owned(),
+                r"[^\x{20}\t\n\x{b}\f\r]".to_owned(),
+            ),
+            'w' => (r"A-Za-z_0-9".to_owned(), r"[^A-Za-z_0-9]".to_owned()),
+            _ => unreachable!(),
+        }
+    };
+    let is_negative = escape.is_ascii_uppercase();
+    if inside_class {
+        if is_negative {
+            negative
+        } else {
+            positive
+        }
+    } else {
+        format!("[{}]", if is_negative { negative } else { positive })
+    }
+}
+
+fn java_word_boundary_escape(escape: char, unicode_classes: bool) -> String {
+    let boundary = if unicode_classes {
+        let word = r"[\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\x{200c}-\x{200d}]";
+        format!(r"(?:(?<!{word})(?={word})|(?<={word})(?!{word}))")
+    } else {
+        let base = r"[A-Za-z0-9_]";
+        let mark = r"\p{M}";
+        format!(r"(?:(?<!{base}{mark}*)(?={base})|(?<={base}{mark}*)(?!{base}|{mark}))")
+    };
+    let boundary = if escape == 'B' {
+        format!("(?!(?:{boundary}))")
+    } else {
+        boundary
+    };
+    // Java word boundaries are independent of case-insensitive matching. This
+    // scope also prevents the fallback engine's Unicode folding from treating
+    // Kelvin sign as an ASCII K in the boundary class.
+    format!("(?-i:{boundary})")
 }
 
 fn regex_class_end(chars: &[char], start: usize) -> Option<usize> {
+    regex_class_end_mode(chars, start, false)
+}
+
+fn regex_class_end_mode(chars: &[char], start: usize, comments: bool) -> Option<usize> {
     let mut index = start + 1;
     if chars.get(index) == Some(&'^') {
         index += 1;
@@ -10428,6 +11290,16 @@ fn regex_class_end(chars: &[char], start: usize) -> Option<usize> {
     }
     let mut nested = 0usize;
     while index < chars.len() {
+        if comments && chars[index] == '#' && !is_regex_escaped(chars, index) {
+            while index < chars.len() && !java_line_terminator(chars[index]) {
+                index += 1;
+            }
+            continue;
+        }
+        if comments && java_comment_whitespace(chars[index]) {
+            index += 1;
+            continue;
+        }
         match chars[index] {
             '\\' if index + 1 < chars.len() => {
                 if chars[index + 1] == 'Q' {
@@ -10465,7 +11337,23 @@ fn take_quoted_regex_literal(chars: &[char], start: usize) -> (Vec<char>, usize)
     (quoted, index)
 }
 
-fn translate_java_character_class(body: &[char], horizontal: &str) -> String {
+fn translate_java_character_class(
+    body: &[char],
+    horizontal: &str,
+    unicode_classes: bool,
+    comments: bool,
+    ascii_case_insensitive: bool,
+) -> String {
+    let mut cleaned_body = if comments {
+        strip_java_class_comments(body)
+    } else {
+        body.to_vec()
+    };
+    let disable_unicode_case_fold = ascii_case_insensitive;
+    if disable_unicode_case_fold {
+        cleaned_body = add_ascii_case_variants_to_class(&cleaned_body);
+    }
+    let body = cleaned_body.as_slice();
     let negated = body.first() == Some(&'^');
     let content = if negated { &body[1..] } else { body };
     let horizontal_positions = top_level_non_horizontal_escapes(content);
@@ -10474,9 +11362,17 @@ fn translate_java_character_class(body: &[char], horizontal: &str) -> String {
         if negated {
             output.push('^');
         }
-        output.push_str(&translate_java_class_content(content, horizontal));
+        output.push_str(&translate_java_class_content(
+            content,
+            horizontal,
+            unicode_classes,
+        ));
         output.push(']');
-        return output;
+        return if disable_unicode_case_fold {
+            format!("(?-i:{output})")
+        } else {
+            output
+        };
     }
 
     let mut other = String::new();
@@ -10489,8 +11385,12 @@ fn translate_java_character_class(body: &[char], horizontal: &str) -> String {
             index += 1;
         }
     }
-    let other = translate_java_class_content(&other.chars().collect::<Vec<_>>(), horizontal);
-    if negated {
+    let other = translate_java_class_content(
+        &other.chars().collect::<Vec<_>>(),
+        horizontal,
+        unicode_classes,
+    );
+    let output = if negated {
         if other.is_empty() {
             format!("[{horizontal}]")
         } else {
@@ -10500,7 +11400,111 @@ fn translate_java_character_class(body: &[char], horizontal: &str) -> String {
         format!("[^{horizontal}]")
     } else {
         format!("(?:[^{horizontal}]|[{other}])")
+    };
+    if disable_unicode_case_fold {
+        format!("(?-i:{output})")
+    } else {
+        output
     }
+}
+
+fn add_ascii_case_variants_to_class(body: &[char]) -> Vec<char> {
+    let mut output = Vec::with_capacity(body.len());
+    let mut index = 0;
+    while index < body.len() {
+        if body[index] == '\\' && index + 1 < body.len() {
+            if matches!(body[index + 1], 'p' | 'P') {
+                if let Some((_, next)) = regex_property(body, index + 2) {
+                    output.extend_from_slice(&body[index..next]);
+                    index = next;
+                    continue;
+                }
+            }
+            if let Some((ch, next)) = java_escaped_class_char(body, index) {
+                let mut escaped = String::new();
+                push_escaped_class_char(&mut escaped, ch);
+                output.extend(escaped.chars());
+                if ch.is_ascii_alphabetic() {
+                    let other_case = if ch.is_ascii_lowercase() {
+                        ch.to_ascii_uppercase()
+                    } else {
+                        ch.to_ascii_lowercase()
+                    };
+                    escaped.clear();
+                    push_escaped_class_char(&mut escaped, other_case);
+                    output.extend(escaped.chars());
+                }
+                index = next;
+                continue;
+            }
+            output.extend_from_slice(&body[index..index + 2]);
+            index += 2;
+            continue;
+        }
+        if body[index].is_ascii_alphabetic() {
+            let start = body[index];
+            if body.get(index + 1) == Some(&'-')
+                && body
+                    .get(index + 2)
+                    .is_some_and(|end| end.is_ascii_alphabetic())
+            {
+                let end = body[index + 2];
+                output.extend_from_slice(&[start, '-', end]);
+                if start.is_ascii_lowercase() == end.is_ascii_lowercase() {
+                    output.extend_from_slice(&[
+                        if start.is_ascii_lowercase() {
+                            start.to_ascii_uppercase()
+                        } else {
+                            start.to_ascii_lowercase()
+                        },
+                        '-',
+                        if end.is_ascii_lowercase() {
+                            end.to_ascii_uppercase()
+                        } else {
+                            end.to_ascii_lowercase()
+                        },
+                    ]);
+                }
+                index += 3;
+                continue;
+            }
+            output.push(start);
+            output.push(if start.is_ascii_lowercase() {
+                start.to_ascii_uppercase()
+            } else {
+                start.to_ascii_lowercase()
+            });
+        } else {
+            output.push(body[index]);
+        }
+        index += 1;
+    }
+    output
+}
+
+fn java_escaped_class_char(chars: &[char], start: usize) -> Option<(char, usize)> {
+    let (escaped, next) = translate_java_character_escape(chars, start)?;
+    let value = escaped.strip_prefix(r"\x{")?.strip_suffix('}')?;
+    let scalar = u32::from_str_radix(value, 16).ok()?;
+    Some((char::from_u32(scalar)?, next))
+}
+
+fn strip_java_class_comments(body: &[char]) -> Vec<char> {
+    let mut output = Vec::with_capacity(body.len());
+    let mut index = 0;
+    while index < body.len() {
+        if body[index] == '#' && !is_regex_escaped(body, index) {
+            while index < body.len() && !java_line_terminator(body[index]) {
+                index += 1;
+            }
+        } else if java_comment_whitespace(body[index]) {
+            index += 1;
+        } else {
+            output.push(body[index]);
+            index += 1;
+        }
+    }
+    output
 }
 
 fn top_level_non_horizontal_escapes(content: &[char]) -> Vec<usize> {
@@ -10532,11 +11536,20 @@ fn top_level_non_horizontal_escapes(content: &[char]) -> Vec<usize> {
     positions
 }
 
-fn translate_java_class_content(content: &[char], horizontal: &str) -> String {
+fn translate_java_class_content(
+    content: &[char],
+    horizontal: &str,
+    unicode_classes: bool,
+) -> String {
     let mut output = String::new();
     let mut index = 0;
     while index < content.len() {
         if content[index] == '\\' && index + 1 < content.len() {
+            if let Some((escape, next)) = translate_java_character_escape(content, index) {
+                output.push_str(&escape);
+                index = next;
+                continue;
+            }
             match content[index + 1] {
                 'Q' => {
                     let (quoted, next) = take_quoted_regex_literal(content, index + 2);
@@ -10551,10 +11564,25 @@ fn translate_java_class_content(content: &[char], horizontal: &str) -> String {
                     index += 2;
                     continue;
                 }
+                'd' | 'D' | 's' | 'S' | 'w' | 'W' => {
+                    output.push_str(&java_predefined_class(
+                        content[index + 1],
+                        unicode_classes,
+                        true,
+                    ));
+                    index += 2;
+                    continue;
+                }
                 'p' | 'P' => {
                     if let Some((property, next)) = regex_property(content, index + 2) {
                         if let Some((start, end)) = java_block_range(&property) {
-                            if content[index + 1] == 'P' {
+                            if is_surrogate_block(start, end) {
+                                output.push_str(if content[index + 1] == 'P' {
+                                    JAVA_SCALAR_VALUE_CLASS
+                                } else {
+                                    JAVA_EMPTY_SCALAR_CLASS
+                                });
+                            } else if content[index + 1] == 'P' {
                                 output.push_str(&format!(r"[^\x{{{start:x}}}-\x{{{end:x}}}]"));
                             } else {
                                 output.push_str(&format!(r"\x{{{start:x}}}-\x{{{end:x}}}"));
@@ -10575,6 +11603,201 @@ fn translate_java_class_content(content: &[char], horizontal: &str) -> String {
         }
     }
     output
+}
+
+fn translate_java_character_escape(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let escape = *chars.get(start + 1)?;
+    let (value, next) = match escape {
+        'a' => (0x07, start + 2),
+        'e' => (0x1b, start + 2),
+        'c' => ((*chars.get(start + 2)? as u32) ^ 0x40, start + 3),
+        'x' if chars.get(start + 2) == Some(&'{') => {
+            let close = chars[start + 3..].iter().position(|ch| *ch == '}')? + start + 3;
+            let value =
+                u32::from_str_radix(&chars[start + 3..close].iter().collect::<String>(), 16)
+                    .ok()?;
+            (value, close + 1)
+        }
+        'x' => {
+            let value =
+                u32::from_str_radix(&chars[start + 2..start + 4].iter().collect::<String>(), 16)
+                    .ok()?;
+            (value, start + 4)
+        }
+        'u' => {
+            let mut digits = start + 2;
+            while chars.get(digits) == Some(&'u') {
+                digits += 1;
+            }
+            let value =
+                u32::from_str_radix(&chars[digits..digits + 4].iter().collect::<String>(), 16)
+                    .ok()?;
+            (value, digits + 4)
+        }
+        'N' if chars.get(start + 2) == Some(&'{') => {
+            let close = chars[start + 3..].iter().position(|ch| *ch == '}')? + start + 3;
+            let name = chars[start + 3..close]
+                .iter()
+                .collect::<String>()
+                .to_uppercase();
+            let value = unicode_character_name(&name)?;
+            (value, close + 1)
+        }
+        '0' => {
+            let mut end = start + 2;
+            let max_digits = if matches!(chars.get(end), Some('0'..='3')) {
+                3
+            } else {
+                2
+            };
+            while end < chars.len()
+                && end < start + 2 + max_digits
+                && matches!(chars[end], '0'..='7')
+            {
+                end += 1;
+            }
+            let value =
+                u32::from_str_radix(&chars[start + 2..end].iter().collect::<String>(), 8).ok()?;
+            (value, end)
+        }
+        _ => return None,
+    };
+    char::from_u32(value).map(|ch| (format!(r"\x{{{:x}}}", ch as u32), next))
+}
+
+fn unicode_character_name(name: &str) -> Option<u32> {
+    static NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    let lines = NAMES.get_or_init(|| include_str!("unicode_names.txt").lines().skip(1).collect());
+    let index = lines
+        .binary_search_by(|line| line.split_once('\t').unwrap().0.cmp(name))
+        .ok()?;
+    u32::from_str_radix(lines[index].split_once('\t')?.1, 16).ok()
+}
+
+fn java_character_escape_error(pattern: &str) -> Option<Error> {
+    let scan_pattern = java_regex_validation_pattern(pattern);
+    let chars = scan_pattern.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index + 1 < chars.len() {
+        if chars[index] != '\\' {
+            index += 1;
+            continue;
+        }
+        if chars[index + 1] == 'Q' {
+            let (_, next) = take_quoted_regex_literal(&chars, index + 2);
+            index = next;
+            continue;
+        }
+        let escape = chars[index + 1];
+        let (message, error_index) = match escape {
+            'c' if index + 2 >= chars.len() => ("Illegal control escape sequence", index + 1),
+            'x' if chars.get(index + 2) == Some(&'{') => {
+                let close = chars[index + 3..]
+                    .iter()
+                    .position(|ch| *ch == '}')
+                    .map(|n| n + index + 3);
+                match close {
+                    Some(end)
+                        if end > index + 3
+                            && chars[index + 3..end]
+                                .iter()
+                                .all(|ch| ch.is_ascii_hexdigit()) =>
+                    {
+                        index = end + 1;
+                        continue;
+                    }
+                    Some(end) => ("Illegal hexadecimal escape sequence", end),
+                    None => (
+                        "Illegal hexadecimal escape sequence",
+                        chars.len().saturating_sub(1),
+                    ),
+                }
+            }
+            'x' => {
+                if chars
+                    .get(index + 2)
+                    .is_some_and(|ch| ch.is_ascii_hexdigit())
+                    && chars
+                        .get(index + 3)
+                        .is_some_and(|ch| ch.is_ascii_hexdigit())
+                {
+                    index += 4;
+                    continue;
+                }
+                (
+                    "Illegal hexadecimal escape sequence",
+                    (index + 2).min(chars.len().saturating_sub(1)),
+                )
+            }
+            'u' => {
+                let mut digits = index + 2;
+                while chars.get(digits) == Some(&'u') {
+                    digits += 1;
+                }
+                if digits + 4 <= chars.len()
+                    && chars[digits..digits + 4]
+                        .iter()
+                        .all(|ch| ch.is_ascii_hexdigit())
+                {
+                    index = digits + 4;
+                    continue;
+                }
+                ("Illegal Unicode escape sequence", chars.len())
+            }
+            'N' if chars.get(index + 2) == Some(&'{') => {
+                match chars[index + 3..]
+                    .iter()
+                    .position(|ch| *ch == '}')
+                    .map(|n| n + index + 3)
+                {
+                    Some(close) => {
+                        let name = chars[index + 3..close]
+                            .iter()
+                            .collect::<String>()
+                            .to_uppercase();
+                        if unicode_character_name(&name).is_some() {
+                            index = close + 1;
+                            continue;
+                        }
+                        ("Unknown character name", close)
+                    }
+                    None => (
+                        "Unclosed character name escape sequence",
+                        chars.len().saturating_sub(1),
+                    ),
+                }
+            }
+            '0' if !matches!(chars.get(index + 2), Some('0'..='7')) => (
+                "Illegal octal escape sequence",
+                (index + 2).min(chars.len().saturating_sub(1)),
+            ),
+            '0' => {
+                index += 2;
+                continue;
+            }
+            _ => {
+                index += 2;
+                continue;
+            }
+        };
+        let detail = if message == "Unknown character name" {
+            let start = index + 3;
+            format!(
+                "{message} [{}] near index {error_index}\n{pattern}\n{}^",
+                chars[start..error_index].iter().collect::<String>(),
+                " ".repeat(error_index)
+            )
+        } else if message == "Illegal Unicode escape sequence" {
+            format!("{message} near index {error_index}\n{pattern}")
+        } else {
+            format!(
+                "{message} near index {error_index}\n{pattern}\n{}^",
+                " ".repeat(error_index)
+            )
+        };
+        return Some(Error::new(detail));
+    }
+    None
 }
 
 fn push_escaped_regex_char(output: &mut String, ch: char) {
@@ -10602,26 +11825,205 @@ fn regex_property(chars: &[char], start: usize) -> Option<(String, usize)> {
     Some((chars[start + 1..close].iter().collect(), close + 1))
 }
 
+// Rust strings cannot contain surrogate code points; Java's surrogate blocks therefore match none
+// of the scalar values accepted by this port, while their complements match every scalar value.
+const JAVA_SCALAR_VALUE_CLASS: &str = r"[\x{0}-\x{d7ff}\x{e000}-\x{10ffff}]";
+const JAVA_EMPTY_SCALAR_CLASS: &str = r"[\x{0}-\x{d7ff}&&\x{e000}-\x{10ffff}]";
+
+fn is_surrogate_block(start: u32, end: u32) -> bool {
+    (0xd800..=0xdfff).contains(&start) && (0xd800..=0xdfff).contains(&end)
+}
+
 fn java_block_range(property: &str) -> Option<(u32, u32)> {
     let property = property.strip_prefix("In")?;
-    let normalized = property
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect::<String>();
-    match normalized.as_str() {
-        "basiclatin" => Some((0x0000, 0x007f)),
-        "latin1supplement" => Some((0x0080, 0x00ff)),
-        "latinextendeda" => Some((0x0100, 0x017f)),
-        "latinextendedb" => Some((0x0180, 0x024f)),
-        "greek" | "greekandcoptic" => Some((0x0370, 0x03ff)),
-        "cyrillic" => Some((0x0400, 0x04ff)),
-        _ => None,
+    let mut normalized = String::with_capacity(property.len());
+    for ch in property.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.extend(ch.to_lowercase());
+        } else if !matches!(ch, ' ' | '-' | '_') {
+            return None;
+        }
     }
+    let range = include_str!("unicode_blocks.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .find_map(|line| {
+            let (alias, range) = line.split_once('\t')?;
+            (alias == normalized).then_some(range)
+        })?;
+    let (start, end) = range.split_once('\t')?;
+    Some((
+        u32::from_str_radix(start, 16).ok()?,
+        u32::from_str_radix(end, 16).ok()?,
+    ))
+}
+
+fn java_unknown_block_property_error(pattern: &str) -> Option<Error> {
+    let scan_pattern = java_regex_validation_pattern(pattern);
+    let chars = scan_pattern.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index + 1 < chars.len() {
+        if chars[index] == '\\' && matches!(chars[index + 1], 'p' | 'P') {
+            if let Some((property, next)) = regex_property(&chars, index + 2) {
+                if property.starts_with("In") && java_block_range(&property).is_none() {
+                    let error_index = next - 1;
+                    return Some(Error::new(format!(
+                        "Unknown character property name {{{property}}} near index {error_index}\n{pattern}\n{}^",
+                        " ".repeat(error_index)
+                    )));
+                }
+                index = next;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    None
+}
+
+fn java_inline_flag_error(pattern: &str) -> Option<Error> {
+    let chars = pattern.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut modes = JavaRegexModes::default();
+    let mut groups = Vec::new();
+    while index < chars.len() {
+        if modes.comments && !is_regex_escaped(&chars, index) {
+            if java_comment_whitespace(chars[index]) {
+                index += 1;
+                continue;
+            }
+            if chars[index] == '#' {
+                while index < chars.len() && !java_line_terminator(chars[index]) {
+                    index += 1;
+                }
+                continue;
+            }
+        }
+        if chars[index] == '[' && !is_regex_escaped(&chars, index) {
+            if let Some(end) = regex_class_end_mode(&chars, index, modes.comments) {
+                index = end + 1;
+                continue;
+            }
+        }
+        if chars[index] == '\\' {
+            if chars[index + 1] == 'Q' {
+                let (_, next) = take_quoted_regex_literal(&chars, index + 2);
+                index = next;
+            } else {
+                index += 2;
+            }
+            continue;
+        }
+        if chars[index] == ')' && !is_regex_escaped(&chars, index) {
+            modes = groups.pop().unwrap_or(modes);
+            index += 1;
+            continue;
+        }
+        if chars[index] != '(' || is_regex_escaped(&chars, index) {
+            index += 1;
+            continue;
+        }
+        if let Some(flags) = java_inline_flags(&chars, index, modes) {
+            if flags.scoped {
+                groups.push(flags.previous_modes);
+            }
+            modes = flags.modes;
+            index = flags.next;
+            continue;
+        }
+        groups.push(modes);
+        if chars.get(index + 1) != Some(&'?') {
+            index += 1;
+            continue;
+        }
+        if matches!(chars.get(index + 2), Some(':' | '=' | '!' | '<' | '>')) {
+            index += 3;
+            continue;
+        }
+        let mut flag_index = index + 2;
+        let mut saw_flag = false;
+        while flag_index < chars.len() {
+            match chars[flag_index] {
+                'd' | 'i' | 'm' | 's' | 'u' | 'x' | 'U' | '-' => {
+                    saw_flag |= chars[flag_index] != '-';
+                    flag_index += 1;
+                }
+                ':' | ')' if saw_flag => break,
+                _ => return Some(java_inline_modifier_error(pattern, flag_index)),
+            }
+        }
+        if flag_index >= chars.len() {
+            return Some(java_inline_modifier_error(
+                pattern,
+                chars.len().saturating_sub(1),
+            ));
+        }
+        index = flag_index + 1;
+    }
+    None
+}
+
+fn java_inline_modifier_error(pattern: &str, index: usize) -> Error {
+    Error::new(format!(
+        "Unknown inline modifier near index {index}\n{pattern}\n{}^",
+        " ".repeat(index)
+    ))
+}
+
+fn java_invalid_repetition_range_error(pattern: &str) -> Option<Error> {
+    let scan_pattern = java_regex_validation_pattern(pattern);
+    let chars = scan_pattern.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '[' {
+            if let Some(end) = regex_class_end(&chars, index) {
+                index = end + 1;
+                continue;
+            }
+        }
+        if chars[index] == '\\' {
+            if chars.get(index + 1) == Some(&'Q') {
+                let (_, next) = take_quoted_regex_literal(&chars, index + 2);
+                index = next;
+            } else {
+                index += 2;
+            }
+            continue;
+        }
+        if chars[index] == '{' {
+            if let Some(close) = chars[index + 1..]
+                .iter()
+                .position(|ch| *ch == '}')
+                .map(|offset| index + 1 + offset)
+            {
+                let range = chars[index + 1..close].iter().collect::<String>();
+                if let Some((minimum, maximum)) = range.split_once(',') {
+                    if !minimum.is_empty()
+                        && !maximum.is_empty()
+                        && minimum.chars().all(|ch| ch.is_ascii_digit())
+                        && maximum.chars().all(|ch| ch.is_ascii_digit())
+                        && minimum.parse::<u64>().ok()? > maximum.parse::<u64>().ok()?
+                    {
+                        return Some(Error::new(format!(
+                            "Illegal repetition range near index {close}\n{pattern}\n{}^",
+                            " ".repeat(close)
+                        )));
+                    }
+                }
+                index = close + 1;
+            } else {
+                index += 1;
+            }
+        } else {
+            index += 1;
+        }
+    }
+    None
 }
 
 fn java_anchor_in_character_class_error(pattern: &str) -> Option<Error> {
-    let chars = pattern.chars().collect::<Vec<_>>();
+    let scan_pattern = java_regex_validation_pattern(pattern);
+    let chars = scan_pattern.chars().collect::<Vec<_>>();
     let mut in_class = false;
     let mut index = 0;
     while index + 1 < chars.len() {
@@ -10632,7 +12034,7 @@ fn java_anchor_in_character_class_error(pattern: &str) -> Option<Error> {
                     index = next;
                     continue;
                 }
-                'Z' | 'z' if in_class => {
+                'Z' | 'z' | 'b' | 'B' | 'G' if in_class => {
                     let error_index = index + 1;
                     return Some(Error::new(format!(
                         "Illegal/unsupported escape sequence near index {error_index}\n{pattern}\n{}^",
@@ -10656,20 +12058,7 @@ fn java_anchor_in_character_class_error(pattern: &str) -> Option<Error> {
 fn legacy_regex_compile_error(pattern: &str, error: regex::Error) -> Error {
     let error = error.to_string();
     if error.contains("unclosed character class") {
-        let mut escaped = false;
-        let mut class_start = None;
-        for (index, ch) in pattern.char_indices() {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '[' && class_start.is_none() {
-                class_start = Some(index);
-            } else if ch == ']' {
-                class_start = None;
-            }
-        }
-        let index = class_start.unwrap_or(0);
+        let index = pattern.chars().count().saturating_sub(1);
         return Error::new(format!(
             "Unclosed character class near index {index}\n{pattern}\n{}^",
             " ".repeat(index)
@@ -20096,6 +21485,19 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1")
     }
 
+    fn expand_regex_query_markers(sql: &str) -> String {
+        sql.replace("__CR__", "\r")
+            .replace("__LF__", "\n")
+            .replace("__NEL__", "\u{85}")
+            .replace("__LS__", "\u{2028}")
+            .replace("__PS__", "\u{2029}")
+            .replace("__NUL__", "\0")
+            .replace("__SOH__", "\u{1}")
+            .replace("__FS__", "\u{1c}")
+            .replace("__GS__", "\u{1d}")
+            .replace("__RS__", "\u{1e}")
+    }
+
     #[test]
     fn select_star_and_filters_match_reference_rows() {
         let all = execute(&root(), "SELECT * FROM sensors ORDER BY ts").unwrap();
@@ -27035,6 +28437,399 @@ mod tests {
                 std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
             assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
         }
+    }
+
+    #[test]
+    fn regex_java_unicode_blocks_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = std::fs::read_to_string(sensors.join("regex_java_blocks_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_unknown_unicode_blocks_match_captured_errors() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_block_errors_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap().replace("\\n", "\n");
+            let expected_position = fields.next().unwrap().parse::<usize>().unwrap();
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, Some(expected_position), "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_character_escapes_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_char_escapes_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_character_escape_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_char_escape_errors_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap().replace("\\n", "\n");
+            let expected_position = fields.next().unwrap().parse::<usize>().unwrap();
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, Some(expected_position), "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_predefined_classes_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_predefined_classes_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_predefined_class_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_predefined_class_errors_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap().replace("\\n", "\n");
+            let expected_position = fields.next().unwrap().parse::<usize>().unwrap();
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, Some(expected_position), "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_remaining_flags_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = std::fs::read_to_string(sensors.join("regex_java_remaining_flags_queries.tsv"))
+            .unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let sql = expand_regex_query_markers(sql);
+            let result = execute(&sensors, &sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_remaining_flag_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_remaining_flag_errors_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = expand_regex_query_markers(fields.next().unwrap());
+            let expected_message = fields.next().unwrap().replace("\\n", "\n");
+            let expected_position = fields.next().unwrap().parse::<usize>().unwrap();
+            let error = execute(&sensors, &sql).unwrap_err();
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, Some(expected_position), "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_word_boundaries_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = std::fs::read_to_string(sensors.join("regex_java_word_boundaries_queries.tsv"))
+            .unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_word_boundary_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_word_boundary_errors_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap().replace("\\n", "\n");
+            let expected_position = fields.next().unwrap().parse::<usize>().unwrap();
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, Some(expected_position), "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_global_anchor_matches_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_global_anchor_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let result = execute(&sensors, sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_global_anchor_errors_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_global_anchor_errors_queries.tsv"))
+                .unwrap();
+        for line in cases.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap().replace("\\n", "\n");
+            let expected_position = fields.next().unwrap().parse::<usize>().unwrap();
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, Some(expected_position), "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_grapheme_boundaries_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases =
+            std::fs::read_to_string(sensors.join("regex_java_grapheme_queries.tsv")).unwrap();
+        for line in cases.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let sql = expand_regex_query_markers(sql);
+            let result = execute(&sensors, &sql)
+                .unwrap_or_else(|error| panic!("{name}: {sql}: {}", error.message));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/{name}.tsv"))).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+    }
+
+    #[test]
+    fn regex_java_composed_grapheme_boundaries_match_long_text() {
+        let text = "a".repeat(1024);
+        let regex = compile_regex(r"^\b{g}\X+\b{g}$").unwrap();
+        assert!(regex.is_match(&text).unwrap());
+    }
+
+    #[test]
+    fn regex_java_unanchored_grapheme_boundaries_match_long_text() {
+        let text = "a".repeat(1024);
+        let regex = compile_regex(r"\b{g}a{512}\b{g}").unwrap();
+        let spans = regex.capture_spans(&text).unwrap();
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0][0], Some((0, 512)));
+        assert_eq!(spans[1][0], Some((512, 1024)));
+
+        let text = "e\u{301}a".repeat(512);
+        let regex = compile_regex(r"\X{1024}").unwrap();
+        let spans = regex.capture_spans(&text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, text.len())));
+
+        let regex = compile_regex(r"(?i)\X{1024}").unwrap();
+        let spans = regex.capture_spans(&text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, text.len())));
+
+        let regex = compile_regex(r"\b{g}(?:\X){1024}\b{g}").unwrap();
+        let spans = regex.capture_spans(&text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, text.len())));
+
+        let text = "a\u{301}a";
+        let regex = compile_regex(r"(\X)").unwrap();
+        let spans = regex.capture_spans(text).unwrap();
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0][0], Some((0, 3)));
+        assert_eq!(spans[1][0], Some((3, 4)));
+
+        let text = "a\u{301}A";
+        let regex = compile_regex(r"(?i)(\X)").unwrap();
+        let spans = regex.capture_spans(text).unwrap();
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0][0], Some((0, 3)));
+        assert_eq!(spans[1][0], Some((3, 4)));
+
+        let regex = compile_regex(r"(?iu)(\X)").unwrap();
+        let spans = regex.capture_spans(text).unwrap();
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0][0], Some((0, 3)));
+        assert_eq!(spans[1][0], Some((3, 4)));
+
+        let text = "a\u{301}a".repeat(128);
+        let regex = compile_regex(r"\X{256}").unwrap();
+        let spans = regex.capture_spans(&text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, text.len())));
+    }
+
+    #[test]
+    fn unicode_16_grapheme_break_test_vectors_match_segmentation() {
+        assert_eq!(unicode_segmentation::UNICODE_VERSION, (16, 0, 0));
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let vectors = std::fs::read_to_string(root.join("regex_java_grapheme_ucd16.txt")).unwrap();
+        let boundaries = compile_regex(r"\b{g}").unwrap();
+        let grapheme = compile_regex(r"\X").unwrap();
+        let mut case_count = 0;
+
+        for line in vectors.lines() {
+            let body = line.split('#').next().unwrap().trim();
+            if body.is_empty() {
+                continue;
+            }
+            let mut tokens = body.split_whitespace();
+            assert_eq!(tokens.next(), Some("÷"), "{line}");
+            let mut text = String::new();
+            let mut expected_boundaries = vec![0];
+            let mut expected_clusters = Vec::new();
+            let mut cluster = String::new();
+            while let Some(codepoint) = tokens.next() {
+                let codepoint = u32::from_str_radix(codepoint, 16).unwrap();
+                let ch = char::from_u32(codepoint).unwrap();
+                text.push(ch);
+                cluster.push(ch);
+                match tokens.next().unwrap() {
+                    "÷" => {
+                        expected_boundaries.push(text.len());
+                        expected_clusters.push(std::mem::take(&mut cluster));
+                    }
+                    "×" => {}
+                    marker => panic!("invalid grapheme marker {marker:?} in {line}"),
+                }
+            }
+
+            let actual_boundaries = boundaries
+                .capture_spans(&text)
+                .unwrap()
+                .into_iter()
+                .map(|capture| capture[0].unwrap().0)
+                .collect::<Vec<_>>();
+            assert_eq!(actual_boundaries, expected_boundaries, "{line}");
+
+            let actual_clusters = grapheme
+                .capture_spans(&text)
+                .unwrap()
+                .into_iter()
+                .map(|capture| {
+                    let (start, end) = capture[0].unwrap();
+                    &text[start..end]
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual_clusters, expected_clusters, "{line}");
+            case_count += 1;
+        }
+        assert_eq!(case_count, 1093);
+    }
+
+    #[test]
+    fn java_unicode_block_table_covers_legacy_and_supplementary_names() {
+        assert_eq!(java_block_range("InHiragana"), Some((0x3040, 0x309f)));
+        assert_eq!(
+            java_block_range("InLatin-1 Supplement"),
+            Some((0x0080, 0x00ff))
+        );
+        assert_eq!(java_block_range("InGreek"), Some((0x0370, 0x03ff)));
+        assert_eq!(
+            java_block_range("InCJK_Unified_Ideographs_Extension_I"),
+            Some((0x2ebf0, 0x2ee5f))
+        );
+        assert_eq!(
+            java_block_range("InSupplementary_Private_Use_Area_B"),
+            Some((0x100000, 0x10ffff))
+        );
+        assert_eq!(java_block_range("InGreek_And_Coptic"), None);
+    }
+
+    #[test]
+    fn java_unicode_block_table_compiles_and_matches_every_boundary() {
+        let mut blocks = 0;
+        for line in include_str!("unicode_blocks.txt").lines() {
+            if line.starts_with('#') {
+                continue;
+            }
+            let mut fields = line.split('\t');
+            let alias = fields.next().unwrap();
+            let start = u32::from_str_radix(fields.next().unwrap(), 16).unwrap();
+            let end = u32::from_str_radix(fields.next().unwrap(), 16).unwrap();
+            assert!(fields.next().is_none(), "unexpected block data: {line}");
+            let regex = compile_regex(&format!(r"\p{{In{alias}}}"))
+                .unwrap_or_else(|error| panic!("{alias}: {}", error.message));
+            if let Some(character) = char::from_u32(start) {
+                assert!(
+                    regex.is_match(&character.to_string()).unwrap(),
+                    "{alias} start"
+                );
+            }
+            if let Some(character) = char::from_u32(end) {
+                assert!(
+                    regex.is_match(&character.to_string()).unwrap(),
+                    "{alias} end"
+                );
+            }
+            if let Some(character) = start.checked_sub(1).and_then(char::from_u32) {
+                assert!(
+                    !regex.is_match(&character.to_string()).unwrap(),
+                    "{alias} before"
+                );
+            }
+            if let Some(character) = end.checked_add(1).and_then(char::from_u32) {
+                assert!(
+                    !regex.is_match(&character.to_string()).unwrap(),
+                    "{alias} after"
+                );
+            }
+            blocks += 1;
+        }
+        assert_eq!(blocks, 338);
     }
 
     #[test]

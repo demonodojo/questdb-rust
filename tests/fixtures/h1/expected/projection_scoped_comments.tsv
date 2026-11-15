@@ -1,0 +1,5 @@
+id	is_alpha
+NULL	false
+-1	false
+1	true
+2	false

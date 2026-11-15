@@ -1,0 +1,2 @@
+boundary_b_in_class	SELECT id FROM sensors WHERE note ~ '[\b]'	Illegal/unsupported escape sequence near index 2\n[\b]\n  ^	39
+boundary_B_in_class	SELECT id FROM sensors WHERE note ~ '[\B]'	Illegal/unsupported escape sequence near index 2\n[\B]\n  ^	39

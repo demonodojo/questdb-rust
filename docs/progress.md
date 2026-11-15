@@ -1095,4 +1095,58 @@ La traducción manual de nombres de bloques sigue cubriendo solo un subconjunto 
 
 ## Próxima tarea
 
-Ampliar las propiedades de bloques Unicode Java `\\p{In...}`/`\\P{In...}`: inventariar los nombres de bloque de `Pattern`, implementar la traducción completa o un rechazo compatible para los nombres no soportados, y añadir capturas para usos fuera y dentro de clases en filtros, proyecciones y `regexp_replace`.
+## Catálogo Java de bloques Unicode
+
+Se sustituyó la tabla parcial por el catálogo Unicode 16.0 completo: 338 rangos y 338 claves normalizadas que cubren 559 nombres/variantes aceptados por `Pattern`. Se probaron 705 nombres candidatos obtenidos de `Blocks.txt` y `PropertyValueAliases.txt` contra el oráculo Java 25; los 146 rechazados por Java producen ahora el diagnóstico `Unknown character property name` con índice del patrón y posición SQL. El traductor conserva `\\p{In...}` y `\\P{In...}` dentro y fuera de clases, incluidos alias históricos como `InGreek`, nombres con espacios/guiones y bloques suplementarios. El archivo de datos está en `crates/qdb-sql/src/unicode_blocks.txt`.
+
+Se añadieron dieciséis respuestas completas para filtros, proyecciones y `regexp_replace`, y cuatro errores capturados. Los casos incluyen los bloques de sustitutos: sus propiedades positivas no coinciden con escalares Unicode y las negadas sí. `regex_java_unicode_blocks_match_captured_exec`, `regex_java_unknown_unicode_blocks_match_captured_errors`, la prueba de rangos representativos y la prueba que compila y comprueba ambos límites de los 338 rangos pasaron. `tools/check.sh` pasó con 320 pruebas de `qdb-sql`, 4 de storage y 3 de types, además de servidor/CLI. `tools/run_differential.sh` confirmó en vivo 4447 recuentos de filas, las dieciséis respuestas completas y los cuatro errores con mensaje/posición. También pasaron formato, `git diff --check` y `bash -n tools/run_differential.sh`.
+
+El catálogo corresponde a Unicode 16.0, coincidente con los bloques reconocidos por el runtime Java 25 probado; esto no prueba equivalencia completa con `java.util.regex.Pattern` para el resto de la sintaxis.
+
+## Próxima tarea
+
+## Escapes Java regex de caracteres
+
+Se portaron `\\a`, `\\e`, `\\cX`, `\\xhh`, `\\x{...}`, `\\uFFFF`, escapes octales y `\\N{nombre}`. Los octales siguen los límites de Java (el primer dígito después de `\\0` decide cuántos dígitos se consumen). Los nombres se resuelven con una tabla generada de Unicode 16.0 `UnicodeData` y `NameAliases`, guardada en `crates/qdb-sql/src/unicode_names.txt`; se aceptan los nombres canónicos sin distinguir mayúsculas y los alias Unicode.
+
+Se añadieron dieciséis respuestas capturadas en filtros y `regexp_replace`, más seis errores de sintaxis/nombre con posición. `regex_java_character_escapes_match_captured_exec` y `regex_java_character_escape_errors_match_captured_exec` pasaron. `tools/check.sh` pasó con 322 pruebas de `qdb-sql`, 4 de storage y 3 de types, además de servidor/CLI. `tools/run_differential.sh` confirmó en vivo 4447 recuentos de filas, las dieciséis respuestas completas y los seis errores; también pasaron `cargo fmt --all` y la comprobación clippy de `tools/check.sh`.
+
+La tabla de nombres usa la versión Unicode 16.0 incluida en el runtime de referencia probado; no demuestra equivalencia con versiones posteriores de Java ni con extensiones fuera de UnicodeData y NameAliases.
+
+## Clases abreviadas y flags Java regex
+
+Se tradujeron las clases abreviadas Java `\\d`/`\\D`, `\\s`/`\\S` y `\\w`/`\\W` con su semántica ASCII predeterminada. Los flags `(?U)` y `(?-U)` cambian las clases Unicode, tanto globalmente como en grupos de alcance limitado; `(?i)` conserva el case-insensitive ASCII de Java, mientras que `(?iu)` y `(?U)(?i)` habilitan el plegado Unicode. Las clases Unicode cubren dígitos decimales, White_Space y letras, marcas, conectores y Join_Control; las pruebas incluyen marcas combinantes, join control, puntuación de conexión, dígitos no ASCII y casos Kelvin/Greek.
+
+Se añadieron 34 respuestas capturadas para filtros, proyecciones y `regexp_replace`, más cuatro errores de flags, rangos de repetición y clases incompletas. `regex_java_predefined_classes_match_captured_exec` y `regex_java_predefined_class_errors_match_captured_exec` pasaron. `tools/check.sh` pasó con 324 pruebas de `qdb-sql`, 4 de storage y 3 de types, además de servidor/CLI. `tools/run_differential.sh` confirmó en vivo 4447 recuentos, las 34 respuestas completas y los cuatro errores con mensaje/posición; también pasaron `cargo fmt --all`, `git diff --check` y `bash -n tools/run_differential.sh`.
+
+La tabla Unicode de `regex` no se ha contrastado exhaustivamente carácter por carácter con `Character` de Java; las capturas acreditan las categorías y ejemplos listados, no paridad total de Unicode ni del dialecto regex.
+
+## Flags Java `UNIX_LINES` y `COMMENTS`
+
+Se portaron `(?d)`/`(?-d)` y `(?x)`/`(?-x)`, con grupos globales y de alcance limitado. `(?d)` hace que el punto y las anclas multilinea reconozcan solo LF; el modo Java predeterminado también trata CR, NEL, LS y PS como terminadores, y CRLF forma un límite único. `(?x)` ignora espacio ASCII y comentarios, incluidos comentarios dentro de clases; los espacios Unicode que `Character` no considera espacio de patrón permanecen literales. Los chequeos de escapes, propiedades y cuantificadores no interpretan texto dentro de esos comentarios.
+
+Se añadieron 39 respuestas capturadas para filtros, proyecciones y `regexp_replace`, además de dos errores. `regex_java_remaining_flags_match_captured_exec` y `regex_java_remaining_flag_errors_match_captured_exec` pasaron. `tools/check.sh` pasó con 326 pruebas de `qdb-sql`, 4 de storage y 3 de types, además de servidor/CLI. `tools/run_differential.sh` confirmó en vivo 4447 recuentos, las 39 respuestas completas y los dos errores con posición. También pasaron `cargo fmt --all -- --check`, `git diff --check` y `bash -n tools/run_differential.sh`.
+
+La comparación cubre los terminadores y casos de comentarios capturados; no acredita equivalencia general entre los analizadores de `Pattern` y Rust regex.
+
+## Límites de palabra Java `\b` y `\B`
+
+Se implementaron los límites ASCII predeterminados, los límites Unicode bajo `(?U)`, el tratamiento Java de marcas combinantes y la negación `\B`. Se añadieron veintiocho respuestas completas para filtros, proyecciones y `regexp_replace`, con griego, dígitos no ASCII, conectores, join control, marcas y casos Kelvin bajo `(?i)`, incluidos escapes Unicode dentro de clases; también dos errores de `\b`/`\B` dentro de clases. `regex_java_word_boundaries_match_captured_exec` y `regex_java_word_boundary_errors_match_captured_exec` pasaron. En la validación conjunta posterior, `tools/check.sh` pasó con 330 pruebas de `qdb-sql`, 4 de storage y 3 de types. `tools/run_differential.sh` confirmó en vivo 4447 recuentos, las veintiocho respuestas completas y los dos errores con posición.
+
+La ruta de backtracking requiere retirar el flag Rust `-u`, que `fancy-regex` no admite junto con lookarounds. Se conserva el plegado ASCII para literales y clases, incluidos escapes Unicode, y las propiedades como `\p{L}` no se alteran al expandir variantes ASCII. Las capturas no demuestran equivalencia completa con `java.util.regex.Pattern`.
+
+## Ancla Java `\G`
+
+Se implementó `\G` como posición inicial del matcher y como final de la coincidencia anterior durante `regexp_replace` global. Se añadieron seis respuestas completas para reemplazos contiguos, inicio que no coincide, alternancia, coincidencias de longitud cero, texto suplementario Unicode y filtro `WHERE`; una captura adicional verifica el error dentro de clases. `regex_java_global_anchor_matches_captured_exec` y `regex_java_global_anchor_errors_match_captured_exec` pasaron. La validación conjunta pasó con `tools/check.sh` (330 pruebas de `qdb-sql`, 4 de storage y 3 de types) y `tools/run_differential.sh` (4447 recuentos, seis respuestas completas y el error con posición). También pasaron `cargo fmt --all -- --check`, `git diff --check` y `bash -n tools/run_differential.sh`.
+
+## Límites de grafema Java `\X` y `\b{g}`
+
+Se fijó la segmentación extendida de `unicode-segmentation` 1.12.0. En patrones con grafemas, `\X` se materializa como alternancia de los grafemas presentes en el texto y `\b{g}` como aserciones en los límites calculados de la cadena. Esto permite combinarlos con grupos de captura, cuantificadores, alternativas, anclas y otros look-around; el reemplazo conserva los grupos y `\b{g}` produce una coincidencia vacía en cada límite, también en la cadena vacía. Las capturas cubren marcas combinantes, emoji familiar con ZWJ, indicadores regionales, texto vacío, columnas `note` con NULL y filtros con límites al inicio y al final.
+
+Se verificaron los 1093 casos de `GraphemeBreakTest-16.0.0.txt` contra QuestDB 10.1.0 en dos consultas agrupadas con separadores de control, y también directamente contra `unicode-segmentation` 1.12.0 (`UNICODE_VERSION = 16.0.0`). El test `unicode_16_grapheme_break_test_vectors_match_segmentation` valida los límites y spans de cada vector. `regex_java_grapheme_boundaries_match_captured_exec` compara 36 respuestas completas; el runner diferencial también coteja esos resultados en vivo. Las regresiones adicionales cubren patrones compuestos, grupos, cuantificadores, alternativas, anclas, look-around, prefijos ambiguos y 1024 grafemas ASCII y combinados.
+
+La ruta directa `\\X`/`\\b{g}` usa los spans de Unicode. Para `\\X` compuesto, se omiten las aserciones por aparición solo si se verifica que cada aparición, incluidas las variantes ASCII case-insensitive de Java, empieza y termina en límites reales; la optimización queda desactivada para `(?iu)`, más de 64 grafemas distintos o más de 4096 caracteres. `regex_java_unanchored_grapheme_boundaries_match_long_text` compara 1024 grafemas mixtos con el patrón agrupado `\\b{g}(?:\\X){1024}\\b{g}`: pasó en 0,39 s frente a 16,90 s antes de la optimización. El caso ambiguo `áa` repetido 128 veces, que conserva guardas, pasó en 1,70 s. El camino de reemplazo que empieza con `\\b{g}` avanza un carácter Unicode después de cada coincidencia no vacía, según las respuestas capturadas de QuestDB para los casos ASCII, combinados y case-insensitive.
+
+## Próxima tarea
+
+Reducir el coste de los casos largos donde `\\X` aún necesita guardas por prefijos ambiguos, como `áa`, y donde `\\b{g}` aparece sin un átomo `\\X` que permita quitar aserciones redundantes. Mantener la semántica capturada de avance de búsqueda en `regexp_replace`.

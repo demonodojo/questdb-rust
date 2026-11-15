@@ -1,0 +1,5 @@
+id	is_word
+NULL	false
+-1	true
+1	true
+2	false

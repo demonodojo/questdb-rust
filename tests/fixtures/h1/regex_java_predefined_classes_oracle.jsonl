@@ -1,0 +1,34 @@
+{"query":"SELECT regexp_replace('٣5', '\\d', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["٣X"]],"count":1}
+{"query":"SELECT regexp_replace('3٣', '\\D', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["3X"]],"count":1}
+{"query":"SELECT regexp_replace(' A', '\\s', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XA"]],"count":1}
+{"query":"SELECT regexp_replace('  A', '\\S', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X X"]],"count":1}
+{"query":"SELECT regexp_replace('βa', '\\w', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["βX"]],"count":1}
+{"query":"SELECT regexp_replace('aβ', '\\W', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["aX"]],"count":1}
+{"query":"SELECT regexp_replace('٣5', '[\\D]', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X5"]],"count":1}
+{"query":"SELECT regexp_replace('βa', '[\\w]', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["βX"]],"count":1}
+{"query":"SELECT regexp_replace('٣5', '(?U)\\d', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XX"]],"count":1}
+{"query":"SELECT regexp_replace('٣A', '(?U)\\D', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["٣X"]],"count":1}
+{"query":"SELECT regexp_replace('  A', '(?U)\\s', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XXA"]],"count":1}
+{"query":"SELECT regexp_replace('  A', '(?U)\\S', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["  X"]],"count":1}
+{"query":"SELECT regexp_replace('βa', '(?U)\\w', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XX"]],"count":1}
+{"query":"SELECT regexp_replace('!a', '(?U)\\W', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["Xa"]],"count":1}
+{"query":"SELECT regexp_replace('á', '(?U)\\w', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XX"]],"count":1}
+{"query":"SELECT regexp_replace('a‌', '(?U)\\w', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XX"]],"count":1}
+{"query":"SELECT regexp_replace('x‿', '(?U)\\w', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["XX"]],"count":1}
+{"query":"SELECT regexp_replace('９', '(?U)\\d', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('٣5', '(?U)\\d(?-U)\\d', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('٣5', '(?U:\\d)\\d', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('Β', '(?i)^β$', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["Β"]],"count":1}
+{"query":"SELECT regexp_replace('Β', '(?iu)^β$', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('Β', '(?U)(?i)^β$', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('Β', '(?U)(?-U)(?i)^β$', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["Β"]],"count":1}
+{"query":"SELECT regexp_replace('Β', '(?i:β)', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["Β"]],"count":1}
+{"query":"SELECT regexp_replace('Β', '(?iu:β)', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('Β', '(?i)(?U:β)', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT regexp_replace('Β', '(?U)(?-U:(?i)^β$)', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["Β"]],"count":1}
+{"query":"SELECT regexp_replace('K', '(?i)^k$', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["K"]],"count":1}
+{"query":"SELECT regexp_replace('K', '(?iu)^k$', 'X') AS result FROM sensors LIMIT 1","columns":[{"name":"result","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '^\\w+$' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[1,"alpha"]],"count":1}
+{"query":"SELECT id, note FROM sensors WHERE note ~ '(?U)^\\w+$' ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"note","type":"STRING"}],"timestamp":-1,"dataset":[[-1,"βeta"],[1,"alpha"]],"count":2}
+{"query":"SELECT s.id, s.location FROM sensors AS s WHERE s.location ~ '(?U)^\\w+$' ORDER BY s.id","columns":[{"name":"id","type":"LONG"},{"name":"location","type":"SYMBOL"}],"timestamp":-1,"dataset":[[null,"madrid"],[-1,"東京"],[1,"madrid"]],"count":3}
+{"query":"SELECT id, note ~ '(?U)^\\w+$' AS is_word FROM sensors ORDER BY id","columns":[{"name":"id","type":"LONG"},{"name":"is_word","type":"BOOLEAN"}],"timestamp":-1,"dataset":[[null,false],[-1,true],[1,true],[2,false]],"count":4}

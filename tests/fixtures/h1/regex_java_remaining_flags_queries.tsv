@@ -1,0 +1,39 @@
+dot_default_cr	SELECT regexp_replace('A__CR__B', '.', 'X') AS result FROM sensors LIMIT 1
+dot_default_nel	SELECT regexp_replace('A__NEL__B', '.', 'X') AS result FROM sensors LIMIT 1
+dot_default_ls	SELECT regexp_replace('A__LS__B', '.', 'X') AS result FROM sensors LIMIT 1
+dot_unix_cr	SELECT regexp_replace('A__CR__B', '(?d).', 'X') AS result FROM sensors LIMIT 1
+dot_unix_nel	SELECT regexp_replace('A__NEL__B', '(?d).', 'X') AS result FROM sensors LIMIT 1
+dot_unix_ls	SELECT regexp_replace('A__LS__B', '(?d).', 'X') AS result FROM sensors LIMIT 1
+dot_default_crlf	SELECT regexp_replace('A__CR____LF__B', '.', 'X') AS result FROM sensors LIMIT 1
+dot_unix_scoped	SELECT regexp_replace('A__CR__B', '(?d:.).', 'X') AS result FROM sensors LIMIT 1
+dotall_unix	SELECT regexp_replace('A__CR____LF__B', '(?d)(?s).', 'X') AS result FROM sensors LIMIT 1
+anchor_multiline_cr	SELECT regexp_replace('a__CR__b', '(?m)^', '|') AS result FROM sensors LIMIT 1
+anchor_unix_multiline_cr	SELECT regexp_replace('a__CR__b', '(?dm)^', '|') AS result FROM sensors LIMIT 1
+anchor_multiline_nel	SELECT regexp_replace('a__NEL__b', '(?m)^', '|') AS result FROM sensors LIMIT 1
+anchor_unix_multiline_nel	SELECT regexp_replace('a__NEL__b', '(?dm)^', '|') AS result FROM sensors LIMIT 1
+anchor_multiline_ls	SELECT regexp_replace('a__LS__b', '(?m)^', '|') AS result FROM sensors LIMIT 1
+anchor_unix_multiline_ls	SELECT regexp_replace('a__LS__b', '(?dm)^', '|') AS result FROM sensors LIMIT 1
+anchor_multiline_crlf	SELECT regexp_replace('a__CR____LF__b', '(?m)^', '|') AS result FROM sensors LIMIT 1
+anchor_unix_multiline_crlf	SELECT regexp_replace('a__CR____LF__b', '(?dm)^', '|') AS result FROM sensors LIMIT 1
+d_flag_scoped	SELECT regexp_replace('a__CR__b', '(?d:(?m)^)', '|') AS result FROM sensors LIMIT 1
+comments_inline	SELECT regexp_replace('ab', '(?x)a # comment__LF__ b', 'X') AS result FROM sensors LIMIT 1
+comments_escaped_hash	SELECT regexp_replace('a#b', '(?x)a\#b', 'X') AS result FROM sensors LIMIT 1
+comments_escaped_space	SELECT regexp_replace('a b', '(?x)a\ b', 'X') AS result FROM sensors LIMIT 1
+comments_em_space_literal	SELECT regexp_replace('a b', '(?x)a b', 'X') AS result FROM sensors LIMIT 1
+comments_nbsp_literal	SELECT regexp_replace('a b', '(?x)a b', 'X') AS result FROM sensors LIMIT 1
+comments_space_in_class	SELECT regexp_replace(' ', '(?x)[ a ]', 'X') AS result FROM sensors LIMIT 1
+comments_hash_in_class	SELECT regexp_replace('#', '(?x)[a# comment__LF__b]', 'X') AS result FROM sensors LIMIT 1
+comments_scoped	SELECT regexp_replace('ab', '(?x:a # comment__LF__ b)', 'X') AS result FROM sensors LIMIT 1
+comments_disabled	SELECT regexp_replace('a b', '(?x)a(?-x) b', 'X') AS result FROM sensors LIMIT 1
+comments_to_end	SELECT regexp_replace('a', '(?x)a# comment', 'X') AS result FROM sensors LIMIT 1
+commented_unknown_modifier	SELECT id FROM sensors WHERE note ~ '(?x)# (?q)__LF__a' ORDER BY id
+filter_comments	SELECT id, note FROM sensors WHERE note ~ '(?x)^ a #letters__LF__ l p h a $' ORDER BY id
+projection_scoped_comments	SELECT id, note ~ '(?x:^ a #letters__LF__ l p h a $)' AS is_alpha FROM sensors ORDER BY id
+dollar_multiline_cr	SELECT regexp_replace('a__CR__b', '(?m)$', '|') AS result FROM sensors LIMIT 1
+dollar_unix_multiline_cr	SELECT regexp_replace('a__CR__b', '(?dm)$', '|') AS result FROM sensors LIMIT 1
+dollar_multiline_crlf	SELECT regexp_replace('a__CR____LF__b', '(?m)$', '|') AS result FROM sensors LIMIT 1
+dollar_unix_multiline_crlf	SELECT regexp_replace('a__CR____LF__b', '(?dm)$', '|') AS result FROM sensors LIMIT 1
+dollar_multiline_ls	SELECT regexp_replace('a__LS__b', '(?m)$', '|') AS result FROM sensors LIMIT 1
+dollar_unix_multiline_ls	SELECT regexp_replace('a__LS__b', '(?dm)$', '|') AS result FROM sensors LIMIT 1
+comments_ignored_invalid_escapes	SELECT regexp_replace('a', '(?x)a#\N{NOT A NAME} \p{InFake} {2,1}__LF__', 'X') AS result FROM sensors LIMIT 1
+comments_escaped_hash_class	SELECT regexp_replace('#', '(?x)[\#]', 'X') AS result FROM sensors LIMIT 1

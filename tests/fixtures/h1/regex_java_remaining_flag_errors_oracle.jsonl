@@ -1,0 +1,2 @@
+{"query":"SELECT id FROM sensors WHERE note ~ '(?x)['","error":"Unclosed character class near index 4\n(?x)[\n    ^","position":41}
+{"query":"SELECT id FROM sensors WHERE note ~ '(?x)('","error":"Unclosed group near index 5\n(?x)(","position":42}

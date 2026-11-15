@@ -1,0 +1,4 @@
+unknown_flag	SELECT id FROM sensors WHERE note ~ '(?q)\d'	Unknown inline modifier near index 2\n(?q)\d\n  ^	39
+invalid_repeat_range	SELECT id FROM sensors WHERE note ~ '\w{2,1}'	Illegal repetition range near index 6\n\w{2,1}\n      ^	43
+unclosed_predefined_class	SELECT id FROM sensors WHERE note ~ '[\d'	Unclosed character class near index 2\n[\d\n  ^	39
+unclosed_flag_group	SELECT id FROM sensors WHERE note ~ '(?U\d'	Unknown inline modifier near index 3\n(?U\d\n   ^	40

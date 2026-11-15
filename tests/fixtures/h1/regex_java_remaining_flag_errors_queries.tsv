@@ -1,0 +1,2 @@
+unclosed_class_comments	SELECT id FROM sensors WHERE note ~ '(?x)['	Unclosed character class near index 4\n(?x)[\n    ^	41
+unclosed_group_comments	SELECT id FROM sensors WHERE note ~ '(?x)('	Unclosed group near index 5\n(?x)(	42

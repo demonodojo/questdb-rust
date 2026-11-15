@@ -11,3 +11,4 @@ qdb-storage = { path = "../qdb-storage" }
 qdb-types = { path = "../qdb-types" }
 fancy-regex = "0.19.2"
 regex = "1.12"
+unicode-segmentation = "=1.12.0"

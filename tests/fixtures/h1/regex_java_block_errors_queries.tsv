@@ -1,0 +1,4 @@
+unsupported_canonical_greek_coptic_alias	SELECT id FROM sensors WHERE note ~ '\p{InGreek_And_Coptic}'	Unknown character property name {InGreek_And_Coptic} near index 21\n\p{InGreek_And_Coptic}\n                     ^	58
+unsupported_ascii_block_alias	SELECT regexp_replace('AB', '\P{InASCII}', 'X') AS result FROM sensors LIMIT 1	Unknown character property name {InASCII} near index 10\n\P{InASCII}\n          ^	39
+unsupported_arabic_short_alias_inside_class	SELECT id FROM sensors WHERE note ~ '[\p{InArabic_Ext_A}]'	Unknown character property name {InArabic_Ext_A} near index 18\n[\p{InArabic_Ext_A}]\n                  ^	55
+unsupported_post_java25_block_alias	SELECT id FROM sensors WHERE note ~ '\p{InBeria_Erfe}'	Unknown character property name {InBeria_Erfe} near index 15\n\p{InBeria_Erfe}\n               ^	52

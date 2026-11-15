@@ -1,0 +1,16 @@
+hiragana_block_replace	SELECT regexp_replace('Aあ漢', '\p{InHiragana}', 'X') AS result FROM sensors LIMIT 1
+not_hiragana_block_replace	SELECT regexp_replace('Aあ漢', '\P{InHiragana}', 'X') AS result FROM sensors LIMIT 1
+legacy_greek_block_alias_replace	SELECT regexp_replace('AΩЖ', '\p{InGreek}', 'X') AS result FROM sensors LIMIT 1
+latin1_named_block_alias_replace	SELECT regexp_replace('AéΩ', '\p{InLatin-1 Supplement}', 'X') AS result FROM sensors LIMIT 1
+cjk_ideograph_block_replace	SELECT regexp_replace('Aあ漢', '\p{InCJK_Unified_Ideographs}', 'X') AS result FROM sensors LIMIT 1
+cjk_extension_i_block_replace	SELECT regexp_replace('A𮯰B', '\p{InCJK_Unified_Ideographs_Extension_I}', 'X') AS result FROM sensors LIMIT 1
+supplementary_private_use_block_replace	SELECT regexp_replace('A􀀀B', '\p{InSupplementary_Private_Use_Area_B}', 'X') AS result FROM sensors LIMIT 1
+hiragana_property_in_class_replace	SELECT regexp_replace('Aあ漢', '[\p{InHiragana}]', 'X') AS result FROM sensors LIMIT 1
+not_hiragana_property_in_class_replace	SELECT regexp_replace('Aあ漢', '[\P{InHiragana}]', 'X') AS result FROM sensors LIMIT 1
+hiragana_block_projection	SELECT note ~ '\p{InHiragana}+' AS matches FROM sensors ORDER BY id
+greek_block_filter	SELECT id, note FROM sensors WHERE note ~ '[\p{InGreek}]+' ORDER BY id
+cyrillic_block_negative_projection	SELECT note ~ '\P{InCyrillic}+' AS matches FROM sensors ORDER BY id
+positive_surrogate_block_replace	SELECT regexp_replace('A😀B', '\p{InHigh_Surrogates}', 'X') AS result FROM sensors LIMIT 1
+negative_surrogate_block_replace	SELECT regexp_replace('A😀B', '\P{InHigh_Surrogates}', 'X') AS result FROM sensors LIMIT 1
+positive_surrogate_block_class_replace	SELECT regexp_replace('A😀B', '[\p{InHigh_Surrogates}]', 'X') AS result FROM sensors LIMIT 1
+negative_surrogate_block_class_replace	SELECT regexp_replace('A😀B', '[\P{InLow_Surrogates}]', 'X') AS result FROM sensors LIMIT 1

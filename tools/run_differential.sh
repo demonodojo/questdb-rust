@@ -8553,6 +8553,250 @@ for (name, sql), expected in zip(regex_java_class_cases, expected_regex_java_cla
         if payload.get(field) != expected.get(field):
             raise SystemExit(f"live Java regex class mismatch for {name} field {field}")
 print(f"live-reference-full: {len(regex_java_class_cases)} Java regex class queries match columns, dataset, and count")
+regex_java_block_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_blocks_queries.tsv")
+regex_java_block_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_blocks_oracle.jsonl")
+with open(regex_java_block_manifest, encoding="utf-8") as manifest:
+    regex_java_block_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_block_captures, encoding="utf-8") as captures:
+    expected_regex_java_blocks = [json.loads(line) for line in captures]
+if len(regex_java_block_cases) != len(expected_regex_java_blocks):
+    raise SystemExit("Java Unicode block manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_block_cases, expected_regex_java_blocks):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java Unicode block mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regex_java_block_cases)} Java Unicode block queries match columns, dataset, and count")
+regex_java_block_error_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_block_errors_queries.tsv")
+regex_java_block_error_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_block_errors_oracle.jsonl")
+with open(regex_java_block_error_manifest, encoding="utf-8") as manifest:
+    regex_java_block_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(regex_java_block_error_captures, encoding="utf-8") as captures:
+    expected_regex_java_block_errors = [json.loads(line) for line in captures]
+if len(regex_java_block_error_cases) != len(expected_regex_java_block_errors):
+    raise SystemExit("Java Unicode block error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(regex_java_block_error_cases, expected_regex_java_block_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live Java Unicode block error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java Unicode block error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(regex_java_block_error_cases)} Java Unicode block errors match message and position")
+regex_java_char_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_char_escapes_queries.tsv")
+regex_java_char_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_char_escapes_oracle.jsonl")
+with open(regex_java_char_manifest, encoding="utf-8") as manifest:
+    regex_java_char_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_char_captures, encoding="utf-8") as captures:
+    expected_regex_java_chars = [json.loads(line) for line in captures]
+if len(regex_java_char_cases) != len(expected_regex_java_chars):
+    raise SystemExit("Java character escape manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_char_cases, expected_regex_java_chars):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java character escape mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regex_java_char_cases)} Java character escape queries match columns, dataset, and count")
+regex_java_char_error_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_char_escape_errors_queries.tsv")
+regex_java_char_error_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_char_escape_errors_oracle.jsonl")
+with open(regex_java_char_error_manifest, encoding="utf-8") as manifest:
+    regex_java_char_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(regex_java_char_error_captures, encoding="utf-8") as captures:
+    expected_regex_java_char_errors = [json.loads(line) for line in captures]
+if len(regex_java_char_error_cases) != len(expected_regex_java_char_errors):
+    raise SystemExit("Java character escape error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(regex_java_char_error_cases, expected_regex_java_char_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live Java character escape error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java character escape error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(regex_java_char_error_cases)} Java character escape errors match message and position")
+regex_java_predefined_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_predefined_classes_queries.tsv")
+regex_java_predefined_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_predefined_classes_oracle.jsonl")
+with open(regex_java_predefined_manifest, encoding="utf-8") as manifest:
+    regex_java_predefined_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_predefined_captures, encoding="utf-8") as captures:
+    expected_regex_java_predefined = [json.loads(line) for line in captures]
+if len(regex_java_predefined_cases) != len(expected_regex_java_predefined):
+    raise SystemExit("Java predefined class manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_predefined_cases, expected_regex_java_predefined):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java predefined class mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regex_java_predefined_cases)} Java predefined class queries match columns, dataset, and count")
+regex_java_predefined_error_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_predefined_class_errors_queries.tsv")
+regex_java_predefined_error_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_predefined_class_errors_oracle.jsonl")
+with open(regex_java_predefined_error_manifest, encoding="utf-8") as manifest:
+    regex_java_predefined_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(regex_java_predefined_error_captures, encoding="utf-8") as captures:
+    expected_regex_java_predefined_errors = [json.loads(line) for line in captures]
+if len(regex_java_predefined_error_cases) != len(expected_regex_java_predefined_errors):
+    raise SystemExit("Java predefined class error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(regex_java_predefined_error_cases, expected_regex_java_predefined_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live Java predefined class error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java predefined class error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(regex_java_predefined_error_cases)} Java predefined class errors match message and position")
+regex_java_remaining_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_remaining_flags_queries.tsv")
+regex_java_remaining_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_remaining_flags_oracle.jsonl")
+with open(regex_java_remaining_manifest, encoding="utf-8") as manifest:
+    regex_java_remaining_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_remaining_captures, encoding="utf-8") as captures:
+    expected_regex_java_remaining = [json.loads(line) for line in captures]
+if len(regex_java_remaining_cases) != len(expected_regex_java_remaining):
+    raise SystemExit("Java remaining flag manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_remaining_cases, expected_regex_java_remaining):
+    for marker, value in (("__CR__", "\r"), ("__LF__", "\n"), ("__NEL__", "\u0085"), ("__LS__", "\u2028"), ("__PS__", "\u2029")):
+        sql = sql.replace(marker, value)
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java remaining flag mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regex_java_remaining_cases)} remaining Java flag queries match columns, dataset, and count")
+regex_java_remaining_error_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_remaining_flag_errors_queries.tsv")
+regex_java_remaining_error_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_remaining_flag_errors_oracle.jsonl")
+with open(regex_java_remaining_error_manifest, encoding="utf-8") as manifest:
+    regex_java_remaining_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(regex_java_remaining_error_captures, encoding="utf-8") as captures:
+    expected_regex_java_remaining_errors = [json.loads(line) for line in captures]
+if len(regex_java_remaining_error_cases) != len(expected_regex_java_remaining_errors):
+    raise SystemExit("Java remaining flag error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(regex_java_remaining_error_cases, expected_regex_java_remaining_errors):
+    for marker, value in (("__CR__", "\r"), ("__LF__", "\n"), ("__NEL__", "\u0085"), ("__LS__", "\u2028"), ("__PS__", "\u2029")):
+        sql = sql.replace(marker, value)
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live Java remaining flag error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java remaining flag error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(regex_java_remaining_error_cases)} remaining Java flag errors match message and position")
+regex_java_boundary_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_word_boundaries_queries.tsv")
+regex_java_boundary_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_word_boundaries_oracle.jsonl")
+with open(regex_java_boundary_manifest, encoding="utf-8") as manifest:
+    regex_java_boundary_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_boundary_captures, encoding="utf-8") as captures:
+    expected_regex_java_boundaries = [json.loads(line) for line in captures]
+if len(regex_java_boundary_cases) != len(expected_regex_java_boundaries):
+    raise SystemExit("Java word boundary manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_boundary_cases, expected_regex_java_boundaries):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java word boundary mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regex_java_boundary_cases)} Java word boundary queries match columns, dataset, and count")
+regex_java_boundary_error_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_word_boundary_errors_queries.tsv")
+regex_java_boundary_error_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_word_boundary_errors_oracle.jsonl")
+with open(regex_java_boundary_error_manifest, encoding="utf-8") as manifest:
+    regex_java_boundary_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(regex_java_boundary_error_captures, encoding="utf-8") as captures:
+    expected_regex_java_boundary_errors = [json.loads(line) for line in captures]
+if len(regex_java_boundary_error_cases) != len(expected_regex_java_boundary_errors):
+    raise SystemExit("Java word boundary error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(regex_java_boundary_error_cases, expected_regex_java_boundary_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live Java word boundary error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java word boundary error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(regex_java_boundary_error_cases)} Java word boundary errors match message and position")
+regex_java_global_anchor_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_global_anchor_queries.tsv")
+regex_java_global_anchor_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_global_anchor_oracle.jsonl")
+with open(regex_java_global_anchor_manifest, encoding="utf-8") as manifest:
+    regex_java_global_anchor_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_global_anchor_captures, encoding="utf-8") as captures:
+    expected_regex_java_global_anchors = [json.loads(line) for line in captures]
+if len(regex_java_global_anchor_cases) != len(expected_regex_java_global_anchors):
+    raise SystemExit("Java global anchor manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_global_anchor_cases, expected_regex_java_global_anchors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java global anchor mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regex_java_global_anchor_cases)} Java global anchor queries match columns, dataset, and count")
+regex_java_global_anchor_error_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_global_anchor_errors_queries.tsv")
+regex_java_global_anchor_error_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_global_anchor_errors_oracle.jsonl")
+with open(regex_java_global_anchor_error_manifest, encoding="utf-8") as manifest:
+    regex_java_global_anchor_error_cases = [line.rstrip("\n").split("\t", 3) for line in manifest]
+with open(regex_java_global_anchor_error_captures, encoding="utf-8") as captures:
+    expected_regex_java_global_anchor_errors = [json.loads(line) for line in captures]
+if len(regex_java_global_anchor_error_cases) != len(expected_regex_java_global_anchor_errors):
+    raise SystemExit("Java global anchor error manifest and captures differ in length")
+for (name, sql, _, _), expected in zip(regex_java_global_anchor_error_cases, expected_regex_java_global_anchor_errors):
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+            if "error" not in payload:
+                raise SystemExit(f"expected live Java global anchor error for {name}: {response.status}")
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java global anchor error mismatch for {name} field {field}")
+print(f"live-reference-errors: {len(regex_java_global_anchor_error_cases)} Java global anchor errors match message and position")
+regex_java_grapheme_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_grapheme_queries.tsv")
+regex_java_grapheme_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_grapheme_oracle.jsonl")
+with open(regex_java_grapheme_manifest, encoding="utf-8") as manifest:
+    regex_java_grapheme_cases = [line.rstrip("\n").split("\t", 1) for line in manifest]
+with open(regex_java_grapheme_captures, encoding="utf-8") as captures:
+    expected_regex_java_graphemes = [json.loads(line) for line in captures]
+if len(regex_java_grapheme_cases) != len(expected_regex_java_graphemes):
+    raise SystemExit("Java grapheme manifest and captures differ in length")
+for (name, sql), expected in zip(regex_java_grapheme_cases, expected_regex_java_graphemes):
+    for marker, value in (("__CR__", "\r"), ("__LF__", "\n"), ("__NEL__", "\u0085"), ("__LS__", "\u2028"), ("__PS__", "\u2029"), ("__NUL__", "\x00"), ("__SOH__", "\x01"), ("__FS__", "\x1c"), ("__GS__", "\x1d"), ("__RS__", "\x1e")):
+        sql = sql.replace(marker, value)
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live Java grapheme mismatch for {name} field {field}")
+print(f"live-reference-full: {len(regex_java_grapheme_cases)} Java grapheme queries match columns, dataset, and count")
 regex_java_error_manifest = os.path.join(os.environ["DIFF_H1"], "regex_java_additional_errors_queries.tsv")
 regex_java_error_captures = os.path.join(os.environ["DIFF_H1"], "regex_java_additional_errors_oracle.jsonl")
 with open(regex_java_error_manifest, encoding="utf-8") as manifest:

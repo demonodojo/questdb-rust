@@ -1,0 +1,28 @@
+ascii_b	SELECT regexp_replace('α!a_3!', '\b', '|') AS result FROM sensors LIMIT 1
+ascii_B	SELECT regexp_replace('α!a_3!', '\B', '|') AS result FROM sensors LIMIT 1
+unicode_b	SELECT regexp_replace('α!a_3!', '(?U)\b', '|') AS result FROM sensors LIMIT 1
+unicode_B	SELECT regexp_replace('α!a_3!', '(?U)\B', '|') AS result FROM sensors LIMIT 1
+ascii_b_combining	SELECT regexp_replace('áb', '\b', '|') AS result FROM sensors LIMIT 1
+ascii_B_combining	SELECT regexp_replace('áb', '\B', '|') AS result FROM sensors LIMIT 1
+ascii_b_leading_mark	SELECT regexp_replace('́a', '\b', '|') AS result FROM sensors LIMIT 1
+unicode_b_multiple_marks	SELECT regexp_replace('á̈b', '(?U)\b', '|') AS result FROM sensors LIMIT 1
+ascii_b_join_control	SELECT regexp_replace('a‌b', '\b', '|') AS result FROM sensors LIMIT 1
+unicode_b_join_control	SELECT regexp_replace('a‌b', '(?U)\b', '|') AS result FROM sensors LIMIT 1
+ascii_b_arabic_digit	SELECT regexp_replace('٣a', '\b', '|') AS result FROM sensors LIMIT 1
+unicode_b_arabic_digit	SELECT regexp_replace('٣a', '(?U)\b', '|') AS result FROM sensors LIMIT 1
+unicode_b_connector	SELECT regexp_replace('‿a', '(?U)\b', '|') AS result FROM sensors LIMIT 1
+unicode_b_greek	SELECT regexp_replace('αa', '(?U)\b', '|') AS result FROM sensors LIMIT 1
+ascii_case_b	SELECT regexp_replace('α!a', '(?i)\b', '|') AS result FROM sensors LIMIT 1
+unicode_case_b	SELECT regexp_replace('α!a', '(?iu)\b', '|') AS result FROM sensors LIMIT 1
+filter_ascii_greek_boundary	SELECT id, note FROM sensors WHERE note ~ '\bβ' ORDER BY id
+filter_unicode_greek_boundary	SELECT id, note FROM sensors WHERE note ~ '(?U)\bβ' ORDER BY id
+filter_unicode_location_boundary	SELECT id, location FROM sensors WHERE location ~ '(?U)\b東' ORDER BY id
+projection_unicode_boundary	SELECT id, note ~ '(?U)\bβ' AS has_beta FROM sensors ORDER BY id
+ascii_case_kelvin_pattern	SELECT regexp_replace('K', '(?i)\bK', '|') AS result FROM sensors LIMIT 1
+ascii_case_kelvin_boundary	SELECT regexp_replace('K!kK', '(?i)\bK\b', '|') AS result FROM sensors LIMIT 1
+ascii_case_kelvin_class	SELECT regexp_replace('K', '(?i)\b[K]\b', '|') AS result FROM sensors LIMIT 1
+ascii_case_kelvin_mixed_class	SELECT regexp_replace('A', '(?i)\b[Ka]\b', '|') AS result FROM sensors LIMIT 1
+ascii_case_kelvin_escaped_class	SELECT regexp_replace('K', '(?i)\b[\x{212A}]\b', '|') AS result FROM sensors LIMIT 1
+ascii_case_kelvin_mixed_escaped_class	SELECT regexp_replace('A', '(?i)\b[\x{212A}\x{61}]\b', '|') AS result FROM sensors LIMIT 1
+ascii_case_kelvin_nonboundary_class	SELECT regexp_replace('K', '(?i)\B[K]', '|') AS result FROM sensors LIMIT 1
+ascii_case_unicode_property_class	SELECT regexp_replace('α', '(?i)\B[\p{L}]', '|') AS result FROM sensors LIMIT 1
