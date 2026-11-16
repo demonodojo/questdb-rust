@@ -27641,6 +27641,70 @@ mod tests {
     }
 
     #[test]
+    fn where_alias_temporal_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, expected) in [
+            ("SELECT ts,day FROM sensors s WHERE s.day IN ('2020-01-02') ORDER BY ts", "ts\tday\n2020-01-02T03:04:05.000000Z\t2020-01-02T00:00:00.000Z\n"),
+            ("SELECT ts,day FROM sensors s WHERE s.day IN (1577923200000000) ORDER BY ts", "ts\tday\n2020-01-02T03:04:05.000000Z\t2020-01-02T00:00:00.000Z\n"),
+            ("SELECT ts,day FROM sensors s WHERE s.day IN ('1970-01-01','2020-06-15T12:30:00Z') ORDER BY ts", "ts\tday\n2020-01-02T03:04:07.000000Z\t1970-01-01T00:00:00.000Z\n2020-01-02T03:04:08.000000Z\t2020-06-15T12:30:00.000Z\n"),
+            ("SELECT ts,day FROM sensors s WHERE s.day NOT IN ('2020-01-02') ORDER BY ts", "ts\tday\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\t1970-01-01T00:00:00.000Z\n2020-01-02T03:04:08.000000Z\t2020-06-15T12:30:00.000Z\n"),
+            ("SELECT ts,day FROM sensors s WHERE s.day IN ('2020-01-02',NULL) ORDER BY ts", "ts\tday\n2020-01-02T03:04:05.000000Z\t2020-01-02T00:00:00.000Z\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts FROM sensors s WHERE s.ts IN ('2020-01-02T03:04:05Z') ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+            ("SELECT ts FROM sensors s WHERE s.ts IN (1577934245000000) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+            ("SELECT ts FROM sensors s WHERE s.ts NOT IN (NULL) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:06.000000Z\n2020-01-02T03:04:07.000000Z\n2020-01-02T03:04:08.000000Z\n"),
+        ] {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors s WHERE s.day IN ('bad') LIMIT 0",
+                "Invalid date: bad",
+                41,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.day IN ('x') LIMIT 0",
+                "cannot compare TIMESTAMP with type CHAR",
+                41,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.day IN (true) LIMIT 0",
+                "cannot compare TIMESTAMP with type BOOLEAN",
+                41,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.day IN (1.0) LIMIT 0",
+                "cannot compare TIMESTAMP with type DOUBLE",
+                41,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ts IN ('bad') LIMIT 0",
+                "Invalid date: bad",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ts IN ('1577934245000000') LIMIT 0",
+                "Invalid date: 1577934245000000",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.day IN () LIMIT 0",
+                "too few arguments for 'in'",
+                37,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ts NOT IN () LIMIT 0",
+                "too few arguments for 'in'",
+                40,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
     fn replace_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");

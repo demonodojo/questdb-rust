@@ -1,0 +1,8 @@
+{"query":"SELECT ts FROM sensors s WHERE s.day IN ('bad') LIMIT 0","case":"alias_date_invalid_limit0","error":"Invalid date: bad","position":41}
+{"query":"SELECT ts FROM sensors s WHERE s.day IN ('x') LIMIT 0","case":"alias_date_char_limit0","error":"cannot compare TIMESTAMP with type CHAR","position":41}
+{"query":"SELECT ts FROM sensors s WHERE s.day IN (true) LIMIT 0","case":"alias_date_boolean_limit0","error":"cannot compare TIMESTAMP with type BOOLEAN","position":41}
+{"query":"SELECT ts FROM sensors s WHERE s.day IN (1.0) LIMIT 0","case":"alias_date_double_limit0","error":"cannot compare TIMESTAMP with type DOUBLE","position":41}
+{"query":"SELECT ts FROM sensors s WHERE s.ts IN ('bad') LIMIT 0","case":"alias_timestamp_invalid_limit0","error":"Invalid date: bad","position":40}
+{"query":"SELECT ts FROM sensors s WHERE s.ts IN ('1577934245000000') LIMIT 0","case":"alias_timestamp_numeric_text_limit0","error":"Invalid date: 1577934245000000","position":40}
+{"query":"SELECT ts FROM sensors s WHERE s.day IN () LIMIT 0","case":"alias_date_empty_in_limit0","error":"too few arguments for 'in'","position":37}
+{"query":"SELECT ts FROM sensors s WHERE s.ts NOT IN () LIMIT 0","case":"alias_timestamp_empty_not_in_limit0","error":"too few arguments for 'in'","position":40}
