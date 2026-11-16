@@ -1492,6 +1492,14 @@ Se capturaron dieciséis respuestas completas y seis errores de QuestDB 10.1.0 c
 
 Verificación: `tools/check.sh` pasó con 376 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, dieciséis resultados textuales por alias y seis errores, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
 
+## 2026-11-16 — composición lógica de `IN`/`NOT IN` con alias
+
+Se capturaron ocho respuestas completas y tres errores de QuestDB 10.1.0 para listas `IN`/`NOT IN` combinadas con `AND`, `OR`, `NOT` y paréntesis sobre columnas con alias. Los casos verifican que AND tiene precedencia sobre OR, los grupos parentizados, NULL como miembro y la validación de tipos incompatible aunque la rama no coincida o se use `LIMIT 0`.
+
+`where_alias_in_lists_compose_with_boolean_logic` reproduce filas, errores y posiciones. El runner coteja ocho respuestas por columnas/dataset/count y tres errores por mensaje/posición.
+
+Verificación: `tools/check.sh` pasó con 377 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, ocho composiciones lógicas completas y tres errores, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
 ## Próxima tarea
 
-Capturar y probar combinaciones de `IN`/`NOT IN` con `AND`/`OR` y paréntesis sobre columnas con alias de tabla, frente a QuestDB 10.1.0.
+Consultar QuestDB 10.1.0 y probar si `IN`/`NOT IN` acepta subconsultas como fuente de miembros; documentar y portar la forma si está soportada.

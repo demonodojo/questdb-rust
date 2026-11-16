@@ -27767,6 +27767,45 @@ mod tests {
     }
 
     #[test]
+    fn where_alias_in_lists_compose_with_boolean_logic() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, expected) in [
+            ("SELECT ts,id,flags FROM sensors s WHERE s.id IN (1,2) AND s.flags IN (10) ORDER BY ts", "ts\tid\tflags\n2020-01-02T03:04:05.000000Z\t1\t10\n"),
+            ("SELECT ts,id,flags FROM sensors s WHERE s.id IN (1) OR s.flags IN (0) ORDER BY ts", "ts\tid\tflags\n2020-01-02T03:04:05.000000Z\t1\t10\n2020-01-02T03:04:07.000000Z\tNULL\t0\n"),
+            ("SELECT ts,id,flags,note FROM sensors s WHERE s.id IN (1) OR s.flags IN (0) AND s.note IN ('') ORDER BY ts", "ts\tid\tflags\tnote\n2020-01-02T03:04:05.000000Z\t1\t10\talpha\n2020-01-02T03:04:07.000000Z\tNULL\t0\t\n"),
+            ("SELECT ts,id,flags,reading FROM sensors s WHERE (s.id IN (1) OR s.flags IN (0)) AND s.reading IN (0,NULL) ORDER BY ts", "ts\tid\tflags\treading\n2020-01-02T03:04:07.000000Z\tNULL\t0\t0.0\n"),
+            ("SELECT ts,id,flags,score FROM sensors s WHERE s.id IN (1) AND (s.flags IN (10) OR s.score IN (0)) ORDER BY ts", "ts\tid\tflags\tscore\n2020-01-02T03:04:05.000000Z\t1\t10\t1.25\n"),
+            ("SELECT ts,id,flags FROM sensors s WHERE s.id NOT IN (1) AND s.flags NOT IN (0) ORDER BY ts", "ts\tid\tflags\n2020-01-02T03:04:06.000000Z\t2\tNULL\n2020-01-02T03:04:08.000000Z\t-1\t42\n"),
+            ("SELECT ts,id,flags FROM sensors s WHERE s.id IN (1,NULL) OR s.flags IN (0) ORDER BY ts", "ts\tid\tflags\n2020-01-02T03:04:05.000000Z\t1\t10\n2020-01-02T03:04:07.000000Z\tNULL\t0\n"),
+            ("SELECT ts,id,flags,ok FROM sensors s WHERE NOT (s.id NOT IN (1) OR s.flags IN (0)) ORDER BY ts", "ts\tid\tflags\tok\n2020-01-02T03:04:05.000000Z\t1\t10\ttrue\n"),
+        ] {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors s WHERE s.ok IN (true) OR s.flags IN (0)",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.id IN (1) AND s.flags IN (true) ORDER BY ts",
+                "cannot compare LONG with type BOOLEAN",
+                59,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.id IN (1) OR s.flags IN (1.0) LIMIT 0",
+                "cannot compare LONG with type DOUBLE",
+                58,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
     fn replace_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
