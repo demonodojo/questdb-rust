@@ -8736,6 +8736,178 @@ for expected in expected_ipv4_in_errors:
                 f"live IPv4 IN error mismatch for {expected.get('case', sql)!r} field {field}"
             )
 print(f"live-reference-errors: {len(expected_ipv4_in_errors)} IPv4 IN errors match message and position")
+cast_in_captures = os.path.join(os.environ["DIFF_H1"], "where_cast_in_expr_oracle.jsonl")
+with open(cast_in_captures, encoding="utf-8") as captures:
+    expected_cast_in = [json.loads(line) for line in captures]
+for expected in expected_cast_in:
+    sql = expected["query"]
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(
+                f"live CAST IN mismatch for {expected.get('case', sql)!r} field {field}"
+            )
+print(f"live-reference-full: {len(expected_cast_in)} CAST IN queries match columns, dataset, and count")
+cast_in_error_captures = os.path.join(
+    os.environ["DIFF_H1"], "where_cast_in_expr_errors_oracle.jsonl"
+)
+with open(cast_in_error_captures, encoding="utf-8") as captures:
+    expected_cast_in_errors = [json.loads(line) for line in captures]
+for expected in expected_cast_in_errors:
+    sql = expected["query"]
+    url = http + "?" + urllib.parse.urlencode({"query": sql})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as response:
+        payload = json.loads(response.read())
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(
+                f"live CAST IN error mismatch for {expected.get('case', sql)!r} field {field}"
+            )
+print(f"live-reference-errors: {len(expected_cast_in_errors)} CAST IN errors match message and position")
+symbol_char_in_captures = os.path.join(os.environ["DIFF_H1"], "where_symbol_char_in_oracle.jsonl")
+with open(symbol_char_in_captures, encoding="utf-8") as captures:
+    expected_symbol_char_in = [json.loads(line) for line in captures]
+for expected in expected_symbol_char_in:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live SYMBOL/CHAR IN mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-full: {len(expected_symbol_char_in)} SYMBOL/CHAR IN queries match columns, dataset, and count")
+symbol_char_in_error_captures = os.path.join(os.environ["DIFF_H1"], "where_symbol_char_in_errors_oracle.jsonl")
+with open(symbol_char_in_error_captures, encoding="utf-8") as captures:
+    expected_symbol_char_in_errors = [json.loads(line) for line in captures if "error" in json.loads(line)]
+for expected in expected_symbol_char_in_errors:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as response:
+        payload = json.loads(response.read())
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live SYMBOL/CHAR IN error mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-errors: {len(expected_symbol_char_in_errors)} SYMBOL/CHAR IN errors match message and position")
+string_varchar_in_captures = os.path.join(os.environ["DIFF_H1"], "where_string_varchar_in_oracle.jsonl")
+with open(string_varchar_in_captures, encoding="utf-8") as captures:
+    expected_string_varchar_in = [json.loads(line) for line in captures]
+for expected in expected_string_varchar_in:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live STRING/VARCHAR IN mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-full: {len(expected_string_varchar_in)} STRING/VARCHAR IN queries match columns, dataset, and count")
+string_varchar_in_error_captures = os.path.join(os.environ["DIFF_H1"], "where_string_varchar_in_errors_oracle.jsonl")
+with open(string_varchar_in_error_captures, encoding="utf-8") as captures:
+    expected_string_varchar_in_errors = [json.loads(line) for line in captures]
+for expected in expected_string_varchar_in_errors:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as response:
+        payload = json.loads(response.read())
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live STRING/VARCHAR IN error mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-errors: {len(expected_string_varchar_in_errors)} STRING/VARCHAR IN errors match message and position")
+qualified_numeric_in_captures = os.path.join(os.environ["DIFF_H1"], "where_qualified_numeric_in_oracle.jsonl")
+with open(qualified_numeric_in_captures, encoding="utf-8") as captures:
+    expected_qualified_numeric_in = [json.loads(line) for line in captures]
+for expected in expected_qualified_numeric_in:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live qualified numeric IN mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-full: {len(expected_qualified_numeric_in)} table-qualified numeric IN queries match columns, dataset, and count")
+qualified_numeric_in_error_captures = os.path.join(os.environ["DIFF_H1"], "where_qualified_numeric_in_errors_oracle.jsonl")
+with open(qualified_numeric_in_error_captures, encoding="utf-8") as captures:
+    expected_qualified_numeric_in_errors = [json.loads(line) for line in captures]
+for expected in expected_qualified_numeric_in_errors:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as response:
+        payload = json.loads(response.read())
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live qualified numeric IN error mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-errors: {len(expected_qualified_numeric_in_errors)} table-qualified numeric IN errors match message and position")
+qualified_temporal_in_captures = os.path.join(os.environ["DIFF_H1"], "where_qualified_temporal_in_oracle.jsonl")
+with open(qualified_temporal_in_captures, encoding="utf-8") as captures:
+    expected_qualified_temporal_in = [json.loads(line) for line in captures]
+for expected in expected_qualified_temporal_in:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live qualified temporal IN mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-full: {len(expected_qualified_temporal_in)} table-qualified temporal IN queries match columns, dataset, and count")
+qualified_temporal_in_error_captures = os.path.join(os.environ["DIFF_H1"], "where_qualified_temporal_in_errors_oracle.jsonl")
+with open(qualified_temporal_in_error_captures, encoding="utf-8") as captures:
+    expected_qualified_temporal_in_errors = [json.loads(line) for line in captures]
+for expected in expected_qualified_temporal_in_errors:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as response:
+        payload = json.loads(response.read())
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live qualified temporal IN error mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-errors: {len(expected_qualified_temporal_in_errors)} table-qualified temporal IN errors match message and position")
+qualified_symbol_char_in_captures = os.path.join(os.environ["DIFF_H1"], "where_qualified_symbol_char_in_oracle.jsonl")
+with open(qualified_symbol_char_in_captures, encoding="utf-8") as captures:
+    expected_qualified_symbol_char_in = [json.loads(line) for line in captures]
+for expected in expected_qualified_symbol_char_in:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live qualified SYMBOL/CHAR IN mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-full: {len(expected_qualified_symbol_char_in)} table-qualified SYMBOL/CHAR IN queries match columns, dataset, and count")
+qualified_symbol_char_in_error_captures = os.path.join(os.environ["DIFF_H1"], "where_qualified_symbol_char_in_errors_oracle.jsonl")
+with open(qualified_symbol_char_in_error_captures, encoding="utf-8") as captures:
+    expected_qualified_symbol_char_in_errors = [json.loads(line) for line in captures]
+for expected in expected_qualified_symbol_char_in_errors:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as response:
+        payload = json.loads(response.read())
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live qualified SYMBOL/CHAR IN error mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-errors: {len(expected_qualified_symbol_char_in_errors)} table-qualified SYMBOL/CHAR IN errors match message and position")
+qualified_boolean_in_error_captures = os.path.join(os.environ["DIFF_H1"], "where_qualified_boolean_in_errors_oracle.jsonl")
+with open(qualified_boolean_in_error_captures, encoding="utf-8") as captures:
+    expected_qualified_boolean_in_errors = [json.loads(line) for line in captures]
+for expected in expected_qualified_boolean_in_errors:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as response:
+        payload = json.loads(response.read())
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live qualified BOOLEAN IN error mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-errors: {len(expected_qualified_boolean_in_errors)} table-qualified BOOLEAN IN errors match message and position")
 text_scalar_where_error_captures = os.path.join(
     os.environ["DIFF_H1"], "../trim-cases/where_text_scalar_errors_oracle.jsonl"
 )

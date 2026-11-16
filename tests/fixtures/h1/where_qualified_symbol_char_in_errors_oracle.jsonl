@@ -1,0 +1,6 @@
+{"query":"SELECT ts FROM sensors WHERE sensors.location IN (1) LIMIT 0","case":"symbol_int_limit0","error":"STRING constant expected","position":50}
+{"query":"SELECT ts FROM sensors WHERE sensors.location IN (true) LIMIT 0","case":"symbol_bool_limit0","error":"STRING constant expected","position":50}
+{"query":"SELECT ts FROM sensors WHERE sensors.ch IN (1) LIMIT 0","case":"char_int_limit0","error":"CHAR constant expected","position":44}
+{"query":"SELECT ts FROM sensors WHERE sensors.ch IN ('ab') LIMIT 0","case":"char_long_text_limit0","error":"CHAR constant expected","position":44}
+{"query":"SELECT ts FROM sensors WHERE sensors.location IN () LIMIT 0","case":"symbol_empty_list_limit0","error":"too few arguments for 'in'","position":46}
+{"query":"SELECT ts FROM sensors WHERE sensors.ch NOT IN () LIMIT 0","case":"char_empty_not_list_limit0","error":"too few arguments for 'in'","position":44}

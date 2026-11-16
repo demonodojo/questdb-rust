@@ -1,0 +1,6 @@
+{"query":"SELECT ts FROM sensors WHERE id::long IN ('1') ORDER BY ts","case":"long_cast_char_member","error":"cannot compare LONG with type CHAR","position":42}
+{"query":"SELECT ts FROM sensors WHERE id::long IN (1.0) ORDER BY ts","case":"long_cast_double_member","error":"cannot compare LONG with type DOUBLE","position":42}
+{"query":"SELECT ts FROM sensors WHERE id::string IN (1) ORDER BY ts","case":"string_cast_int_member","error":"cannot compare STRING with type INT","position":44}
+{"query":"SELECT ts FROM sensors WHERE id::boolean IN (true) ORDER BY ts","case":"boolean_cast_member","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":41}
+{"query":"SELECT ts FROM sensors WHERE cast(id AS string) IN () ORDER BY ts","case":"cast_empty_list","error":"too few arguments for 'in'","position":48}
+{"query":"SELECT ts FROM sensors WHERE id::string NOT IN () ORDER BY ts","case":"postfix_not_in_empty_list","error":"too few arguments for 'in'","position":44}

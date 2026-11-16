@@ -4287,6 +4287,7 @@ fn needs_extended_filter_expr(source: &str) -> bool {
     let mut quoted = false;
     let mut arithmetic_count = 0usize;
     let mut has_call = false;
+    let mut has_cast = false;
     let bytes = source.as_bytes();
     while pos < bytes.len() {
         match bytes[pos] {
@@ -4308,6 +4309,10 @@ fn needs_extended_filter_expr(source: &str) -> bool {
                 depth += 1;
             }
             b')' if !quoted => depth = depth.saturating_sub(1),
+            b':' if !quoted && bytes.get(pos + 1) == Some(&b':') => {
+                has_cast = true;
+                pos += 1;
+            }
             op @ (b'+' | b'-' | b'*' | b'/' | b'%') if !quoted => {
                 if matches!(op, b'+' | b'-')
                     && pos > 0
@@ -4334,6 +4339,7 @@ fn needs_extended_filter_expr(source: &str) -> bool {
         pos += 1;
     }
     has_call
+        || has_cast
         || arithmetic_count > 0
         || contains_scientific_literal(bytes)
         || (unwrapped_filter_expr(source).is_some() && arithmetic_count > 0)

@@ -1,0 +1,12 @@
+{"query":"SELECT ts FROM sensors WHERE location IN (1)","case":"symbol_int","error":"STRING constant expected","position":42}
+{"query":"SELECT ts FROM sensors WHERE location IN (true)","case":"symbol_boolean","error":"STRING constant expected","position":42}
+{"query":"SELECT ts FROM sensors WHERE location IN ('madrid',1)","case":"symbol_bad_second","error":"STRING constant expected","position":51}
+{"query":"SELECT ts FROM sensors WHERE location IN ('m')","case":"symbol_char","columns":[{"name":"ts","type":"TIMESTAMP"}],"timestamp":0,"dataset":[],"count":0}
+{"query":"SELECT ts FROM sensors WHERE location IN ()","case":"symbol_empty_list","error":"too few arguments for 'in'","position":38}
+{"query":"SELECT ts FROM sensors WHERE location NOT IN ()","case":"symbol_empty_not_list","error":"too few arguments for 'in'","position":42}
+{"query":"SELECT ts FROM sensors WHERE ch IN (1)","case":"char_int","error":"CHAR constant expected","position":36}
+{"query":"SELECT ts FROM sensors WHERE ch IN (true)","case":"char_boolean","error":"CHAR constant expected","position":36}
+{"query":"SELECT ts FROM sensors WHERE ch IN ('A',1)","case":"char_bad_second","error":"CHAR constant expected","position":40}
+{"query":"SELECT ts FROM sensors WHERE ch IN ('ab')","case":"char_long_string","error":"CHAR constant expected","position":36}
+{"query":"SELECT ts FROM sensors WHERE ch IN ()","case":"char_empty_list","error":"too few arguments for 'in'","position":32}
+{"query":"SELECT ts FROM sensors WHERE ch NOT IN ()","case":"char_empty_not_list","error":"too few arguments for 'in'","position":36}

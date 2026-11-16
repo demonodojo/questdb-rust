@@ -1,0 +1,7 @@
+{"query":"SELECT s.ts FROM sensors s WHERE s.note IN (1)","case":"string_int_error","error":"cannot compare STRING with type INT","position":44}
+{"query":"SELECT s.ts FROM sensors s WHERE s.note IN (true)","case":"string_bool_error","error":"cannot compare STRING with type BOOLEAN","position":44}
+{"query":"SELECT s.ts FROM sensors s WHERE s.note IN ('alpha',1)","case":"string_second_int_error","error":"cannot compare STRING with type INT","position":52}
+{"query":"SELECT s.ts FROM sensors s WHERE s.note IN ()","case":"string_empty_list_error","error":"too few arguments for 'in'","position":40}
+{"query":"SELECT s.ts FROM sensors s WHERE s.tag IN (true)","case":"varchar_bool_error","error":"cannot compare VARCHAR with type BOOLEAN","position":43}
+{"query":"SELECT s.ts FROM sensors s WHERE s.tag IN ('v1',1)","case":"varchar_second_int_error","error":"cannot compare VARCHAR with type INT","position":48}
+{"query":"SELECT s.ts FROM sensors s WHERE s.tag NOT IN ()","case":"varchar_empty_list_error","error":"too few arguments for 'in'","position":43}

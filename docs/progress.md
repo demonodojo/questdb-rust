@@ -1412,6 +1412,62 @@ El port reconoce que `netmask` devuelve IPv4, canoniza los miembros con `Ipv4Add
 
 Verificación: `tools/check.sh` pasó con 366 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales y confirmó seis respuestas IPv4 por columnas/dataset/count y siete errores por mensaje/posición, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
 
+## 2026-11-16 — `IN`/`NOT IN` sobre conversiones `::type` y `CAST`
+
+Se capturaron diez respuestas completas y seis errores de QuestDB 10.1.0 para casts postfix y `CAST(... AS ...)`. Los casos cubren STRING, LONG, DOUBLE, BOOLEAN e INT, conversión FLOAT→LONG, texto inválido convertido a INT/NULL, miembros NULL, tipos de miembro incompatibles y listas vacías.
+
+Se corrigió el reconocimiento del operando postfix `::type`: el parser ahora enruta estas expresiones por `InListExpression`, igual que `CAST(...)`. `where_cast_in_lists_match_questdb` verifica resultados y posiciones; el runner compara las diez respuestas completas y los seis errores en vivo.
+
+Verificación: `tools/check.sh` pasó con 367 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales y confirmó diez respuestas CAST por columnas/dataset/count y seis errores por mensaje/posición, junto con los conjuntos anteriores. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN`/`NOT IN` sobre columnas SYMBOL y CHAR
+
+Se capturaron trece respuestas completas y once errores de QuestDB 10.1.0 para columnas SYMBOL y CHAR. Los casos cubren listas múltiples, `NOT IN`, Unicode, cadena/CHAR vacío, NULL como valor y miembro, errores de tipo con posiciones y listas vacías. SYMBOL acepta literales de un carácter y convierte el CHAR vacío; CHAR compara por carácter Unicode y su valor vacío coincide con NULL.
+
+`where_symbol_char_in_lists_match_questdb` verifica filas y errores con posición. `tools/run_differential.sh` compara las trece respuestas por columnas/dataset/count y once errores por mensaje/posición en vivo.
+
+Verificación: `tools/check.sh` pasó con 368 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, 13 respuestas SYMBOL/CHAR completas y 11 errores, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN`/`NOT IN` sobre columnas STRING y VARCHAR cualificadas
+
+Se capturaron doce respuestas completas y siete errores de QuestDB 10.1.0 para columnas STRING/VARCHAR simples, con alias y cualificadas por nombre de tabla. Los casos cubren miembros CHAR, Unicode, cadenas vacías, NULL como valor y miembro, tipos incompatibles y listas vacías. Se corrigió la resolución del nombre cualificado por la tabla y la validación anticipada de miembros para conservar las posiciones de error.
+
+`where_string_varchar_in_lists_match_questdb` verifica resultados y errores con posición. El runner compara doce respuestas por columnas/dataset/count y siete errores por mensaje/posición en vivo.
+
+Verificación: `tools/check.sh` pasó con 369 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, doce respuestas STRING/VARCHAR completas y siete errores, junto con los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN`/`NOT IN` sobre columnas numéricas cualificadas
+
+Se capturaron ocho respuestas completas y ocho errores de QuestDB 10.1.0 para LONG, INT, DOUBLE y FLOAT referidos por `sensors.columna`. Los resultados incluyen NULL, `NOT IN` y ceros con signo. Los errores cubren BOOLEAN, CHAR, DOUBLE incompatible, listas vacías y casos bajo `LIMIT 0`. Se amplió la validación estática de listas simples para comprobar miembros numéricos antes de recorrer filas y se resolvió el prefijo del nombre de tabla.
+
+`where_table_qualified_numeric_in_lists_match_questdb` comprueba resultados y posiciones de error. El runner compara ocho respuestas por columnas/dataset/count y ocho errores por mensaje/posición contra QuestDB 10.1.0.
+
+Verificación: `tools/check.sh` pasó con 370 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, ocho respuestas numéricas cualificadas completas y ocho errores, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN`/`NOT IN` sobre columnas temporales cualificadas
+
+Se capturaron ocho respuestas completas y ocho errores de QuestDB 10.1.0 para columnas DATE y TIMESTAMP referidas por `sensors.columna`. DATE convierte el valor almacenado en milisegundos a microsegundos para comparar con miembros LONG; se cubren además fechas ISO, timestamps de texto y numéricos, NULL y `NOT IN`. Los errores de fecha/tipo y las listas vacías se verifican con `LIMIT 0`.
+
+`where_table_qualified_temporal_in_lists_match_questdb` verifica resultados y posiciones. El runner compara ocho respuestas por columnas/dataset/count y ocho errores por mensaje/posición contra QuestDB 10.1.0.
+
+Verificación: `tools/check.sh` pasó con 371 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, ocho respuestas temporales cualificadas completas y ocho errores, junto con los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN`/`NOT IN` sobre columnas SYMBOL y CHAR cualificadas
+
+Se capturaron nueve respuestas completas y seis errores de QuestDB 10.1.0 para `sensors.location` (SYMBOL) y `sensors.ch` (CHAR). Los resultados incluyen miembros de texto y CHAR, Unicode, cadena vacía, NULL y `NOT IN`; también se cubren errores de tipo y listas vacías con `LIMIT 0`. La resolución de columna cualificada y la validación anticipada conservan la semántica observada.
+
+`where_table_qualified_symbol_char_in_lists_match_questdb` verifica filas, mensajes y posiciones. El runner compara nueve respuestas por columnas/dataset/count y seis errores por mensaje/posición en vivo.
+
+Verificación: `tools/check.sh` pasó con 372 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, nueve respuestas SYMBOL/CHAR cualificadas completas y seis errores, junto con los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — rechazo de `IN`/`NOT IN` sobre columnas BOOLEAN cualificadas
+
+Se capturaron catorce errores de QuestDB 10.1.0 para `sensors.ok IN/NOT IN`: miembros BOOLEAN, NULL, INT y CHAR; listas unitarias y múltiples; y listas vacías. Se verificaron también con `LIMIT 0`, que debe conservar el rechazo estático y la posición del operador. La comparación reveló que un literal de texto de un carácter se informa como CHAR; se ajustó `boolean_in_type_error` para reproducirlo.
+
+`where_table_qualified_boolean_in_lists_match_questdb_errors` comprueba los catorce mensajes y posiciones. El runner los coteja en vivo contra el oráculo.
+
+Verificación: `tools/check.sh` pasó con 373 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales y los catorce errores BOOLEAN cualificados, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
 ## Próxima tarea
 
-Capturar y probar `IN`/`NOT IN` sobre expresiones de conversión (`::type` y `cast`) en `WHERE`, cubriendo conversiones de texto/número, NULL, miembros compatibles e incompatibles y posiciones de error frente a QuestDB 10.1.0.
+Capturar y probar `IN`/`NOT IN` sobre columnas cualificadas mediante alias de tabla para BOOLEAN y tipos numéricos, incluyendo `LIMIT 0`, frente a QuestDB 10.1.0.

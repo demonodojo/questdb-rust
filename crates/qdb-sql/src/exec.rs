@@ -5767,6 +5767,16 @@ fn validate_filter_arithmetic(table: &Table, filter: &Filter) -> Result<(), Erro
     Ok(())
 }
 
+fn in_list_column_index(table: &Table, name: &str) -> Option<usize> {
+    table.column_index(name).or_else(|| {
+        let (qualifier, column) = name.rsplit_once('.')?;
+        qualifier
+            .eq_ignore_ascii_case(&table.name)
+            .then(|| table.column_index(column))
+            .flatten()
+    })
+}
+
 fn validate_filter_in_expression(table: &Table, filter: &Filter) -> Result<(), Error> {
     match filter {
         Filter::InList {
@@ -5776,15 +5786,57 @@ fn validate_filter_in_expression(table: &Table, filter: &Filter) -> Result<(), E
             position,
             ..
         } => {
-            let index = table
-                .column_index(column)
+            let index = in_list_column_index(table, column)
                 .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
             if table.meta.columns[index].tag == qdb_types::TAG_BOOLEAN {
                 let error = boolean_in_type_error(items);
                 return Err(Error::at(error.message, *position));
             }
             let tag = table.meta.columns[index].tag;
+            if tag == qdb_types::TAG_SYMBOL || tag == qdb_types::TAG_CHAR {
+                let expected = if tag == qdb_types::TAG_SYMBOL {
+                    "STRING constant expected"
+                } else {
+                    "CHAR constant expected"
+                };
+                for (item_index, item) in items.iter().enumerate() {
+                    let valid = match (tag, item) {
+                        (_, Scalar::Null) => true,
+                        (qdb_types::TAG_SYMBOL, Scalar::Text(_)) => true,
+                        (qdb_types::TAG_SYMBOL, Scalar::Char(_)) => true,
+                        (qdb_types::TAG_CHAR, Scalar::Text(text)) if text.chars().count() <= 1 => {
+                            true
+                        }
+                        (qdb_types::TAG_CHAR, Scalar::Char(_)) => true,
+                        _ => false,
+                    };
+                    if !valid {
+                        return Err(Error::at(
+                            expected,
+                            item_positions.get(item_index).copied().unwrap_or(*position),
+                        ));
+                    }
+                }
+            }
+            if tag == qdb_types::TAG_STRING || tag == qdb_types::TAG_VARCHAR {
+                let type_name = qdb_types::type_name(tag);
+                for (item_index, item) in items.iter().enumerate() {
+                    in_item(type_name, InKind::Text, &ConcatArg::Literal(item.clone())).map_err(
+                        |error| {
+                            Error::at(
+                                error.message,
+                                item_positions.get(item_index).copied().unwrap_or(*position),
+                            )
+                        },
+                    )?;
+                }
+            }
             let kind = match tag {
+                qdb_types::TAG_LONG
+                | qdb_types::TAG_INT
+                | qdb_types::TAG_SHORT
+                | qdb_types::TAG_BYTE => Some(InKind::Integer),
+                qdb_types::TAG_DOUBLE | qdb_types::TAG_FLOAT => Some(InKind::Float),
                 qdb_types::TAG_DATE => Some(InKind::Date),
                 qdb_types::TAG_TIMESTAMP => Some(InKind::Timestamp),
                 _ => None,
@@ -5935,6 +5987,8 @@ fn boolean_in_type_error(items: &[Scalar]) -> Error {
             .map(|item| {
                 if item.is_null() {
                     "NULL"
+                } else if matches!(item, Scalar::Text(text) if text.chars().count() == 1) {
+                    "CHAR"
                 } else {
                     qdb_types::type_name(literal_tag(item))
                 }
@@ -21192,8 +21246,7 @@ fn row_matches(table: &Table, row: usize, filter: &Filter) -> Result<bool, Error
             negated,
             ..
         } => {
-            let index = table
-                .column_index(column)
+            let index = in_list_column_index(table, column)
                 .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
             let tag = table.meta.columns[index].tag;
             let kind = match tag {
@@ -21225,6 +21278,11 @@ fn row_matches(table: &Table, row: usize, filter: &Filter) -> Result<bool, Error
                 Scalar::Double(number) => in_float(*number, &items),
                 Scalar::Float(number) => in_float(f64::from(*number), &items),
                 Scalar::Text(text) => in_text(text, &items),
+                Scalar::Char(0) => items.iter().any(|item| match item {
+                    InItem::Null => true,
+                    InItem::Text(text) => text.is_empty(),
+                    _ => false,
+                }),
                 Scalar::Char(unit) => in_text(&in_char_text(*unit), &items),
                 Scalar::Timestamp(number) => in_long(*number, &items),
                 Scalar::Date(number) => number
@@ -27000,6 +27058,479 @@ mod tests {
                 "SELECT ts FROM sensors WHERE netmask(tag) NOT IN () ORDER BY ts",
                 "too few arguments for 'in'",
                 46,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_cast_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT ts, id::string FROM sensors WHERE id::string IN ('1') ORDER BY ts", "ts\tid::string\n2020-01-02T03:04:05.000000Z\t1\n"),
+            ("SELECT ts FROM sensors WHERE id::long IN (1) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE id::double IN (1.0) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE cast(id AS string) IN ('2') ORDER BY ts", "ts\n2020-01-02T03:04:06.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE cast(id AS long) IN (2) ORDER BY ts", "ts\n2020-01-02T03:04:06.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE cast(score AS long) IN (1) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE score::double IN (1.25) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE score::double NOT IN (NULL) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:07.000000Z\n2020-01-02T03:04:08.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE note::int IN (1) ORDER BY ts", "ts\n"),
+            ("SELECT ts FROM sensors WHERE note::int IN (NULL) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:06.000000Z\n2020-01-02T03:04:07.000000Z\n2020-01-02T03:04:08.000000Z\n"),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors WHERE id::long IN ('1') ORDER BY ts",
+                "cannot compare LONG with type CHAR",
+                42,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE id::long IN (1.0) ORDER BY ts",
+                "cannot compare LONG with type DOUBLE",
+                42,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE id::string IN (1) ORDER BY ts",
+                "cannot compare STRING with type INT",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE id::boolean IN (true) ORDER BY ts",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                41,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE cast(id AS string) IN () ORDER BY ts",
+                "too few arguments for 'in'",
+                48,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE id::string NOT IN () ORDER BY ts",
+                "too few arguments for 'in'",
+                44,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_symbol_char_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT ts, location FROM sensors WHERE location IN ('madrid') ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
+            ("SELECT ts, location FROM sensors WHERE location IN ('madrid','東京') ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts, location FROM sensors WHERE location NOT IN ('madrid') ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts, location FROM sensors WHERE location IN (NULL) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts, location FROM sensors WHERE location IN ('madrid',NULL) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
+            ("SELECT ts, location FROM sensors WHERE location IN ('') ORDER BY ts", "ts\tlocation\n"),
+            ("SELECT ts, location FROM sensors WHERE location IN ('',NULL) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts, ch FROM sensors WHERE ch IN ('') ORDER BY ts", "ts\tch\n2020-01-02T03:04:06.000000Z\t\n"),
+            ("SELECT ts, ch FROM sensors WHERE ch IN ('A') ORDER BY ts", "ts\tch\n2020-01-02T03:04:05.000000Z\tA\n"),
+            ("SELECT ts, ch FROM sensors WHERE ch IN ('A','β') ORDER BY ts", "ts\tch\n2020-01-02T03:04:05.000000Z\tA\n2020-01-02T03:04:07.000000Z\tβ\n"),
+            ("SELECT ts, ch FROM sensors WHERE ch IN (NULL) ORDER BY ts", "ts\tch\n2020-01-02T03:04:06.000000Z\t\n"),
+            ("SELECT ts, ch FROM sensors WHERE ch IN ('A',NULL) ORDER BY ts", "ts\tch\n2020-01-02T03:04:05.000000Z\tA\n2020-01-02T03:04:06.000000Z\t\n"),
+            ("SELECT ts, ch FROM sensors WHERE ch NOT IN ('A') ORDER BY ts", "ts\tch\n2020-01-02T03:04:06.000000Z\t\n2020-01-02T03:04:07.000000Z\tβ\n2020-01-02T03:04:08.000000Z\t東\n"),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors WHERE location IN (1)",
+                "STRING constant expected",
+                42,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE location IN (true)",
+                "STRING constant expected",
+                42,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE location IN ('madrid',1)",
+                "STRING constant expected",
+                51,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE location IN ()",
+                "too few arguments for 'in'",
+                38,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE location NOT IN ()",
+                "too few arguments for 'in'",
+                42,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ch IN (1)",
+                "CHAR constant expected",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ch IN (true)",
+                "CHAR constant expected",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ch IN ('A',1)",
+                "CHAR constant expected",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ch IN ('ab')",
+                "CHAR constant expected",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ch IN ()",
+                "too few arguments for 'in'",
+                32,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ch NOT IN ()",
+                "too few arguments for 'in'",
+                36,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_string_varchar_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT s.ts,s.note FROM sensors s WHERE s.note IN ('a') ORDER BY s.ts", "ts\tnote\n"),
+            ("SELECT s.ts,s.note FROM sensors s WHERE s.note IN ('alpha','βeta',NULL) ORDER BY s.ts", "ts\tnote\n2020-01-02T03:04:05.000000Z\talpha\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:08.000000Z\tβeta\n"),
+            ("SELECT s.ts,s.note FROM sensors s WHERE s.note NOT IN ('alpha',NULL) ORDER BY s.ts", "ts\tnote\n2020-01-02T03:04:07.000000Z\t\n2020-01-02T03:04:08.000000Z\tβeta\n"),
+            ("SELECT ts,note FROM sensors WHERE sensors.note IN ('alpha','') ORDER BY ts", "ts\tnote\n2020-01-02T03:04:05.000000Z\talpha\n2020-01-02T03:04:07.000000Z\t\n"),
+            ("SELECT x.ts,x.note FROM sensors x WHERE x.note IN ('') ORDER BY x.ts", "ts\tnote\n2020-01-02T03:04:07.000000Z\t\n"),
+            ("SELECT x.ts,x.note FROM sensors x WHERE x.note IN (NULL) ORDER BY x.ts", "ts\tnote\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT s.ts,s.tag FROM sensors s WHERE s.tag IN ('v1','héllo') ORDER BY s.ts", "ts\ttag\n2020-01-02T03:04:05.000000Z\tv1\n2020-01-02T03:04:07.000000Z\théllo\n"),
+            ("SELECT s.ts,s.tag FROM sensors s WHERE s.tag IN ('x') ORDER BY s.ts", "ts\ttag\n"),
+            ("SELECT s.ts,s.tag FROM sensors s WHERE s.tag IN ('') ORDER BY s.ts", "ts\ttag\n"),
+            ("SELECT s.ts,s.tag FROM sensors s WHERE s.tag IN (NULL) ORDER BY s.ts", "ts\ttag\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT s.ts,s.tag FROM sensors s WHERE s.tag NOT IN ('v1') ORDER BY s.ts", "ts\ttag\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\théllo\n2020-01-02T03:04:08.000000Z\t0123456789ABCDEF\n"),
+            ("SELECT s.ts,s.tag FROM sensors s WHERE s.tag IN ('v1',NULL) ORDER BY s.ts", "ts\ttag\n2020-01-02T03:04:05.000000Z\tv1\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT s.ts FROM sensors s WHERE s.note IN (1)",
+                "cannot compare STRING with type INT",
+                44,
+            ),
+            (
+                "SELECT s.ts FROM sensors s WHERE s.note IN (true)",
+                "cannot compare STRING with type BOOLEAN",
+                44,
+            ),
+            (
+                "SELECT s.ts FROM sensors s WHERE s.note IN ('alpha',1)",
+                "cannot compare STRING with type INT",
+                52,
+            ),
+            (
+                "SELECT s.ts FROM sensors s WHERE s.note IN ()",
+                "too few arguments for 'in'",
+                40,
+            ),
+            (
+                "SELECT s.ts FROM sensors s WHERE s.tag IN (true)",
+                "cannot compare VARCHAR with type BOOLEAN",
+                43,
+            ),
+            (
+                "SELECT s.ts FROM sensors s WHERE s.tag IN ('v1',1)",
+                "cannot compare VARCHAR with type INT",
+                48,
+            ),
+            (
+                "SELECT s.ts FROM sensors s WHERE s.tag NOT IN ()",
+                "too few arguments for 'in'",
+                43,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_table_qualified_numeric_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT ts,id FROM sensors WHERE sensors.id IN (1) ORDER BY ts", "ts\tid\n2020-01-02T03:04:05.000000Z\t1\n"),
+            ("SELECT ts,flags FROM sensors WHERE sensors.flags IN (0,10) ORDER BY ts", "ts\tflags\n2020-01-02T03:04:05.000000Z\t10\n2020-01-02T03:04:07.000000Z\t0\n"),
+            ("SELECT ts,reading FROM sensors WHERE sensors.reading IN (1.5,-0.0,NULL) ORDER BY ts", "ts\treading\n2020-01-02T03:04:05.000000Z\t1.5\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\t0.0\n2020-01-02T03:04:08.000000Z\t-0.0\n"),
+            ("SELECT ts,score FROM sensors WHERE sensors.score IN (1.25,0.0) ORDER BY ts", "ts\tscore\n2020-01-02T03:04:05.000000Z\t1.25\n2020-01-02T03:04:07.000000Z\t0.0\n"),
+            ("SELECT ts,id FROM sensors WHERE sensors.id NOT IN (1,NULL) ORDER BY ts", "ts\tid\n2020-01-02T03:04:06.000000Z\t2\n2020-01-02T03:04:08.000000Z\t-1\n"),
+            ("SELECT ts,id FROM sensors WHERE sensors.id IN (NULL) ORDER BY ts", "ts\tid\n2020-01-02T03:04:07.000000Z\tNULL\n"),
+            ("SELECT ts,flags FROM sensors WHERE sensors.flags IN (NULL) ORDER BY ts", "ts\tflags\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts,reading FROM sensors WHERE sensors.reading NOT IN (1.5) ORDER BY ts", "ts\treading\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\t0.0\n2020-01-02T03:04:08.000000Z\t-0.0\n"),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors WHERE sensors.id IN (true) LIMIT 0",
+                "cannot compare LONG with type BOOLEAN",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.id IN ('x') LIMIT 0",
+                "cannot compare LONG with type CHAR",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.flags IN (1.0) LIMIT 0",
+                "cannot compare LONG with type DOUBLE",
+                47,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.reading IN (true) LIMIT 0",
+                "cannot compare DOUBLE with type BOOLEAN",
+                49,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.id IN (true)",
+                "cannot compare LONG with type BOOLEAN",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.id IN ('x')",
+                "cannot compare LONG with type CHAR",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.id IN () LIMIT 0",
+                "too few arguments for 'in'",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.id NOT IN () LIMIT 0",
+                "too few arguments for 'in'",
+                44,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_table_qualified_temporal_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT ts,day FROM sensors WHERE sensors.day IN ('2020-01-02') ORDER BY ts", "ts\tday\n2020-01-02T03:04:05.000000Z\t2020-01-02T00:00:00.000Z\n"),
+            ("SELECT ts,day FROM sensors WHERE sensors.day IN (1577923200000000) ORDER BY ts", "ts\tday\n2020-01-02T03:04:05.000000Z\t2020-01-02T00:00:00.000Z\n"),
+            ("SELECT ts,day FROM sensors WHERE sensors.day IN ('1970-01-01','2020-06-15T12:30:00Z') ORDER BY ts", "ts\tday\n2020-01-02T03:04:07.000000Z\t1970-01-01T00:00:00.000Z\n2020-01-02T03:04:08.000000Z\t2020-06-15T12:30:00.000Z\n"),
+            ("SELECT ts,day FROM sensors WHERE sensors.day NOT IN ('2020-01-02') ORDER BY ts", "ts\tday\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\t1970-01-01T00:00:00.000Z\n2020-01-02T03:04:08.000000Z\t2020-06-15T12:30:00.000Z\n"),
+            ("SELECT ts,day FROM sensors WHERE sensors.day IN ('2020-01-02',NULL) ORDER BY ts", "ts\tday\n2020-01-02T03:04:05.000000Z\t2020-01-02T00:00:00.000Z\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts FROM sensors WHERE sensors.ts IN ('2020-01-02T03:04:05Z') ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE sensors.ts IN (1577934245000000) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE sensors.ts NOT IN (NULL) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:06.000000Z\n2020-01-02T03:04:07.000000Z\n2020-01-02T03:04:08.000000Z\n"),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors WHERE sensors.day IN ('bad') LIMIT 0",
+                "Invalid date: bad",
+                45,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.day IN ('x') LIMIT 0",
+                "cannot compare TIMESTAMP with type CHAR",
+                45,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.day IN (true) LIMIT 0",
+                "cannot compare TIMESTAMP with type BOOLEAN",
+                45,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.day IN (1.0) LIMIT 0",
+                "cannot compare TIMESTAMP with type DOUBLE",
+                45,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ts IN ('bad') LIMIT 0",
+                "Invalid date: bad",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ts IN ('1577934245000000') LIMIT 0",
+                "Invalid date: 1577934245000000",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.day IN () LIMIT 0",
+                "too few arguments for 'in'",
+                41,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ts NOT IN () LIMIT 0",
+                "too few arguments for 'in'",
+                44,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_table_qualified_symbol_char_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT ts,location FROM sensors WHERE sensors.location IN ('madrid','東京') ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE sensors.location IN ('m') ORDER BY ts", "ts\tlocation\n"),
+            ("SELECT ts,location FROM sensors WHERE sensors.location IN ('',NULL) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts,location FROM sensors WHERE sensors.location NOT IN ('madrid') ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE sensors.location IN (NULL) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts,ch FROM sensors WHERE sensors.ch IN ('A','β') ORDER BY ts", "ts\tch\n2020-01-02T03:04:05.000000Z\tA\n2020-01-02T03:04:07.000000Z\tβ\n"),
+            ("SELECT ts,ch FROM sensors WHERE sensors.ch IN ('') ORDER BY ts", "ts\tch\n2020-01-02T03:04:06.000000Z\t\n"),
+            ("SELECT ts,ch FROM sensors WHERE sensors.ch IN (NULL) ORDER BY ts", "ts\tch\n2020-01-02T03:04:06.000000Z\t\n"),
+            ("SELECT ts,ch FROM sensors WHERE sensors.ch NOT IN ('A') ORDER BY ts", "ts\tch\n2020-01-02T03:04:06.000000Z\t\n2020-01-02T03:04:07.000000Z\tβ\n2020-01-02T03:04:08.000000Z\t東\n"),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors WHERE sensors.location IN (1) LIMIT 0",
+                "STRING constant expected",
+                50,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.location IN (true) LIMIT 0",
+                "STRING constant expected",
+                50,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ch IN (1) LIMIT 0",
+                "CHAR constant expected",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ch IN ('ab') LIMIT 0",
+                "CHAR constant expected",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.location IN () LIMIT 0",
+                "too few arguments for 'in'",
+                46,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ch NOT IN () LIMIT 0",
+                "too few arguments for 'in'",
+                44,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_table_qualified_boolean_in_lists_match_questdb_errors() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok IN (true)",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok IN (false)",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok IN (NULL)",
+                "there is no matching operator `in` with the argument types: BOOLEAN in NULL",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok NOT IN (true)",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok IN (true,false)",
+                "there is no matching operator `in` with the argument type: BOOLEAN",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok IN (true,NULL)",
+                "there is no matching operator `in` with the argument type: BOOLEAN",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok NOT IN (true,NULL)",
+                "there is no matching operator `in` with the argument type: BOOLEAN",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok IN (true) LIMIT 0",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok IN (true,false) LIMIT 0",
+                "there is no matching operator `in` with the argument type: BOOLEAN",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok IN (NULL) LIMIT 0",
+                "there is no matching operator `in` with the argument types: BOOLEAN in NULL",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok IN () LIMIT 0",
+                "too few arguments for 'in'",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok NOT IN () LIMIT 0",
+                "too few arguments for 'in'",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok IN (1) LIMIT 0",
+                "there is no matching operator `in` with the argument types: BOOLEAN in INT",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE sensors.ok IN ('x') LIMIT 0",
+                "there is no matching operator `in` with the argument types: BOOLEAN in CHAR",
+                40,
             ),
         ] {
             let error = execute(&sensors, sql).unwrap_err();

@@ -1,0 +1,14 @@
+{"query":"SELECT ts FROM sensors WHERE sensors.ok IN (true)","case":"bool_true","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":40}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok IN (false)","case":"bool_false","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":40}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok IN (NULL)","case":"bool_null","error":"there is no matching operator `in` with the argument types: BOOLEAN in NULL","position":40}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok NOT IN (true)","case":"bool_not_true","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":44}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok IN (true,false)","case":"bool_multiple","error":"there is no matching operator `in` with the argument type: BOOLEAN","position":40}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok IN (true,NULL)","case":"bool_true_null","error":"there is no matching operator `in` with the argument type: BOOLEAN","position":40}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok NOT IN (true,NULL)","case":"bool_not_true_null","error":"there is no matching operator `in` with the argument type: BOOLEAN","position":44}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok IN (true) LIMIT 0","case":"bool_true_limit0","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":40}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok IN (true,false) LIMIT 0","case":"bool_multiple_limit0","error":"there is no matching operator `in` with the argument type: BOOLEAN","position":40}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok IN (NULL) LIMIT 0","case":"bool_null_limit0","error":"there is no matching operator `in` with the argument types: BOOLEAN in NULL","position":40}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok IN () LIMIT 0","case":"bool_empty_limit0","error":"too few arguments for 'in'","position":40}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok NOT IN () LIMIT 0","case":"bool_not_empty_limit0","error":"too few arguments for 'in'","position":44}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok IN (1) LIMIT 0","case":"bool_int_limit0","error":"there is no matching operator `in` with the argument types: BOOLEAN in INT","position":40}
+{"query":"SELECT ts FROM sensors WHERE sensors.ok IN ('x') LIMIT 0","case":"bool_char_limit0","error":"there is no matching operator `in` with the argument types: BOOLEAN in CHAR","position":40}

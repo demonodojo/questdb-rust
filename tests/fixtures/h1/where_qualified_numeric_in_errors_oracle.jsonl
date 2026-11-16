@@ -1,0 +1,8 @@
+{"query":"SELECT ts FROM sensors WHERE sensors.id IN (true) LIMIT 0","case":"long_boolean_limit0","error":"cannot compare LONG with type BOOLEAN","position":44}
+{"query":"SELECT ts FROM sensors WHERE sensors.id IN ('x') LIMIT 0","case":"long_char_limit0","error":"cannot compare LONG with type CHAR","position":44}
+{"query":"SELECT ts FROM sensors WHERE sensors.flags IN (1.0) LIMIT 0","case":"int_double_limit0","error":"cannot compare LONG with type DOUBLE","position":47}
+{"query":"SELECT ts FROM sensors WHERE sensors.reading IN (true) LIMIT 0","case":"double_boolean_limit0","error":"cannot compare DOUBLE with type BOOLEAN","position":49}
+{"query":"SELECT ts FROM sensors WHERE sensors.id IN (true)","case":"long_boolean","error":"cannot compare LONG with type BOOLEAN","position":44}
+{"query":"SELECT ts FROM sensors WHERE sensors.id IN ('x')","case":"long_char","error":"cannot compare LONG with type CHAR","position":44}
+{"query":"SELECT ts FROM sensors WHERE sensors.id IN () LIMIT 0","case":"empty_in_limit0","error":"too few arguments for 'in'","position":40}
+{"query":"SELECT ts FROM sensors WHERE sensors.id NOT IN () LIMIT 0","case":"empty_not_in_limit0","error":"too few arguments for 'in'","position":44}
