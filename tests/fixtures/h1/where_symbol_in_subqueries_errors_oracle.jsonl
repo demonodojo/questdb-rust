@@ -1,0 +1,1 @@
+{"query":"SELECT location FROM sensors WHERE location IN (SELECT id FROM sensors)","error":"supported column types are VARCHAR, SYMBOL and STRING, found: LONG","position":44,"case":"symbol_cursor_wrong_type"}

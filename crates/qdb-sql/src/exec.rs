@@ -39,6 +39,9 @@ pub struct QueryResult {
 }
 
 pub fn execute(data_dir: &Path, sql: &str) -> Result<QueryResult, Error> {
+    if let Some(expanded) = expand_symbol_cursor(data_dir, sql)? {
+        return execute(data_dir, &expanded);
+    }
     let query = parse_query(sql)?;
     if let Some(count) = query.long_sequence {
         let table = long_sequence_table(count)?;
@@ -59,6 +62,197 @@ pub fn execute(data_dir: &Path, sql: &str) -> Result<QueryResult, Error> {
         return Ok(result);
     }
     execute_on(&table, &query)
+}
+
+fn expand_symbol_cursor(data_dir: &Path, sql: &str) -> Result<Option<String>, Error> {
+    let lower = sql.to_ascii_lowercase();
+    let Some((in_marker, open, start)) = find_in_cursor_subquery(&lower) else {
+        return Ok(None);
+    };
+    let mut depth = 1usize;
+    let mut quoted = false;
+    let mut end = None;
+    for (i, byte) in sql.bytes().enumerate().skip(open + 1) {
+        if byte == b'\'' {
+            quoted = !quoted;
+        } else if !quoted && byte == b'(' {
+            depth += 1;
+        } else if !quoted && byte == b')' {
+            depth -= 1;
+            if depth == 0 {
+                end = Some(i);
+                break;
+            }
+        }
+    }
+    let Some(end) = end else { return Ok(None) };
+    let mut parseable = sql.to_string();
+    parseable.replace_range(open..=end, "(NULL)");
+    let outer = parse_query(&parseable)?;
+    let outer_table = open_table(data_dir, &outer.table)?;
+    let mut lhs_prefix = sql[..in_marker].trim_end();
+    if lhs_prefix.to_ascii_lowercase().ends_with(" not") {
+        lhs_prefix = lhs_prefix[..lhs_prefix.len() - 3].trim_end();
+    }
+    let lhs = lhs_prefix
+        .trim_end()
+        .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+        .next()
+        .unwrap_or("");
+    let Some(lhs_index) = in_list_column_index(&outer_table, lhs).or_else(|| {
+        lhs.rsplit('.')
+            .next()
+            .and_then(|bare| outer_table.column_index(bare))
+    }) else {
+        return Ok(None);
+    };
+    let lhs_tag = outer_table.meta.columns[lhs_index].tag;
+    if lhs_tag != qdb_types::TAG_SYMBOL {
+        let message = match lhs_tag {
+            qdb_types::TAG_BOOLEAN => {
+                let inner = parse_query(&sql[start..end])?;
+                let source = open_table(data_dir, &inner.table)?;
+                let first = match &inner.columns {
+                    SelectList::Columns(cols) => cols.first().map(|col| col.name.as_str()),
+                    SelectList::Projection(proj) => match proj.items.first() {
+                        Some(Proj::Column(name)) => Some(name.as_str()),
+                        _ => None,
+                    },
+                    SelectList::Star => source.meta.columns.first().map(|col| col.name.as_str()),
+                    _ => None,
+                };
+                let member = first
+                    .and_then(|name| source.column_index(name))
+                    .map(|index| source.meta.columns[index].tag);
+                let member_type = if member == Some(qdb_types::TAG_BOOLEAN) {
+                    "BOOLEAN"
+                } else {
+                    "CURSOR"
+                };
+                format!("there is no matching operator `in` with the argument types: BOOLEAN in {member_type}")
+            }
+            qdb_types::TAG_STRING | qdb_types::TAG_VARCHAR | qdb_types::TAG_CHAR => {
+                "constant expected".to_string()
+            }
+            qdb_types::TAG_LONG
+            | qdb_types::TAG_INT
+            | qdb_types::TAG_SHORT
+            | qdb_types::TAG_BYTE => "cannot compare LONG with type CURSOR".to_string(),
+            qdb_types::TAG_FLOAT | qdb_types::TAG_DOUBLE => {
+                "cannot compare DOUBLE with type CURSOR".to_string()
+            }
+            qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP => {
+                "cannot compare TIMESTAMP with type CURSOR".to_string()
+            }
+            other => {
+                return Err(Error::at(
+                    format!(
+                        "cannot compare {} with type CURSOR",
+                        qdb_types::type_name(other)
+                    ),
+                    in_marker,
+                ))
+            }
+        };
+        let position = if lhs_tag == qdb_types::TAG_BOOLEAN {
+            in_marker
+        } else {
+            start
+        };
+        return Err(Error::at(message, position));
+    }
+
+    let inner_sql = &sql[start..end];
+    let inner = parse_query(inner_sql)?;
+    let inner_table = open_table(data_dir, &inner.table)?;
+    let name = match &inner.columns {
+        SelectList::Columns(cols) => cols.first().map(|c| c.name.as_str()),
+        SelectList::Projection(proj) => match proj.items.first() {
+            Some(Proj::Column(name)) => Some(name.as_str()),
+            _ => None,
+        },
+        SelectList::Star => inner_table.meta.columns.first().map(|c| c.name.as_str()),
+        _ => None,
+    }
+    .ok_or_else(|| Error::at("constant expected", start))?;
+    let index = inner_table
+        .column_index(name)
+        .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+    let tag = inner_table.meta.columns[index].tag;
+    if !matches!(
+        tag,
+        qdb_types::TAG_STRING | qdb_types::TAG_SYMBOL | qdb_types::TAG_VARCHAR
+    ) {
+        return Err(Error::at(
+            format!(
+                "supported column types are VARCHAR, SYMBOL and STRING, found: {}",
+                qdb_types::type_name(tag)
+            ),
+            in_marker,
+        ));
+    }
+    let values = execute(data_dir, inner_sql)?;
+    let members = values
+        .rows
+        .iter()
+        .map(|row| match row.first() {
+            Some(Scalar::Text(value)) => Ok(format!("'{}'", value.replace('\'', "''"))),
+            Some(Scalar::Null) | None => Ok("NULL".to_string()),
+            _ => Err(Error::at("constant expected", start)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let negated = lower[..in_marker].trim_end().ends_with(" not");
+    if members.is_empty() {
+        let left_start = lhs_prefix.rfind(lhs).unwrap_or(in_marker - lhs.len());
+        let mut expanded = sql.to_string();
+        expanded.replace_range(left_start..=end, if negated { "true" } else { "false" });
+        return Ok(Some(expanded));
+    }
+    let mut expanded = sql.to_string();
+    expanded.replace_range(open..=end, &format!("({})", members.join(",")));
+    Ok(Some(expanded))
+}
+
+fn find_in_cursor_subquery(lower: &str) -> Option<(usize, usize, usize)> {
+    let bytes = lower.as_bytes();
+    let mut i = 0;
+    let mut quoted = false;
+    while i < bytes.len() {
+        if bytes[i] == b'\'' {
+            if quoted && bytes.get(i + 1) == Some(&b'\'') {
+                i += 2;
+                continue;
+            }
+            quoted = !quoted;
+            i += 1;
+            continue;
+        }
+        if !quoted
+            && bytes[i..].starts_with(b"in")
+            && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_'))
+        {
+            let mut j = i + 2;
+            while bytes.get(j).is_some_and(u8::is_ascii_whitespace) {
+                j += 1;
+            }
+            if bytes.get(j) == Some(&b'(') {
+                let open = j;
+                j += 1;
+                while bytes.get(j).is_some_and(u8::is_ascii_whitespace) {
+                    j += 1;
+                }
+                if bytes[j..].starts_with(b"select")
+                    && bytes
+                        .get(j + 6)
+                        .is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+                {
+                    return Some((i, open, j));
+                }
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 fn qualified_join_name(alias: &str, name: &str) -> String {
@@ -27797,6 +27991,59 @@ mod tests {
                 "SELECT ts FROM sensors s WHERE s.id IN (1) OR s.flags IN (1.0) LIMIT 0",
                 "cannot compare LONG with type DOUBLE",
                 58,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_symbol_in_subqueries_match_cursor_results() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location = 'madrid') ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
+            ("SELECT ts,location FROM sensors WHERE location NOT IN (SELECT location FROM sensors WHERE location = 'madrid') ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE id = 99) ORDER BY ts", "ts\tlocation\n"),
+            ("SELECT ts,location FROM sensors WHERE location NOT IN (SELECT location FROM sensors WHERE id = 99) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT s.ts,s.location FROM sensors AS s WHERE s.location IN (SELECT t.location FROM sensors AS t WHERE t.location = 'madrid') ORDER BY s.ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
+            ("SELECT ts,location FROM sensors WHERE note = 'IN (SELECT x)' ORDER BY ts", "ts\tlocation\n"),
+        ];
+        for (sql, expected) in cases {
+            assert_eq!(
+                render_tsv(&execute(&sensors, sql).unwrap()),
+                expected,
+                "{sql}"
+            );
+        }
+        let error_sql = "SELECT location FROM sensors WHERE location IN (SELECT id FROM sensors)";
+        let error = execute(&sensors, error_sql).unwrap_err();
+        assert_eq!(
+            error.message,
+            "supported column types are VARCHAR, SYMBOL and STRING, found: LONG"
+        );
+        assert_eq!(error.position, Some(44));
+        for (sql, message, position) in [
+            (
+                "SELECT id FROM sensors WHERE id IN (SELECT id FROM sensors)",
+                "cannot compare LONG with type CURSOR",
+                36,
+            ),
+            (
+                "SELECT note FROM sensors WHERE note IN (SELECT note FROM sensors)",
+                "constant expected",
+                40,
+            ),
+            (
+                "SELECT ok FROM sensors WHERE ok IN (SELECT ok FROM sensors)",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                32,
+            ),
+            (
+                "SELECT day FROM sensors WHERE day IN (SELECT day FROM sensors)",
+                "cannot compare TIMESTAMP with type CURSOR",
+                38,
             ),
         ] {
             let error = execute(&sensors, sql).unwrap_err();

@@ -1,0 +1,4 @@
+{"query":"SELECT id FROM sensors WHERE id IN (SELECT id FROM sensors)","error":"cannot compare LONG with type CURSOR","position":36,"case":"numeric_outer"}
+{"query":"SELECT note FROM sensors WHERE note IN (SELECT note FROM sensors)","error":"constant expected","position":40,"case":"string_outer"}
+{"query":"SELECT ok FROM sensors WHERE ok IN (SELECT ok FROM sensors)","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":32,"case":"boolean_outer"}
+{"query":"SELECT day FROM sensors WHERE day IN (SELECT day FROM sensors)","error":"cannot compare TIMESTAMP with type CURSOR","position":38,"case":"temporal_outer"}

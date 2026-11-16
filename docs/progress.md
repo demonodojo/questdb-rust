@@ -1500,6 +1500,14 @@ Se capturaron ocho respuestas completas y tres errores de QuestDB 10.1.0 para li
 
 Verificación: `tools/check.sh` pasó con 377 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, ocho composiciones lógicas completas y tres errores, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
 
+## 2026-11-16 — subconsultas cursor en `IN`/`NOT IN` para SYMBOL
+
+QuestDB 10.1.0 admite un cursor como fuente de miembros para columnas `SYMBOL`. Se portó la primera columna directa de subconsultas cuyo tipo sea STRING, SYMBOL o VARCHAR. Se comprobaron duplicados, alias en ambas consultas, valores NULL, cursor vacío y `NOT IN`; se reproducen además errores y posiciones para salida de cursor incompatible y columnas externas BOOLEAN, numéricas, temporales y textuales.
+
+`where_symbol_in_subqueries_match_cursor_results` verifica siete resultados completos y cinco errores. Capturas `/exec` en `where_symbol_in_subqueries_oracle.jsonl`, `where_symbol_in_subqueries_errors_oracle.jsonl` y `where_in_subquery_rejected_outer_types_oracle.jsonl`; el runner compara las respuestas completas y errores contra la referencia viva.
+
+Verificación: `tools/check.sh` pasó con 378 pruebas SQL, 4 de storage, 3 de types y 2 de CLI. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, siete consultas cursor por columnas/dataset/count, cinco errores de subconsulta y los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
 ## Próxima tarea
 
-Consultar QuestDB 10.1.0 y probar si `IN`/`NOT IN` acepta subconsultas como fuente de miembros; documentar y portar la forma si está soportada.
+Consultar QuestDB 10.1.0 para determinar cómo infiere el tipo de la primera columna cuando la subconsulta `IN` proyecta una expresión o agregado; portar las formas admitidas y añadir regresiones, o fijar los rechazos exactos.

@@ -4266,6 +4266,15 @@ compare_captured "$ROOT_DIR/tests/fixtures/h2" \
 HTTP="${QDB_HTTP:-http://127.0.0.1:19011/exec}"
 DIFF_TMP="$ROOT_DIR/target/oracle-tmp"
 mkdir -p "$DIFF_TMP"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" \
+  symbol_subquery_match "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location = 'madrid') ORDER BY ts" \
+  symbol_subquery_not_match "SELECT ts,location FROM sensors WHERE location NOT IN (SELECT location FROM sensors WHERE location = 'madrid') ORDER BY ts" \
+  symbol_subquery_null "SELECT ts,location FROM sensors WHERE location IN (SELECT tag FROM sensors) ORDER BY ts" \
+  symbol_subquery_empty_in "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE id = 99) ORDER BY ts" \
+  symbol_subquery_empty_not_in "SELECT ts,location FROM sensors WHERE location NOT IN (SELECT location FROM sensors WHERE id = 99) ORDER BY ts" \
+  symbol_subquery_qualified_alias "SELECT s.ts,s.location FROM sensors AS s WHERE s.location IN (SELECT t.location FROM sensors AS t WHERE t.location = 'madrid') ORDER BY s.ts" \
+  symbol_subquery_literal_guard "SELECT ts,location FROM sensors WHERE note = 'IN (SELECT x)' ORDER BY ts"
+
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o "$DIFF_TMP/qdb-diff-count.json"; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
 import json, os, subprocess, sys, urllib.error, urllib.parse, urllib.request
@@ -9669,6 +9678,39 @@ for (name, sql, _, _), expected in zip(where_regex_error_cases, expected_where_r
         if payload.get(field) != expected.get(field):
             raise SystemExit(f"live WHERE regex error mismatch for {name} field {field}")
 print(f"live-reference-errors: {len(where_regex_error_cases)} WHERE regex errors match message and position")
+symbol_subquery_captures = [json.loads(line) for line in open(os.path.join(os.environ["DIFF_H1"], "where_symbol_in_subqueries_oracle.jsonl"), encoding="utf-8")]
+for expected in symbol_subquery_captures:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live SYMBOL IN subquery mismatch for {expected['case']} field {field}")
+print(f"live-reference-full: {len(symbol_subquery_captures)} SYMBOL IN/NOT IN subqueries match columns, dataset, and count")
+symbol_subquery_error_captures = [json.loads(line) for line in open(os.path.join(os.environ["DIFF_H1"], "where_symbol_in_subqueries_errors_oracle.jsonl"), encoding="utf-8")]
+for expected in symbol_subquery_error_captures:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live SYMBOL IN subquery error mismatch for {expected['case']} field {field}")
+print(f"live-reference-errors: {len(symbol_subquery_error_captures)} SYMBOL IN subquery errors match message and position")
+outer_subquery_error_captures = [json.loads(line) for line in open(os.path.join(os.environ["DIFF_H1"], "where_in_subquery_rejected_outer_types_oracle.jsonl"), encoding="utf-8")]
+for expected in outer_subquery_error_captures:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live unsupported outer IN subquery mismatch for {expected['case']} field {field}")
+print(f"live-reference-errors: {len(outer_subquery_error_captures)} unsupported outer IN subquery types match message and position")
 PY
 else
   echo "live-reference: NOT RUNNING at $HTTP"
