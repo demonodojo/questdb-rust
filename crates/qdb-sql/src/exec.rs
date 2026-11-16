@@ -114,15 +114,6 @@ fn expand_symbol_cursor(
     let Some(end) = matching_sql_paren(sql, open) else {
         return Ok(None);
     };
-    let mut parseable = sql.to_string();
-    while let Some((_, parse_open, _)) = find_in_cursor_subquery(&parseable.to_ascii_lowercase()) {
-        let Some(parse_end) = matching_sql_paren(&parseable, parse_open) else {
-            break;
-        };
-        parseable.replace_range(parse_open..=parse_end, "(NULL)");
-    }
-    let outer = parse_query(&parseable)?;
-    let outer_table = query_source_table(data_dir, &outer)?;
     let mut lhs_prefix = sql[..in_marker].trim_end();
     if lhs_prefix.to_ascii_lowercase().ends_with(" not") {
         lhs_prefix = lhs_prefix[..lhs_prefix.len() - 3].trim_end();
@@ -144,6 +135,43 @@ fn expand_symbol_cursor(
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'.')
     });
     let cast_suffix_start = cast_to_symbol.then_some(cast_suffix_candidate).flatten();
+    let mut parseable = sql.to_string();
+    while let Some((_, parse_open, _)) = find_in_cursor_subquery(&parseable.to_ascii_lowercase()) {
+        let Some(parse_end) = matching_sql_paren(&parseable, parse_open) else {
+            break;
+        };
+        parseable.replace_range(parse_open..=parse_end, "(NULL)");
+    }
+    let outer = if cast_suffix_candidate.is_some() && !cast_to_symbol {
+        parse_query(&cursor_outer_source_sql(sql, &lower)?)?
+    } else {
+        parse_query(&parseable)?
+    };
+    let outer_table = query_source_table(data_dir, &outer)?;
+    let cast_projection = if cast_suffix_candidate.is_some() && !cast_to_symbol {
+        if let Some((expression, position)) = projection_cursor_lhs(sql, &lower, in_marker)
+            .or_else(|| filter_cursor_lhs(sql, &lower, in_marker))
+        {
+            let cast_end = expression.len() - "::symbol".len();
+            if !expression[cast_end..].eq_ignore_ascii_case("::symbol") {
+                return Err(Error::at("constant expected", start));
+            }
+            let expression = strip_expression_column_qualifiers(&expression[..cast_end]);
+            let operand = parse_filter_operand(&expression, position)?;
+            let tag = select_operand_tag(&outer_table, &operand).map_err(|error| {
+                if error.position.is_some() {
+                    error
+                } else {
+                    Error::at(error.message, position)
+                }
+            })?;
+            Some((tag, position))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let lhs = if cast_to_symbol {
         cast_base.unwrap_or("")
     } else {
@@ -170,11 +198,16 @@ fn expand_symbol_cursor(
         }
         return Err(Error::at("constant expected", start));
     }
-    let Some(lhs_index) = in_list_column_index(&outer_table, lhs).or_else(|| {
+    let lhs_index = in_list_column_index(&outer_table, lhs).or_else(|| {
         lhs.rsplit('.')
             .next()
             .and_then(|bare| outer_table.column_index(bare))
-    }) else {
+    });
+    let lhs_tag = if let Some((tag, _)) = cast_projection {
+        tag
+    } else if let Some(lhs_index) = lhs_index {
+        outer_table.meta.columns[lhs_index].tag
+    } else {
         if lhs.is_empty() {
             return Err(Error::at("constant expected", start));
         }
@@ -183,8 +216,7 @@ fn expand_symbol_cursor(
             lhs_prefix.rfind(lhs).unwrap_or(in_marker - lhs.len()),
         ));
     };
-    let lhs_tag = outer_table.meta.columns[lhs_index].tag;
-    let symbol_cast_source = cast_to_symbol
+    let symbol_cast_source = (cast_to_symbol || cast_projection.is_some())
         && matches!(
             lhs_tag,
             qdb_types::TAG_STRING
@@ -236,7 +268,7 @@ fn expand_symbol_cursor(
         };
         return Err(Error::at(message, position));
     }
-    let numeric_symbol_cast = cast_to_symbol
+    let numeric_symbol_cast = (cast_to_symbol || cast_projection.is_some())
         && matches!(
             lhs_tag,
             qdb_types::TAG_LONG | qdb_types::TAG_INT | qdb_types::TAG_SHORT | qdb_types::TAG_BYTE
@@ -274,7 +306,10 @@ fn expand_symbol_cursor(
         .collect::<Result<Vec<_>, _>>()?;
     let negated = lower[..in_marker].trim_end().ends_with(" not");
     if members.is_empty() {
-        let left_start = lhs_prefix.rfind(lhs).unwrap_or(in_marker - lhs.len());
+        let left_start = cast_projection.map_or_else(
+            || lhs_prefix.rfind(lhs).unwrap_or(in_marker - lhs.len()),
+            |(_, position)| position,
+        );
         let mut expanded = sql.to_string();
         let select_projection =
             top_level_sql_keyword(&lower, b"from").is_some_and(|from| in_marker < from);
@@ -400,6 +435,126 @@ fn projection_cursor_label_override(
         index,
         label: label.trim_end().to_string(),
     })
+}
+
+fn projection_cursor_lhs(sql: &str, lower: &str, in_marker: usize) -> Option<(String, usize)> {
+    let select = top_level_sql_keyword(lower, b"select")?;
+    let from = top_level_sql_keyword(lower, b"from")?;
+    if in_marker >= from {
+        return None;
+    }
+    let list_start = select + b"select".len();
+    let (item_start, _) = top_level_ranges(sql, list_start, from, b',')
+        .into_iter()
+        .find(|(start, end)| *start <= in_marker && in_marker < *end)?;
+    let mut expression_end = in_marker;
+    while expression_end > item_start && sql.as_bytes()[expression_end - 1].is_ascii_whitespace() {
+        expression_end -= 1;
+    }
+    if expression_end >= item_start + 3
+        && sql.as_bytes()[expression_end - 3..expression_end].eq_ignore_ascii_case(b"not")
+        && (expression_end == item_start + 3
+            || sql.as_bytes()[expression_end - 4].is_ascii_whitespace())
+    {
+        expression_end -= 3;
+        while expression_end > item_start
+            && sql.as_bytes()[expression_end - 1].is_ascii_whitespace()
+        {
+            expression_end -= 1;
+        }
+    }
+    let mut expression_start = item_start;
+    while expression_start < expression_end
+        && (sql.as_bytes()[expression_start].is_ascii_whitespace()
+            || sql.as_bytes()[expression_start] == b'(')
+    {
+        expression_start += 1;
+    }
+    let expression = sql
+        .get(expression_start..expression_end)?
+        .trim_end()
+        .to_string();
+    Some((expression, expression_start))
+}
+
+fn filter_cursor_lhs(sql: &str, lower: &str, in_marker: usize) -> Option<(String, usize)> {
+    let start = filter_cursor_lhs_start(sql, lower, in_marker)?;
+    let mut end = in_marker;
+    while end > start && sql.as_bytes()[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    if end >= start + 3
+        && sql.as_bytes()[end - 3..end].eq_ignore_ascii_case(b"not")
+        && (end == start + 3 || sql.as_bytes()[end - 4].is_ascii_whitespace())
+    {
+        end -= 3;
+        while end > start && sql.as_bytes()[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+    }
+    Some((sql.get(start..end)?.trim_end().to_string(), start))
+}
+
+fn cursor_outer_source_sql(sql: &str, lower: &str) -> Result<String, Error> {
+    let from = top_level_sql_keyword(lower, b"from")
+        .ok_or_else(|| Error::new("unsupported: cursor query has no FROM clause"))?;
+    let source_end = [
+        top_level_sql_keyword(lower, b"where"),
+        top_level_sql_keyword(lower, b"group"),
+        top_level_sql_keyword(lower, b"order"),
+        top_level_sql_keyword(lower, b"limit"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|position| *position > from)
+    .min()
+    .unwrap_or(sql.len());
+    let source = sql
+        .get(from..source_end)
+        .ok_or_else(|| Error::new("unsupported: invalid cursor source"))?;
+    Ok(format!("SELECT * {}", source.trim()))
+}
+
+fn strip_expression_column_qualifiers(expression: &str) -> String {
+    let bytes = expression.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut quoted = false;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'\'' {
+            output.push(bytes[index]);
+            if quoted && bytes.get(index + 1) == Some(&b'\'') {
+                output.push(b'\'');
+                index += 2;
+                continue;
+            }
+            quoted = !quoted;
+            index += 1;
+            continue;
+        }
+        if !quoted && (bytes[index].is_ascii_alphabetic() || bytes[index] == b'_') {
+            let start = index;
+            index += 1;
+            while index < bytes.len()
+                && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+            {
+                index += 1;
+            }
+            if bytes.get(index) == Some(&b'.')
+                && bytes
+                    .get(index + 1)
+                    .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+            {
+                index += 1;
+            } else {
+                output.extend_from_slice(&bytes[start..index]);
+            }
+            continue;
+        }
+        output.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(output).expect("qualifier removal preserves valid UTF-8")
 }
 
 fn render_projection_expression_label(item: &str) -> Option<(String, bool)> {
@@ -650,6 +805,95 @@ fn filter_in_subquery_lhs(filter: &Filter) -> Option<(&FilterOperand, usize)> {
         }
         _ => None,
     }
+}
+
+fn filter_cursor_lhs_start(sql: &str, lower: &str, in_marker: usize) -> Option<usize> {
+    let where_start = top_level_sql_keyword(lower, b"where")? + b"where".len();
+    if where_start > in_marker {
+        return None;
+    }
+    let bytes = sql.as_bytes();
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut index = where_start;
+    while index < in_marker {
+        if bytes[index] == b'\'' {
+            if quoted && bytes.get(index + 1) == Some(&b'\'') {
+                index += 2;
+                continue;
+            }
+            quoted = !quoted;
+        } else if !quoted {
+            match bytes[index] {
+                b'(' => depth += 1,
+                b')' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+    let target_depth = depth;
+    let mut lhs_start = where_start;
+    depth = 0;
+    quoted = false;
+    index = where_start;
+    while index < in_marker {
+        if bytes[index] == b'\'' {
+            if quoted && bytes.get(index + 1) == Some(&b'\'') {
+                index += 2;
+                continue;
+            }
+            quoted = !quoted;
+            index += 1;
+            continue;
+        }
+        if quoted {
+            index += 1;
+            continue;
+        }
+        match bytes[index] {
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == target_depth {
+            for keyword in [b"and".as_slice(), b"or".as_slice()] {
+                let end = index + keyword.len();
+                if bytes
+                    .get(index..end)
+                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(keyword))
+                    && (index == where_start
+                        || !(bytes[index - 1].is_ascii_alphanumeric() || bytes[index - 1] == b'_'))
+                    && bytes
+                        .get(end)
+                        .is_some_and(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_'))
+                {
+                    lhs_start = end;
+                    break;
+                }
+            }
+        }
+        index += 1;
+    }
+    loop {
+        while lhs_start < in_marker && bytes[lhs_start].is_ascii_whitespace() {
+            lhs_start += 1;
+        }
+        if lhs_start < in_marker && bytes[lhs_start] == b'(' {
+            lhs_start += 1;
+        } else if bytes
+            .get(lhs_start..lhs_start + 3)
+            .is_some_and(|word| word.eq_ignore_ascii_case(b"not"))
+            && bytes
+                .get(lhs_start + 3)
+                .is_some_and(u8::is_ascii_whitespace)
+        {
+            lhs_start += 3;
+        } else {
+            break;
+        }
+    }
+    Some(lhs_start)
 }
 
 fn cursor_first_column_tag(data_dir: &Path, sql: &str) -> Result<i32, Error> {
@@ -28570,6 +28814,12 @@ mod tests {
             ("SELECT ts,location FROM sensors WHERE location IN (SELECT nullif(location,location) FROM sensors LIMIT 1) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n"),
             ("SELECT ts,location FROM sensors WHERE location NOT IN (SELECT nullif(location,location) FROM sensors LIMIT 1) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
             ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid') LIMIT 0", "ts\tlocation\n"),
+            ("SELECT ts FROM sensors WHERE lower(location)::SYMBOL IN (SELECT location FROM sensors WHERE location='madrid') ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:07.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE lower(location)::SYMBOL IN (SELECT location FROM sensors WHERE id=99) ORDER BY ts", "ts\n"),
+            ("SELECT ts FROM sensors WHERE lower(location)::SYMBOL NOT IN (SELECT location FROM sensors WHERE id=99) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:06.000000Z\n2020-01-02T03:04:07.000000Z\n2020-01-02T03:04:08.000000Z\n"),
+            ("SELECT ts FROM sensors s WHERE lower(s.location)::SYMBOL IN (SELECT t.location FROM sensors t WHERE t.location='madrid') ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:07.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE lower(location)::SYMBOL IN (SELECT location FROM sensors WHERE location IS NULL) ORDER BY ts", "ts\n2020-01-02T03:04:06.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE lower(location)::SYMBOL NOT IN (SELECT location FROM sensors WHERE location IS NULL) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:07.000000Z\n2020-01-02T03:04:08.000000Z\n"),
         ];
         for (sql, expected) in cases {
             assert_eq!(
@@ -29029,6 +29279,88 @@ mod tests {
         ] {
             let error = execute(&sensors, sql).unwrap_err();
             assert_eq!(error.message, "constant expected", "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn symbol_cursor_text_function_cast_projections_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, expected) in [
+            (
+                "SELECT lower(location)::SYMBOL IN (SELECT location FROM sensors WHERE location='madrid') AS matched FROM sensors ORDER BY ts",
+                "matched\ntrue\nfalse\ntrue\nfalse\n",
+            ),
+            (
+                "SELECT lower(location)::SYMBOL IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts",
+                "lower(location)::SYMBOL in (select-choose location from (sensors\ntrue\nfalse\ntrue\nfalse\n",
+            ),
+            (
+                "SELECT lower(location)::SYMBOL IN (SELECT lower(location) FROM sensors WHERE location='madrid') AS matched FROM sensors ORDER BY ts",
+                "matched\ntrue\nfalse\ntrue\nfalse\n",
+            ),
+            (
+                "SELECT lower(location)::SYMBOL IN (SELECT location FROM sensors WHERE id=99) AS matched FROM sensors ORDER BY ts",
+                "matched\nfalse\nfalse\nfalse\nfalse\n",
+            ),
+            (
+                "SELECT lower(location)::SYMBOL NOT IN (SELECT location FROM sensors WHERE id=99) AS unmatched FROM sensors ORDER BY ts",
+                "unmatched\ntrue\ntrue\ntrue\ntrue\n",
+            ),
+            (
+                "SELECT upper(s.location)::SYMBOL IN (SELECT t.location FROM sensors t WHERE t.location='東京') AS matched FROM sensors s ORDER BY s.ts",
+                "matched\nfalse\nfalse\nfalse\ntrue\n",
+            ),
+            (
+                "SELECT trim(note)::SYMBOL IN (SELECT location FROM sensors WHERE id=99) AS matched FROM sensors ORDER BY ts",
+                "matched\nfalse\nfalse\nfalse\nfalse\n",
+            ),
+            (
+                "SELECT concat(location, '!')::SYMBOL IN (SELECT concat(location, '!') FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts",
+                "concat(location, '!')::SYMBOL in (select-choose concat(location,\ntrue\nfalse\ntrue\nfalse\n",
+            ),
+            (
+                "SELECT replace(location, 'mad', 'MAD')::SYMBOL IN (SELECT location FROM sensors WHERE location='MADrid') AS matched FROM sensors ORDER BY ts",
+                "matched\nfalse\nfalse\nfalse\nfalse\n",
+            ),
+            (
+                "SELECT substring(location, 1, 3)::SYMBOL IN (SELECT substring(location, 1, 3) FROM sensors WHERE location='madrid') AS matched FROM sensors ORDER BY ts",
+                "matched\ntrue\nfalse\ntrue\nfalse\n",
+            ),
+            (
+                "SELECT coalesce(note, '')::SYMBOL IN (SELECT location FROM sensors WHERE id=99) AS matched FROM sensors ORDER BY ts",
+                "matched\nfalse\nfalse\nfalse\nfalse\n",
+            ),
+            (
+                "SELECT left(location, 3)::SYMBOL IN (SELECT left(location, 3) FROM sensors WHERE location='madrid') AS matched FROM sensors ORDER BY ts",
+                "matched\ntrue\nfalse\ntrue\nfalse\n",
+            ),
+            (
+                "SELECT lower(location)::SYMBOL IN (SELECT location FROM sensors WHERE location IS NULL) AS matched FROM sensors ORDER BY ts",
+                "matched\nfalse\ntrue\nfalse\nfalse\n",
+            ),
+            (
+                "SELECT lower(location)::SYMBOL NOT IN (SELECT location FROM sensors WHERE location IS NULL) AS unmatched FROM sensors ORDER BY ts",
+                "unmatched\ntrue\nfalse\ntrue\ntrue\n",
+            ),
+        ] {
+            let actual = execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+            assert_eq!(render_tsv(&actual), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT lower(location)::SYMBOL IN (SELECT id FROM sensors) AS matched FROM sensors LIMIT 0",
+                "supported column types are VARCHAR, SYMBOL and STRING, found: LONG",
+                31,
+            ),
+            (
+                "SELECT lower(id)::SYMBOL IN (SELECT location FROM sensors) AS matched FROM sensors LIMIT 0",
+                "there is no matching function `lower` with the argument types: (LONG)",
+                7,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
             assert_eq!(error.position, Some(position), "{sql}");
         }
     }

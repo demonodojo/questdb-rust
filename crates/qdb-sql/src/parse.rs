@@ -3346,6 +3346,16 @@ fn is_boolean_projection(source: &str) -> bool {
     has_top_level_boolean_operator(expression.as_bytes())
 }
 
+fn is_symbol_cast_in_projection(source: &str) -> bool {
+    let Some((operator_start, _, _, _)) = top_level_in_operator(source.as_bytes(), 0) else {
+        return false;
+    };
+    source[..operator_start]
+        .trim_end()
+        .to_ascii_lowercase()
+        .ends_with("::symbol")
+}
+
 fn top_level_cmp(src: &[u8], start: usize) -> Option<(usize, CmpOp)> {
     let mut pos = start;
     let mut depth = 0usize;
@@ -5019,7 +5029,7 @@ impl<'a> Parser<'a> {
                 .unwrap_or("")
                 .trim();
             let (expression, alias) = split_select_alias(item);
-            if is_boolean_projection(expression) {
+            if is_boolean_projection(expression) || is_symbol_cast_in_projection(expression) {
                 pieces.push(SelectPiece::Not(parse_boolean_projection(
                     expression, self.pos,
                 )?));
