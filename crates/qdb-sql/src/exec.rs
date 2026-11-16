@@ -222,14 +222,12 @@ fn expand_symbol_cursor(
             "false"
         };
         expanded.replace_range(left_start..=end, replacement);
-        let label_override =
-            projection_cursor_label_override(sql, &lower, in_marker, end, start, negated);
+        let label_override = projection_cursor_label_override(sql, &lower, in_marker);
         return Ok(Some((expanded, label_override)));
     }
     let mut expanded = sql.to_string();
     expanded.replace_range(open..=end, &format!("({})", members.join(",")));
-    let label_override =
-        projection_cursor_label_override(sql, &lower, in_marker, end, start, negated);
+    let label_override = projection_cursor_label_override(sql, &lower, in_marker);
     Ok(Some((expanded, label_override)))
 }
 
@@ -270,9 +268,6 @@ fn projection_cursor_label_override(
     sql: &str,
     lower: &str,
     in_marker: usize,
-    end: usize,
-    inner_start: usize,
-    negated: bool,
 ) -> Option<ProjectionLabelOverride> {
     let select = top_level_sql_keyword(lower, b"select")?;
     let from = top_level_sql_keyword(lower, b"from")?;
@@ -285,38 +280,63 @@ fn projection_cursor_label_override(
         .iter()
         .enumerate()
         .find(|(_, (start, end))| *start <= in_marker && in_marker < *end)?;
-    let suffix = sql.get(end + 1..*item_end)?.trim();
-    if !suffix.trim_start_matches(')').trim().is_empty() {
+    let item = sql.get(*item_start..*item_end)?.trim();
+    let item_lower = item.to_ascii_lowercase();
+    if top_level_sql_keyword(&item_lower, b"as").is_some() {
         return None;
     }
-    let inner_sql = sql.get(inner_start..end)?;
-    let inner_plan = render_simple_subquery_plan(inner_sql)?;
-    let mut lhs = sql.get(*item_start..in_marker)?.trim_end();
-    if negated {
-        lhs = lhs.trim_end();
-        lhs = lhs
-            .strip_suffix("not")
-            .or_else(|| lhs.strip_suffix("NOT"))?;
-        lhs = lhs.trim_end();
-    }
-    let lhs = lhs.trim().trim_start_matches('(').trim();
-    let expression = format!("{lhs} in ({inner_plan})");
-    let label = if negated {
-        format!("not({expression})")
-    } else {
-        expression
-    };
-    let inner_lower = inner_sql.to_ascii_lowercase();
-    let max_label_len = if top_level_sql_keyword(&inner_lower, b"join").is_some() {
-        60
-    } else {
-        64
-    };
+    let (label, contains_join) = render_projection_expression_label(item)?;
+    let max_label_len = if contains_join { 60 } else { 64 };
     let label = label.chars().take(max_label_len).collect::<String>();
     Some(ProjectionLabelOverride {
         index,
         label: label.trim_end().to_string(),
     })
+}
+
+fn render_projection_expression_label(item: &str) -> Option<(String, bool)> {
+    let mut expression = item.trim().to_string();
+    while expression.starts_with('(')
+        && matching_sql_paren(&expression, 0) == Some(expression.len().saturating_sub(1))
+    {
+        expression = expression[1..expression.len() - 1].trim().to_string();
+    }
+    let mut contains_join = false;
+    let mut inner_plans = Vec::new();
+    loop {
+        let lower = expression.to_ascii_lowercase();
+        let Some((in_marker, open, start)) = find_in_cursor_subquery(&lower) else {
+            break;
+        };
+        let end = matching_sql_paren(&expression, open)?;
+        let inner_sql = expression.get(start..end)?;
+        let inner_plan = render_simple_subquery_plan(inner_sql)?;
+        let inner_lower = inner_sql.to_ascii_lowercase();
+        contains_join |= top_level_sql_keyword(&inner_lower, b"join").is_some();
+        let placeholder = format!("qdb_cursor_plan_{}", inner_plans.len());
+        inner_plans.push((placeholder.clone(), inner_plan));
+        let negated = lower[..in_marker].trim_end().ends_with(" not");
+        if negated {
+            let prefix = expression.get(..in_marker)?.trim_end();
+            let prefix = prefix.get(..prefix.len().checked_sub(3)?)?.trim_end();
+            let lhs_start = prefix
+                .rfind(|character: char| {
+                    !(character.is_ascii_alphanumeric() || matches!(character, '_' | '.'))
+                })
+                .map_or(0, |index| index + 1);
+            let lhs = prefix.get(lhs_start..)?.trim();
+            let replacement = format!("not({lhs} in ({placeholder}))");
+            expression.replace_range(lhs_start..=end, &replacement);
+        } else {
+            expression.replace_range(open..=end, &format!("({placeholder})"));
+        }
+    }
+    for (placeholder, inner_plan) in inner_plans {
+        expression = expression.replace(&placeholder, &inner_plan);
+    }
+    let expression = normalize_query_model_tokens(&expression);
+    let expression = expression.replacen("not (", "not(", 1);
+    Some((expression, contains_join))
 }
 
 fn render_simple_subquery_plan(sql: &str) -> Option<String> {
@@ -28723,6 +28743,22 @@ mod tests {
             (
                 "SELECT location IN (SELECT min(location) FROM sensors GROUP BY location) FROM sensors ORDER BY ts",
                 "projection_no_alias_grouped_aggregate",
+            ),
+            (
+                "SELECT (location IN (SELECT location FROM sensors WHERE location='madrid') OR location IN (SELECT location FROM sensors WHERE location='東京')) FROM sensors ORDER BY ts",
+                "projection_no_alias_or",
+            ),
+            (
+                "SELECT (location IN (SELECT location FROM sensors WHERE location='madrid') AND location IN (SELECT location FROM sensors WHERE location='東京')) FROM sensors ORDER BY ts",
+                "projection_no_alias_and",
+            ),
+            (
+                "SELECT NOT (location IN (SELECT location FROM sensors WHERE location='madrid')) FROM sensors ORDER BY ts",
+                "projection_no_alias_not",
+            ),
+            (
+                "SELECT (location NOT IN (SELECT tag FROM sensors) OR location IN (SELECT location FROM sensors WHERE location='東京')) FROM sensors ORDER BY ts",
+                "projection_no_alias_not_in_or",
             ),
         ] {
             let expected = std::fs::read_to_string(

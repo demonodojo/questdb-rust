@@ -5001,6 +5001,7 @@ impl<'a> Parser<'a> {
         if !self.starts_value()
             && !self.starts_unary_minus()
             && !self.starts_tilde()
+            && !is_boolean_projection(first_item.trim())
             && top_level_arithmetic(first_item.trim().as_bytes()).is_none()
         {
             return Err(Error::new(
