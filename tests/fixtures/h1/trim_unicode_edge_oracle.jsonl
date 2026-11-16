@@ -1,0 +1,6 @@
+{"query":"SELECT trim(' 😀 ') AS value FROM sensors GROUP BY trim(' 😀 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["😀"]],"count":1}
+{"query":"SELECT trim(' é ') AS value FROM sensors GROUP BY trim(' é ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["é"]],"count":1}
+{"query":"SELECT ltrim(' 😀 ') AS value FROM sensors GROUP BY ltrim(' 😀 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["😀 "]],"count":1}
+{"query":"SELECT ltrim(' é ') AS value FROM sensors GROUP BY ltrim(' é ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["é "]],"count":1}
+{"query":"SELECT rtrim(' 😀 ') AS value FROM sensors GROUP BY rtrim(' 😀 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 😀"]],"count":1}
+{"query":"SELECT rtrim(' é ') AS value FROM sensors GROUP BY rtrim(' é ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" é"]],"count":1}

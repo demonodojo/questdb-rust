@@ -1,0 +1,3 @@
+{"query":"SELECT trim(txt) AS value FROM trim_cases ORDER BY ts","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["café"],["🇨🇦"],["é"],[""],[""],[null],["\tpad\t"],[" wide "]],"count":8,"case":"trim_column_unicode_null_empty"}
+{"query":"SELECT ltrim(txt) AS value FROM trim_cases ORDER BY ts","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["café  "],["🇨🇦  "],["é  "],[""],[""],[null],["\tpad\t "],[" wide  "]],"count":8,"case":"ltrim_column_unicode_null_empty"}
+{"query":"SELECT rtrim(txt) AS value FROM trim_cases ORDER BY ts","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["  café"],["  🇨🇦"],["  é"],[""],[""],[null],[" \tpad\t"],["  wide "]],"count":8,"case":"rtrim_column_unicode_null_empty"}

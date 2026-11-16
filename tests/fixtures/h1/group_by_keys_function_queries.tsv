@@ -253,3 +253,48 @@ prefix_not_arith_and	SELECT NOT (id + 1 > 2 AND id < 3) AS n FROM sensors GROUP 
 prefix_not_arith_qualified	SELECT NOT (s.id * 2 = 2) AS n FROM sensors AS s GROUP BY s.id ORDER BY s.id
 prefix_not_arith_exact_key	SELECT NOT (id + 1 > 2) AS n FROM sensors GROUP BY NOT (id + 1 > 2) ORDER BY n
 prefix_not_arith_limit0	SELECT NOT (id + 1 > 'x') AS n FROM sensors GROUP BY id LIMIT 0
+nested_lower_trim	SELECT lower(trim(note)) AS value FROM sensors GROUP BY lower(trim(note)) ORDER BY value
+nested_lower_trim_qualified	SELECT lower(trim(s.note)) AS value FROM sensors AS s GROUP BY lower(trim(s.note)) ORDER BY value
+nested_upper_trim	SELECT upper(trim(note)) AS value FROM sensors GROUP BY upper(trim(note)) ORDER BY value
+nested_upper_trim_qualified	SELECT upper(trim(s.note)) AS value FROM sensors AS s GROUP BY upper(trim(s.note)) ORDER BY value
+nested_trim_lower	SELECT trim(lower(note)) AS value FROM sensors GROUP BY trim(lower(note)) ORDER BY value
+nested_trim_lower_qualified	SELECT trim(lower(s.note)) AS value FROM sensors AS s GROUP BY trim(lower(s.note)) ORDER BY value
+nested_ltrim_upper	SELECT ltrim(upper(note)) AS value FROM sensors GROUP BY ltrim(upper(note)) ORDER BY value
+nested_ltrim_upper_qualified	SELECT ltrim(upper(s.note)) AS value FROM sensors AS s GROUP BY ltrim(upper(s.note)) ORDER BY value
+nested_upper_replace	SELECT upper(replace(note, 'a', 'x')) AS value FROM sensors GROUP BY upper(replace(note, 'a', 'x')) ORDER BY value
+nested_upper_replace_qualified	SELECT upper(replace(s.note, 'a', 'x')) AS value FROM sensors AS s GROUP BY upper(replace(s.note, 'a', 'x')) ORDER BY value
+nested_lower_replace_trim	SELECT lower(replace(trim(note), 'a', 'x')) AS value FROM sensors GROUP BY lower(replace(trim(note), 'a', 'x')) ORDER BY value
+nested_lower_replace_trim_qualified	SELECT lower(replace(trim(s.note), 'a', 'x')) AS value FROM sensors s GROUP BY lower(replace(trim(s.note), 'a', 'x')) ORDER BY value
+nested_upper_replace_trim	SELECT upper(replace(trim(note), 'a', 'x')) AS value FROM sensors GROUP BY upper(replace(trim(note), 'a', 'x')) ORDER BY value
+nested_upper_replace_trim_qualified	SELECT upper(replace(trim(s.note), 'a', 'x')) AS value FROM sensors s GROUP BY upper(replace(trim(s.note), 'a', 'x')) ORDER BY value
+nested_trim_replace_trim	SELECT trim(replace(trim(note), 'a', 'x')) AS value FROM sensors GROUP BY trim(replace(trim(note), 'a', 'x')) ORDER BY value
+nested_trim_replace_trim_qualified	SELECT trim(replace(trim(s.note), 'a', 'x')) AS value FROM sensors s GROUP BY trim(replace(trim(s.note), 'a', 'x')) ORDER BY value
+nested_trim_upper_replace_trim	SELECT trim(upper(replace(trim(note), 'a', 'x'))) AS value FROM sensors GROUP BY trim(upper(replace(trim(note), 'a', 'x'))) ORDER BY value
+nested_trim_upper_replace_trim_qualified	SELECT trim(upper(replace(trim(s.note), 'a', 'x'))) AS value FROM sensors s GROUP BY trim(upper(replace(trim(s.note), 'a', 'x'))) ORDER BY value
+nested_trim_lower_replace_trim	SELECT trim(lower(replace(trim(note), 'a', 'x'))) AS value FROM sensors GROUP BY trim(lower(replace(trim(note), 'a', 'x'))) ORDER BY value
+nested_trim_lower_replace_trim_qualified	SELECT trim(lower(replace(trim(s.note), 'a', 'x'))) AS value FROM sensors s GROUP BY trim(lower(replace(trim(s.note), 'a', 'x'))) ORDER BY value
+nested_upper_trim_replace_trim	SELECT upper(trim(replace(trim(note), 'a', 'x'))) AS value FROM sensors GROUP BY upper(trim(replace(trim(note), 'a', 'x'))) ORDER BY value
+nested_upper_trim_replace_trim_qualified	SELECT upper(trim(replace(trim(s.note), 'a', 'x'))) AS value FROM sensors s GROUP BY upper(trim(replace(trim(s.note), 'a', 'x'))) ORDER BY value
+nested_lower_trim_replace_trim	SELECT lower(trim(replace(trim(note), 'a', 'x'))) AS value FROM sensors GROUP BY lower(trim(replace(trim(note), 'a', 'x'))) ORDER BY value
+nested_lower_trim_replace_trim_qualified	SELECT lower(trim(replace(trim(s.note), 'a', 'x'))) AS value FROM sensors s GROUP BY lower(trim(replace(trim(s.note), 'a', 'x'))) ORDER BY value
+nested_replace_trim_upper_trim	SELECT replace(trim(upper(trim(note))), 'A', 'x') AS value FROM sensors GROUP BY replace(trim(upper(trim(note))), 'A', 'x') ORDER BY value
+nested_replace_trim_upper_trim_qualified	SELECT replace(trim(upper(trim(s.note))), 'A', 'x') AS value FROM sensors s GROUP BY replace(trim(upper(trim(s.note))), 'A', 'x') ORDER BY value
+nested_replace_trim_upper_replace_trim	SELECT replace(trim(upper(replace(trim(note), 'a', 'x'))), 'X', 'y') AS value FROM sensors GROUP BY replace(trim(upper(replace(trim(note), 'a', 'x'))), 'X', 'y') ORDER BY value
+nested_replace_trim_upper_replace_trim_qualified	SELECT replace(trim(upper(replace(trim(s.note), 'a', 'x'))), 'X', 'y') AS value FROM sensors s GROUP BY replace(trim(upper(replace(trim(s.note), 'a', 'x'))), 'X', 'y') ORDER BY value
+nested_trim_replace_trim_upper_replace_trim	SELECT trim(replace(trim(upper(replace(trim(note), 'a', 'x'))), 'X', 'y')) AS value FROM sensors GROUP BY trim(replace(trim(upper(replace(trim(note), 'a', 'x'))), 'X', 'y')) ORDER BY value
+nested_trim_replace_trim_upper_replace_trim_qualified	SELECT trim(replace(trim(upper(replace(trim(s.note), 'a', 'x'))), 'X', 'y')) AS value FROM sensors s GROUP BY trim(replace(trim(upper(replace(trim(s.note), 'a', 'x'))), 'X', 'y')) ORDER BY value
+nested_replace_ltrim_upper_replace_ltrim	SELECT replace(ltrim(upper(replace(ltrim(note), 'a', 'x'))), 'X', 'y') AS value FROM sensors GROUP BY replace(ltrim(upper(replace(ltrim(note), 'a', 'x'))), 'X', 'y') ORDER BY value
+nested_replace_ltrim_upper_replace_ltrim_qualified	SELECT replace(ltrim(upper(replace(ltrim(s.note), 'a', 'x'))), 'X', 'y') AS value FROM sensors s GROUP BY replace(ltrim(upper(replace(ltrim(s.note), 'a', 'x'))), 'X', 'y') ORDER BY value
+nested_replace_rtrim_upper_replace_rtrim	SELECT replace(rtrim(upper(replace(rtrim(note), 'a', 'x'))), 'X', 'y') AS value FROM sensors GROUP BY replace(rtrim(upper(replace(rtrim(note), 'a', 'x'))), 'X', 'y') ORDER BY value
+nested_replace_rtrim_upper_replace_rtrim_qualified	SELECT replace(rtrim(upper(replace(rtrim(s.note), 'a', 'x'))), 'X', 'y') AS value FROM sensors s GROUP BY replace(rtrim(upper(replace(rtrim(s.note), 'a', 'x'))), 'X', 'y') ORDER BY value
+nested_replace_ltrim_upper_replace_rtrim	SELECT replace(ltrim(upper(replace(rtrim(note), 'a', 'x'))), 'X', 'y') AS value FROM sensors GROUP BY replace(ltrim(upper(replace(rtrim(note), 'a', 'x'))), 'X', 'y') ORDER BY value
+nested_replace_ltrim_upper_replace_rtrim_qualified	SELECT replace(ltrim(upper(replace(rtrim(s.note), 'a', 'x'))), 'X', 'y') AS value FROM sensors s GROUP BY replace(ltrim(upper(replace(rtrim(s.note), 'a', 'x'))), 'X', 'y') ORDER BY value
+nested_replace_rtrim_upper_replace_ltrim	SELECT replace(rtrim(upper(replace(ltrim(note), 'a', 'x'))), 'X', 'y') AS value FROM sensors GROUP BY replace(rtrim(upper(replace(ltrim(note), 'a', 'x'))), 'X', 'y') ORDER BY value
+nested_replace_rtrim_upper_replace_ltrim_qualified	SELECT replace(rtrim(upper(replace(ltrim(s.note), 'a', 'x'))), 'X', 'y') AS value FROM sensors s GROUP BY replace(rtrim(upper(replace(ltrim(s.note), 'a', 'x'))), 'X', 'y') ORDER BY value
+nested_trim_direction_ltrim_visible_spaces	SELECT replace(ltrim(upper(replace(rtrim(s.note), 'a', ' '))), ' ', '_') AS value FROM sensors s GROUP BY replace(ltrim(upper(replace(rtrim(s.note), 'a', ' '))), ' ', '_') ORDER BY value
+nested_trim_direction_rtrim_visible_spaces	SELECT replace(rtrim(upper(replace(ltrim(s.note), 'a', ' '))), ' ', '_') AS value FROM sensors s GROUP BY replace(rtrim(upper(replace(ltrim(s.note), 'a', ' '))), ' ', '_') ORDER BY value
+ltrim_tab_preserved	SELECT ltrim('	X') AS value FROM sensors GROUP BY ltrim('	X')
+rtrim_tab_preserved	SELECT rtrim('X	') AS value FROM sensors GROUP BY rtrim('X	')
+trim_nbsp_preserved	SELECT trim(' X ') AS value FROM sensors GROUP BY trim(' X ')
+trim_em_space_preserved	SELECT trim(' X ') AS value FROM sensors GROUP BY trim(' X ')
+ltrim_ideographic_space_preserved	SELECT ltrim('　X　') AS value FROM sensors GROUP BY ltrim('　X　')

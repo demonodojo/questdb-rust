@@ -34,3 +34,87 @@ grapheme_boundary_prefix_x_combining	SELECT regexp_replace('áa', '\b{g}\X', 'X
 grapheme_replace_ascii_casefold_aligned	SELECT regexp_replace('éa', '(?i)\X', 'X') AS result FROM sensors LIMIT 1
 grapheme_replace_ascii_casefold_ambiguous	SELECT regexp_replace('áA', '(?i)(\X)', 'X') AS result FROM sensors LIMIT 1
 grapheme_replace_unicode_casefold	SELECT regexp_replace('éa', '(?iu)\X', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_ambiguous_prefix_quantified	SELECT regexp_replace('áa', '\X{2}', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_high_cardinality	SELECT regexp_replace('😀🏻😁🏻😂🏻😃🏻😄🏻😅🏻😆🏻😇🏻😈🏻😉🏻😊🏻😋🏻😌🏻😍🏻😎🏻😏🏻😐🏻😑🏻😒🏻😓🏻😔🏻😕🏻😖🏻😗🏻😘🏻😙🏻😚🏻😛🏻😜🏻😝🏻😞🏻😟🏻😠🏻😡🏻😢🏻😣🏻😤🏻😥🏻😦🏻😧🏻😨🏻😩🏻😪🏻😫🏻😬🏻😭🏻😮🏻😯🏻😰🏻😱🏻😲🏻😳🏻😴🏻😵🏻😶🏻😷🏻😸🏻😹🏻😺🏻😻🏻😼🏻😽🏻😾🏻😿🏻🙀🏻', '\X{65}', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_inert_non_ascii	SELECT regexp_replace('éA', '(?iu)\X{2}', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_ambiguous_inert_non_ascii	SELECT regexp_replace('áA', '(?iu)\X{2}', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_kelvin	SELECT regexp_replace('Kk', '(?iu)k', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_kelvin_prefix	SELECT regexp_replace('Ḱk', '(?iu)\X{2}', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_sigma	SELECT regexp_replace('Σςσ', '(?iu)ς', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_long_s	SELECT regexp_replace('Ssſ', '(?iu)s', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_turkic_i	SELECT regexp_replace('Iiıİ', '(?iu)\X', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_turkic_i_literal	SELECT regexp_replace('Iiıİ', '(?iu)i', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_turkic_i_unicode_escape	SELECT regexp_replace('Iiıİ', '(?iu)\u0069', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_turkic_i_class	SELECT regexp_replace('Iiıİ', '(?iu)[i]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_sharp_s_no_expansion	SELECT regexp_replace('ßss', '(?iu)ss', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_expansion_no_full_fold	SELECT regexp_replace('ßS', '(?iu)\X', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_greek_prefix	SELECT regexp_replace('Σ́ς', '(?iu)\X{2}', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_turkic_i_escaped_class	SELECT regexp_replace('Iiıİ', '(?iu)[\u0069]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_turkic_i_range	SELECT regexp_replace('HhIiıİ', '(?iu)[h-i]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_suffix_guard_collision	SELECT regexp_replace('aͅaι', '(?iu)\X', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_nested_negative_intersection	SELECT regexp_replace('Iiıİ', '(?iu)[a-z&&[^aeiou]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_nested_positive_intersection	SELECT regexp_replace('Iiıİx', '(?iu)[a-z&&[i]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_quoted_class	SELECT regexp_replace('Iiıİ', '(?iu)[\Qi\E]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_escaped_range	SELECT regexp_replace('HhIiıİ', '(?iu)[\u0068-\u0069]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_negated_outer_intersection	SELECT regexp_replace('Iiıİaeiouxyz', '(?iu)[^a-z&&[^aeiou]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_negated_outer_positive_intersection	SELECT regexp_replace('Iiıİaeiouxyz', '(?iu)[^a-z&&[aeiou]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_negated_intersection_i	SELECT regexp_replace('Iiıİaeiouxyz', '(?iu)[^a-z&&[i]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_negated_intersection_not_i	SELECT regexp_replace('Iiıİaeiouxyz', '(?iu)[^a-z&&[^i]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_quoted_nested_intersection	SELECT regexp_replace('Iiıİxyz', '(?iu)[a-z&&[\Qi\E]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_quoted_negated_outer_intersection	SELECT regexp_replace('Iiıİxyz', '(?iu)[^a-z&&[\Qi\E]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_escaped_nested_range_intersection	SELECT regexp_replace('Iiıİxyz', '(?iu)[a-z&&[\u0069-\u0069]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_escaped_nested_range_negated_intersection	SELECT regexp_replace('Iiıİxyz', '(?iu)[^a-z&&[\u0069-\u0069]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_escaped_range_deep_intersection	SELECT regexp_replace('Iiıİxyz', '(?iu)[a-z&&[a-z&&[\u0069-\u0069]]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_escaped_range_deep_negated_intersection	SELECT regexp_replace('Iiıİxyz', '(?iu)[^a-z&&[a-z&&[\u0069-\u0069]]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_quoted_deep_intersection	SELECT regexp_replace('Iiıİxyz', '(?iu)[a-z&&[a-z&&[\Qi\E]]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_quoted_deep_negated_intersection	SELECT regexp_replace('Iiıİxyz', '(?iu)[^a-z&&[a-z&&[\Qi\E]]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_escaped_range_crosses_i	SELECT regexp_replace('HhIiıİJjxyz', '(?iu)[a-z&&[\u0068-\u006A]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_negated_inner_escaped_range	SELECT regexp_replace('HhIiıİJjxyz', '(?iu)[a-z&&[^\u0068-\u006A]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_escaped_range_negated_outer	SELECT regexp_replace('HhIiıİJjxyz', '(?iu)[^a-z&&[\u0068-\u006A]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_unicode_casefold_nested_negated_escaped_range	SELECT regexp_replace('HhIiıİJjxyz', '(?iu)[^a-z&&[^\u0068-\u006A]]', 'X') AS result FROM sensors LIMIT 1
+grapheme_replace_long_combining_graphemes_oracle	SELECT regexp_replace(rpad('á', 120000, 'á'), '(?iu)\X', 'X') FROM sensors LIMIT 1
+grapheme_where_long_combining_graphemes_oracle	SELECT id FROM sensors WHERE rpad('á', 120000, 'á') ~ '(?iu)\X'
+where_regex_rpad_qualified_alias	SELECT id FROM sensors s WHERE rpad(s.note, 5, 'x') ~ 'x' ORDER BY id
+where_regex_rpad_negated	SELECT id FROM sensors WHERE rpad(note, 5, 'x') !~ 'x' ORDER BY id
+where_regex_rpad_empty_and_null	SELECT id FROM sensors WHERE rpad(note, 5, 'x') ~ 'x' ORDER BY id
+where_regex_lower_qualified_alias	SELECT id FROM sensors s WHERE lower(s.note) ~ 'a' ORDER BY id
+where_regex_upper_qualified_alias_not_match	SELECT id FROM sensors s WHERE upper(s.note) !~ 'A' ORDER BY id
+where_regex_trim_qualified_alias	SELECT id FROM sensors s WHERE trim(s.note) ~ '^a' ORDER BY id
+where_regex_concat_qualified_alias_null_empty	SELECT id FROM sensors s WHERE concat(s.note, 'x') ~ 'x' ORDER BY id
+where_regex_replace_qualified_alias	SELECT id FROM sensors s WHERE replace(s.note, 'a', 'x') ~ '^x' ORDER BY id
+where_regex_substring_qualified_alias	SELECT id FROM sensors s WHERE substring(s.note, 1, 1) ~ 'a' ORDER BY id
+where_regex_substring_qualified_alias_negated	SELECT id FROM sensors s WHERE substring(s.note, 1, 1) !~ 'a' ORDER BY id
+where_regex_left_qualified_alias_null_empty	SELECT id FROM sensors s WHERE left(s.note, 1) ~ '^a' ORDER BY id
+where_regex_right_qualified_alias_negated	SELECT id FROM sensors s WHERE right(s.note, 1) !~ 'a' ORDER BY id
+where_regex_split_part_qualified_alias	SELECT id FROM sensors s WHERE split_part(s.note, 'a', 1) ~ '^' ORDER BY id
+where_regex_split_part_dynamic_delimiter	SELECT id FROM sensors s WHERE split_part(s.note, s.location, 1) ~ 'a' ORDER BY id
+where_regex_to_str_qualified_alias	SELECT id FROM sensors s WHERE to_str(s.ts, 'yyyy') ~ '^2020' ORDER BY id
+where_regex_left_empty_result	SELECT id FROM sensors s WHERE left(s.note, 1) ~ 'x' ORDER BY id
+where_regex_ltrim_qualified_alias	SELECT id FROM sensors s WHERE ltrim(s.note) ~ '^a' ORDER BY id
+where_regex_rtrim_qualified_alias_negated	SELECT id FROM sensors s WHERE rtrim(s.note) !~ 'a$' ORDER BY id
+where_regex_quote_ident_qualified_alias	SELECT id FROM sensors s WHERE quote_ident(s.note) ~ '^alpha$' ORDER BY id
+where_regex_regexp_replace_qualified_alias	SELECT id FROM sensors s WHERE regexp_replace(s.note, 'a', 'x') ~ '^x' ORDER BY id
+where_regex_to_lowercase_qualified_alias	SELECT id FROM sensors s WHERE to_lowercase(s.note) ~ '^a' ORDER BY id
+where_regex_to_uppercase_qualified_alias_negated	SELECT id FROM sensors s WHERE to_uppercase(s.note) !~ '^A' ORDER BY id
+where_regex_format_type_constant	SELECT id FROM sensors s WHERE format_type(23, NULL) ~ '^integer$' ORDER BY id
+where_regex_json_extract_qualified_alias	SELECT id FROM sensors s WHERE json_extract(s.tag, '$') ~ '^012' ORDER BY id
+where_regex_json_extract_utf8	SELECT id FROM sensors s WHERE json_extract('{"héllo":"東京"}', '$.héllo') ~ '^東京$' ORDER BY id
+where_regex_md5_qualified_alias	SELECT id FROM sensors s WHERE md5(s.tag) ~ '^[0-9a-f]{32}$' ORDER BY id
+where_regex_sha1_qualified_alias	SELECT id FROM sensors s WHERE sha1(s.tag) ~ '^[0-9a-f]{40}$' ORDER BY id
+where_regex_sha256_qualified_alias	SELECT id FROM sensors s WHERE sha256(s.tag) ~ '^[0-9a-f]{64}$' ORDER BY id
+where_regex_to_uuid_qualified_alias	SELECT id FROM sensors s WHERE to_uuid(s.id, s.id) ~ '^' ORDER BY id
+where_regex_pg_get_userbyid_qualified_alias	SELECT id FROM sensors s WHERE pg_catalog.pg_get_userbyid(s.flags) ~ '.*' ORDER BY id
+where_regex_current_schema	SELECT id FROM sensors s WHERE current_schema() ~ '^public$' ORDER BY id
+where_regex_current_database	SELECT id FROM sensors s WHERE current_database() ~ '.+' ORDER BY id
+where_regex_current_user	SELECT id FROM sensors s WHERE current_user() ~ '.+' ORDER BY id
+where_regex_session_user	SELECT id FROM sensors s WHERE session_user() ~ '.+' ORDER BY id
+where_regex_current_catalog	SELECT id FROM sensors s WHERE current_catalog() ~ '.+' ORDER BY id
+where_regex_version	SELECT id FROM sensors s WHERE version() ~ 'QuestDB' ORDER BY id
+where_regex_pg_catalog_context	SELECT id FROM sensors s WHERE pg_catalog.current_schema() ~ '^public$' AND pg_catalog.version() ~ 'QuestDB' ORDER BY id
+where_regex_pg_get_partkeydef_null	SELECT id FROM sensors s WHERE pg_catalog.pg_get_partkeydef(s.flags) !~ 'x' ORDER BY id
+where_regex_pg_get_expr_null	SELECT id FROM sensors s WHERE pg_catalog.pg_get_expr(s.note, NULL) !~ 'x' ORDER BY id
+where_regex_current_setting_empty	SELECT id FROM sensors s WHERE current_setting('server_version') ~ '^$' ORDER BY id
+where_regex_to_char_from_base64_alias	SELECT id FROM sensors s WHERE s.id = 1 AND to_char(from_base64(s.tag)) ~ '^00000000 bf$' ORDER BY id
+where_regex_bar_qualified_alias	SELECT id FROM sensors s WHERE bar(s.flags, 0, 42, 4) ~ '.*' ORDER BY id
+where_regex_netmask_ipv4_rendering	SELECT id FROM sensors s WHERE netmask('192.168.1.1/24') ~ '^255\.255\.255\.0$' ORDER BY id
+where_regex_uuid_canonical_rendering	SELECT id FROM sensors s WHERE to_uuid(s.id, s.id) ~ '^00000000-0000-000[12]-0000-00000000000[12]$' ORDER BY id

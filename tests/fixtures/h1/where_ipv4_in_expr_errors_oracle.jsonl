@@ -1,0 +1,7 @@
+{"query":"SELECT ts FROM sensors WHERE netmask(tag) IN ('bad-ip') ORDER BY ts","case":"ipv4_invalid_string","error":"invalid IPv4 format: bad-ip","position":46}
+{"query":"SELECT ts FROM sensors WHERE netmask(tag) IN ('x') ORDER BY ts","case":"ipv4_char_member","error":"cannot compare IPv4 with type CHAR","position":46}
+{"query":"SELECT ts FROM sensors WHERE netmask(tag) IN (1) ORDER BY ts","case":"ipv4_int_member","error":"cannot compare IPv4 with type INT","position":46}
+{"query":"SELECT ts FROM sensors WHERE netmask(tag) IN (1.5) ORDER BY ts","case":"ipv4_double_member","error":"cannot compare IPv4 with type DOUBLE","position":46}
+{"query":"SELECT ts FROM sensors WHERE netmask(tag) IN (true) ORDER BY ts","case":"ipv4_boolean_member","error":"cannot compare IPv4 with type BOOLEAN","position":46}
+{"query":"SELECT ts FROM sensors WHERE netmask(tag) IN () ORDER BY ts","case":"ipv4_empty_list","error":"too few arguments for 'in'","position":42}
+{"query":"SELECT ts FROM sensors WHERE netmask(tag) NOT IN () ORDER BY ts","case":"ipv4_not_in_empty_list","error":"too few arguments for 'in'","position":46}

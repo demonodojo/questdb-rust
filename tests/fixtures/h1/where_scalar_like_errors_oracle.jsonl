@@ -1,0 +1,2 @@
+{"query":"SELECT id FROM sensors WHERE make_geohash(reading,reading,4) LIKE '%' ORDER BY ts","error":"there is no matching operator `like` with the argument types: GEOHASH(4b) like CHAR","position":61}
+{"query":"SELECT id FROM sensors WHERE make_geohash(reading,reading,4) ILIKE '%' ORDER BY ts","error":"there is no matching operator `ilike` with the argument types: GEOHASH(4b) ilike CHAR","position":61}

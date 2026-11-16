@@ -1,0 +1,9 @@
+{"query":"SELECT trim(' 👨‍👩‍👧‍👦 ') AS value FROM sensors GROUP BY trim(' 👨‍👩‍👧‍👦 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["👨‍👩‍👧‍👦"]],"count":1,"case":"family_zwj_trim"}
+{"query":"SELECT ltrim(' 👨‍👩‍👧‍👦 ') AS value FROM sensors GROUP BY ltrim(' 👨‍👩‍👧‍👦 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["👨‍👩‍👧‍👦 "]],"count":1,"case":"family_zwj_ltrim"}
+{"query":"SELECT rtrim(' 👨‍👩‍👧‍👦 ') AS value FROM sensors GROUP BY rtrim(' 👨‍👩‍👧‍👦 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 👨‍👩‍👧‍👦"]],"count":1,"case":"family_zwj_rtrim"}
+{"query":"SELECT trim(' 🏳️‍🌈 ') AS value FROM sensors GROUP BY trim(' 🏳️‍🌈 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🏳️‍🌈"]],"count":1,"case":"rainbow_flag_zwj_vs_trim"}
+{"query":"SELECT ltrim(' 🏳️‍🌈 ') AS value FROM sensors GROUP BY ltrim(' 🏳️‍🌈 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🏳️‍🌈 "]],"count":1,"case":"rainbow_flag_zwj_vs_ltrim"}
+{"query":"SELECT rtrim(' 🏳️‍🌈 ') AS value FROM sensors GROUP BY rtrim(' 🏳️‍🌈 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 🏳️‍🌈"]],"count":1,"case":"rainbow_flag_zwj_vs_rtrim"}
+{"query":"SELECT trim(' ☀️ ') AS value FROM sensors GROUP BY trim(' ☀️ ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["☀️"]],"count":1,"case":"sun_variation_selector_trim"}
+{"query":"SELECT ltrim(' ☀️ ') AS value FROM sensors GROUP BY ltrim(' ☀️ ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["☀️ "]],"count":1,"case":"sun_variation_selector_ltrim"}
+{"query":"SELECT rtrim(' ☀️ ') AS value FROM sensors GROUP BY rtrim(' ☀️ ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" ☀️"]],"count":1,"case":"sun_variation_selector_rtrim"}

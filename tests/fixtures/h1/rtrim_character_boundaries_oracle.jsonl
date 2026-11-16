@@ -1,0 +1,54 @@
+{"query":"SELECT rtrim('\u0000X\u0000') AS value FROM sensors GROUP BY rtrim('\u0000X\u0000')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0000X\u0000"]],"count":1}
+{"query":"SELECT rtrim('\u0001X\u0001') AS value FROM sensors GROUP BY rtrim('\u0001X\u0001')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0001X\u0001"]],"count":1}
+{"query":"SELECT rtrim('\u0002X\u0002') AS value FROM sensors GROUP BY rtrim('\u0002X\u0002')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0002X\u0002"]],"count":1}
+{"query":"SELECT rtrim('\u0003X\u0003') AS value FROM sensors GROUP BY rtrim('\u0003X\u0003')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0003X\u0003"]],"count":1}
+{"query":"SELECT rtrim('\u0004X\u0004') AS value FROM sensors GROUP BY rtrim('\u0004X\u0004')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0004X\u0004"]],"count":1}
+{"query":"SELECT rtrim('\u0005X\u0005') AS value FROM sensors GROUP BY rtrim('\u0005X\u0005')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0005X\u0005"]],"count":1}
+{"query":"SELECT rtrim('\u0006X\u0006') AS value FROM sensors GROUP BY rtrim('\u0006X\u0006')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0006X\u0006"]],"count":1}
+{"query":"SELECT rtrim('\u0007X\u0007') AS value FROM sensors GROUP BY rtrim('\u0007X\u0007')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0007X\u0007"]],"count":1}
+{"query":"SELECT rtrim('\bX\b') AS value FROM sensors GROUP BY rtrim('\bX\b')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\bX\b"]],"count":1}
+{"query":"SELECT rtrim('\tX\t') AS value FROM sensors GROUP BY rtrim('\tX\t')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\tX\t"]],"count":1}
+{"query":"SELECT rtrim('\nX\n') AS value FROM sensors GROUP BY rtrim('\nX\n')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\nX\n"]],"count":1}
+{"query":"SELECT rtrim('\u000bX\u000b') AS value FROM sensors GROUP BY rtrim('\u000bX\u000b')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u000bX\u000b"]],"count":1}
+{"query":"SELECT rtrim('\fX\f') AS value FROM sensors GROUP BY rtrim('\fX\f')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\fX\f"]],"count":1}
+{"query":"SELECT rtrim('\rX\r') AS value FROM sensors GROUP BY rtrim('\rX\r')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\rX\r"]],"count":1}
+{"query":"SELECT rtrim('\u000eX\u000e') AS value FROM sensors GROUP BY rtrim('\u000eX\u000e')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u000eX\u000e"]],"count":1}
+{"query":"SELECT rtrim('\u000fX\u000f') AS value FROM sensors GROUP BY rtrim('\u000fX\u000f')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u000fX\u000f"]],"count":1}
+{"query":"SELECT rtrim('\u0010X\u0010') AS value FROM sensors GROUP BY rtrim('\u0010X\u0010')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0010X\u0010"]],"count":1}
+{"query":"SELECT rtrim('\u0011X\u0011') AS value FROM sensors GROUP BY rtrim('\u0011X\u0011')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0011X\u0011"]],"count":1}
+{"query":"SELECT rtrim('\u0012X\u0012') AS value FROM sensors GROUP BY rtrim('\u0012X\u0012')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0012X\u0012"]],"count":1}
+{"query":"SELECT rtrim('\u0013X\u0013') AS value FROM sensors GROUP BY rtrim('\u0013X\u0013')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0013X\u0013"]],"count":1}
+{"query":"SELECT rtrim('\u0014X\u0014') AS value FROM sensors GROUP BY rtrim('\u0014X\u0014')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0014X\u0014"]],"count":1}
+{"query":"SELECT rtrim('\u0015X\u0015') AS value FROM sensors GROUP BY rtrim('\u0015X\u0015')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0015X\u0015"]],"count":1}
+{"query":"SELECT rtrim('\u0016X\u0016') AS value FROM sensors GROUP BY rtrim('\u0016X\u0016')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0016X\u0016"]],"count":1}
+{"query":"SELECT rtrim('\u0017X\u0017') AS value FROM sensors GROUP BY rtrim('\u0017X\u0017')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0017X\u0017"]],"count":1}
+{"query":"SELECT rtrim('\u0018X\u0018') AS value FROM sensors GROUP BY rtrim('\u0018X\u0018')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0018X\u0018"]],"count":1}
+{"query":"SELECT rtrim('\u0019X\u0019') AS value FROM sensors GROUP BY rtrim('\u0019X\u0019')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u0019X\u0019"]],"count":1}
+{"query":"SELECT rtrim('\u001aX\u001a') AS value FROM sensors GROUP BY rtrim('\u001aX\u001a')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u001aX\u001a"]],"count":1}
+{"query":"SELECT rtrim('\u001bX\u001b') AS value FROM sensors GROUP BY rtrim('\u001bX\u001b')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u001bX\u001b"]],"count":1}
+{"query":"SELECT rtrim('\u001cX\u001c') AS value FROM sensors GROUP BY rtrim('\u001cX\u001c')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u001cX\u001c"]],"count":1}
+{"query":"SELECT rtrim('\u001dX\u001d') AS value FROM sensors GROUP BY rtrim('\u001dX\u001d')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u001dX\u001d"]],"count":1}
+{"query":"SELECT rtrim('\u001eX\u001e') AS value FROM sensors GROUP BY rtrim('\u001eX\u001e')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u001eX\u001e"]],"count":1}
+{"query":"SELECT rtrim('\u001fX\u001f') AS value FROM sensors GROUP BY rtrim('\u001fX\u001f')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u001fX\u001f"]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X"]],"count":1}
+{"query":"SELECT rtrim('X') AS value FROM sensors GROUP BY rtrim('X')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT rtrim('X') AS value FROM sensors GROUP BY rtrim('X')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["X"]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim(' X ') AS value FROM sensors GROUP BY rtrim(' X ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" X "]],"count":1}
+{"query":"SELECT rtrim('　X　') AS value FROM sensors GROUP BY rtrim('　X　')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["　X　"]],"count":1}
+{"query":"SELECT rtrim('﻿X﻿') AS value FROM sensors GROUP BY rtrim('﻿X﻿')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["﻿X﻿"]],"count":1}

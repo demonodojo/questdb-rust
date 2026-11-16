@@ -1,0 +1,4 @@
+{"query":"SELECT ts, flags FROM sensors WHERE abs(flags) IN (10.0) ORDER BY ts","error":"cannot compare LONG with type DOUBLE","position":51,"case":"abs_double_member"}
+{"query":"SELECT ts, flags FROM sensors WHERE abs(flags) IN ('x') ORDER BY ts","error":"cannot compare LONG with type CHAR","position":51,"case":"abs_single_char_member"}
+{"query":"SELECT ts, flags FROM sensors WHERE abs(flags) IN ('10x') ORDER BY ts","error":"invalid LONG value [10x]","position":51,"case":"abs_invalid_numeric_string"}
+{"query":"SELECT ts, flags FROM sensors WHERE abs(flags) IN () ORDER BY ts","error":"too few arguments for 'in'","position":47,"case":"abs_empty_list"}

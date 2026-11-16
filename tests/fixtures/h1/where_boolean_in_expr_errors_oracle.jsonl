@@ -1,0 +1,12 @@
+{"query":"SELECT ts, ok FROM sensors WHERE ok IN (true) ORDER BY ts","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":36,"case":"boolean_true_member"}
+{"query":"SELECT ts, ok FROM sensors WHERE ok NOT IN (false) ORDER BY ts","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":40,"case":"boolean_not_in"}
+{"query":"SELECT ts, ok FROM sensors WHERE NOT ok IN (false) ORDER BY ts","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":40,"case":"boolean_not_expression"}
+{"query":"SELECT ts, ok FROM sensors WHERE ok IN (NULL) ORDER BY ts","error":"there is no matching operator `in` with the argument types: BOOLEAN in NULL","position":36,"case":"boolean_null_member"}
+{"query":"SELECT ts, ok FROM sensors WHERE ok IN (true, NULL) ORDER BY ts","error":"there is no matching operator `in` with the argument type: BOOLEAN","position":36,"case":"boolean_and_null_member"}
+{"query":"SELECT ts FROM sensors WHERE starts_with(note, 'a') IN (false) ORDER BY ts","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":52,"case":"boolean_function_false_member"}
+{"query":"SELECT ts FROM sensors WHERE starts_with(note, 'a') NOT IN (true) ORDER BY ts","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":56,"case":"boolean_function_not_in"}
+{"query":"SELECT ts FROM sensors WHERE ok IN (1) ORDER BY ts","error":"there is no matching operator `in` with the argument types: BOOLEAN in INT","position":32,"case":"boolean_integer_member"}
+{"query":"SELECT ts FROM sensors WHERE ok IN ('true') ORDER BY ts","error":"there is no matching operator `in` with the argument types: BOOLEAN in STRING","position":32,"case":"boolean_string_member"}
+{"query":"SELECT ts FROM sensors WHERE ok IN () ORDER BY ts","error":"too few arguments for 'in'","position":32,"case":"boolean_empty_list"}
+{"query":"SELECT ts FROM sensors WHERE ok NOT IN () ORDER BY ts","error":"too few arguments for 'in'","position":36,"case":"boolean_not_in_empty_list"}
+{"query":"SELECT ts FROM sensors WHERE ok IN (true, false) ORDER BY ts","error":"there is no matching operator `in` with the argument type: BOOLEAN","position":32,"case":"boolean_multiple_boolean_members"}

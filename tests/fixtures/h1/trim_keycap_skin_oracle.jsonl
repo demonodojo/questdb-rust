@@ -1,0 +1,9 @@
+{"query":"SELECT trim(' 1️⃣ ') AS value FROM sensors GROUP BY trim(' 1️⃣ ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["1️⃣"]],"count":1,"case":"keycap_one_trim"}
+{"query":"SELECT ltrim(' 1️⃣ ') AS value FROM sensors GROUP BY ltrim(' 1️⃣ ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["1️⃣ "]],"count":1,"case":"keycap_one_ltrim"}
+{"query":"SELECT rtrim(' 1️⃣ ') AS value FROM sensors GROUP BY rtrim(' 1️⃣ ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 1️⃣"]],"count":1,"case":"keycap_one_rtrim"}
+{"query":"SELECT trim(' 👍🏽 ') AS value FROM sensors GROUP BY trim(' 👍🏽 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["👍🏽"]],"count":1,"case":"thumbs_medium_skin_trim"}
+{"query":"SELECT ltrim(' 👍🏽 ') AS value FROM sensors GROUP BY ltrim(' 👍🏽 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["👍🏽 "]],"count":1,"case":"thumbs_medium_skin_ltrim"}
+{"query":"SELECT rtrim(' 👍🏽 ') AS value FROM sensors GROUP BY rtrim(' 👍🏽 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 👍🏽"]],"count":1,"case":"thumbs_medium_skin_rtrim"}
+{"query":"SELECT trim(' ✌️🏽 ') AS value FROM sensors GROUP BY trim(' ✌️🏽 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["✌️🏽"]],"count":1,"case":"victory_emoji_skin_trim"}
+{"query":"SELECT ltrim(' ✌️🏽 ') AS value FROM sensors GROUP BY ltrim(' ✌️🏽 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["✌️🏽 "]],"count":1,"case":"victory_emoji_skin_ltrim"}
+{"query":"SELECT rtrim(' ✌️🏽 ') AS value FROM sensors GROUP BY rtrim(' ✌️🏽 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" ✌️🏽"]],"count":1,"case":"victory_emoji_skin_rtrim"}

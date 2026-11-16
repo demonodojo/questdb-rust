@@ -1,0 +1,3 @@
+{"query":"SELECT ts, txt FROM trim_cases WHERE trim(txt) IN () ORDER BY ts","error":"too few arguments for 'in'","position":47,"case":"trim_empty_in"}
+{"query":"SELECT ts, txt FROM trim_cases WHERE trim(txt) NOT IN () ORDER BY ts","error":"too few arguments for 'in'","position":51,"case":"trim_empty_not_in"}
+{"query":"SELECT ts, txt FROM trim_cases WHERE lower(txt) IN (1) ORDER BY ts","error":"cannot compare STRING with type INT","position":52,"case":"lower_in_int"}

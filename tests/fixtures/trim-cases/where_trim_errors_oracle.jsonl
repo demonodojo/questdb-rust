@@ -1,0 +1,2 @@
+{"query":"SELECT ts, txt FROM trim_cases WHERE trim(txt) = 1 ORDER BY ts","error":"inconvertible value: `café` [STRING -> INT]","position":0,"case":"trim_eq_int"}
+{"query":"SELECT ts, txt FROM trim_cases WHERE trim(txt) > 1 ORDER BY ts","error":"inconvertible value: `café` [STRING -> INT]","position":0,"case":"trim_gt_int"}

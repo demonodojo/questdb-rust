@@ -1,0 +1,6 @@
+{"query":"SELECT ts FROM sensors WHERE day IN ('not-a-date') ORDER BY ts","case":"date_invalid_string","error":"Invalid date: not-a-date","position":37}
+{"query":"SELECT ts FROM sensors WHERE day IN ('x') ORDER BY ts","case":"date_char_member","error":"cannot compare TIMESTAMP with type CHAR","position":37}
+{"query":"SELECT ts FROM sensors WHERE day IN (true) ORDER BY ts","case":"date_boolean_member","error":"cannot compare TIMESTAMP with type BOOLEAN","position":37}
+{"query":"SELECT ts FROM sensors WHERE day IN (1.5) ORDER BY ts","case":"date_double_member","error":"cannot compare TIMESTAMP with type DOUBLE","position":37}
+{"query":"SELECT ts FROM sensors WHERE ts IN ('not-a-time') ORDER BY ts","case":"timestamp_invalid_string","error":"Invalid date: not-a-time","position":36}
+{"query":"SELECT ts FROM sensors WHERE ts IN ('1577934245000000') ORDER BY ts","case":"timestamp_numeric_string","error":"Invalid date: 1577934245000000","position":36}

@@ -10,8 +10,8 @@ use crate::parse::{
     GeoDistanceExpr, GeoWithinExpr, GlobExpr, GreatestExpr, GroupedSelect, GroupedSelectItem,
     HourExpr, IlikeExpr, InListExpr, IsEndOfMonthExpr, IsLeapYearExpr, JsonExtractExpr, LeastExpr,
     LengthExpr, LikeExpr, LnExpr, LogExpr, LowerExpr, MakeGeohashExpr, Md5Expr, MicrosExpr,
-    MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NetmaskExpr, NotExpr,
-    NullIfExpr, PadExpr, PgAgeExpr, PgGetExprExpr, PgGetPartKeyDefExpr, PgGetUserByIdExpr,
+    MidExpr, MillisExpr, MinuteExpr, MonthExpr, NanosExpr, NegExpr, NestedTextCase, NetmaskExpr,
+    NotExpr, NullIfExpr, PadExpr, PgAgeExpr, PgGetExprExpr, PgGetPartKeyDefExpr, PgGetUserByIdExpr,
     PgIsInRecoveryExpr, PgTableIsVisibleExpr, PiExpr, PowerExpr, Proj, ProjectionList, Query,
     QuoteIdentExpr, RadiansExpr, RegexpReplaceExpr, ReplaceExpr, RoundDownExpr, RoundExpr,
     RoundHalfEvenExpr, RoundUpExpr, SecondExpr, SelectList, SeriesStep, SessionUserExpr, Sha1Expr,
@@ -29,6 +29,7 @@ use qdb_types::{
 };
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -513,6 +514,7 @@ pub fn execute_on(table: &Table, query: &Query) -> Result<QueryResult, Error> {
         )));
     }
     if let Some(filter) = &query.filter {
+        validate_filter_in_expression(table, filter)?;
         validate_filter_regex(table, filter)?;
     }
     if query.group_by.is_some()
@@ -709,11 +711,17 @@ fn execute_projection(table: &Table, query: &Query, items: &[Proj]) -> Result<Qu
             ResolvedProj::Concat { label, .. }
             | ResolvedProj::Length { label, .. }
             | ResolvedProj::Lower { label, .. }
+            | ResolvedProj::LowerTrim { label, .. }
+            | ResolvedProj::LowerNested { label, .. }
             | ResolvedProj::Upper { label, .. }
+            | ResolvedProj::UpperTrim { label, .. }
+            | ResolvedProj::UpperNested { label, .. }
             | ResolvedProj::Side { label, .. }
             | ResolvedProj::Substr { label, .. }
             | ResolvedProj::Trim { label, .. }
+            | ResolvedProj::TrimNested { label, .. }
             | ResolvedProj::Replace { label, .. }
+            | ResolvedProj::ReplaceNested { label, .. }
             | ResolvedProj::RegexpReplace { label, .. }
             | ResolvedProj::StartsWith { label, .. }
             | ResolvedProj::Glob { label, .. }
@@ -1117,7 +1125,8 @@ fn replace_all_java_global_anchor(
     loop {
         let global_anchor_position = text[..previous_match_end].chars().count();
         let (translated, _) =
-            translate_java_regex_escapes(pattern, global_anchor_position, Some(text));
+            translate_java_regex_escapes(pattern, global_anchor_position, Some(text))
+                .map_err(|error| error.message)?;
         let regex =
             compile_translated_regex(pattern, &translated).map_err(|error| error.message)?;
         let Some(captures) = regex
@@ -1254,9 +1263,27 @@ enum ResolvedProj {
         label: String,
         arg: ResolvedArg,
     },
+    LowerTrim {
+        label: String,
+        arg: ResolvedArg,
+        end: TrimEnd,
+    },
+    LowerNested {
+        label: String,
+        inner: Box<ResolvedProj>,
+    },
     Upper {
         label: String,
         arg: ResolvedArg,
+    },
+    UpperTrim {
+        label: String,
+        arg: ResolvedArg,
+        end: TrimEnd,
+    },
+    UpperNested {
+        label: String,
+        inner: Box<ResolvedProj>,
     },
     Side {
         label: String,
@@ -1273,9 +1300,20 @@ enum ResolvedProj {
         arg: ResolvedArg,
         end: TrimEnd,
     },
+    TrimNested {
+        label: String,
+        inner: Box<ResolvedProj>,
+        end: TrimEnd,
+    },
     Replace {
         label: String,
         mode: ReplaceMode,
+    },
+    ReplaceNested {
+        label: String,
+        value: Box<ResolvedProj>,
+        old: ResolvedArg,
+        new: ResolvedArg,
     },
     RegexpReplace {
         label: String,
@@ -1838,7 +1876,7 @@ enum ReplaceMode {
 
 enum RegexpReplaceMode {
     Run {
-        value: ResolvedArg,
+        value: RegexpReplaceValue,
         pattern: ResolvedArg,
         regex: Option<CompiledRegex>,
         replacement: ResolvedArg,
@@ -1846,6 +1884,11 @@ enum RegexpReplaceMode {
         replacement_position: usize,
         function_position: usize,
     },
+}
+
+enum RegexpReplaceValue {
+    Argument(ResolvedArg),
+    Projection(Box<ResolvedProj>),
 }
 
 enum SubstrMode {
@@ -1864,11 +1907,17 @@ impl ResolvedProj {
             Self::Concat { label, .. }
             | Self::Length { label, .. }
             | Self::Lower { label, .. }
+            | Self::LowerTrim { label, .. }
+            | Self::LowerNested { label, .. }
             | Self::Upper { label, .. }
+            | Self::UpperTrim { label, .. }
+            | Self::UpperNested { label, .. }
             | Self::Side { label, .. }
             | Self::Substr { label, .. }
             | Self::Trim { label, .. }
+            | Self::TrimNested { label, .. }
             | Self::Replace { label, .. }
+            | Self::ReplaceNested { label, .. }
             | Self::RegexpReplace { label, .. }
             | Self::StartsWith { label, .. }
             | Self::Glob { label, .. }
@@ -3261,6 +3310,31 @@ fn format_geohash(hash: u64, bits: i32) -> String {
     }
 }
 
+fn geohash_text_value(text: &str, bits: i32) -> Result<Option<u64>, Error> {
+    const ALPHABET: &[u8] = b"0123456789bcdefghjkmnpqrstuvwxyz";
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let needed_chars = (bits as usize).div_ceil(5);
+    if text.chars().count() * 5 < bits as usize {
+        return Err(Error::new(format!(
+            "string is too short to cast to chosen GEOHASH precision [len={}, precision={bits}]",
+            text.chars().count()
+        )));
+    }
+    let mut value = 0u64;
+    for byte in text.bytes().take(needed_chars) {
+        let byte = byte.to_ascii_lowercase();
+        let digit = ALPHABET
+            .iter()
+            .position(|candidate| *candidate == byte)
+            .ok_or_else(|| Error::new("invalid GEOHASH"))? as u64;
+        value = (value << 5) | digit;
+    }
+    let padding = (needed_chars * 5) as i32 - bits;
+    Ok(Some(value >> padding))
+}
+
 fn resolve_to_uuid(table: &Table, expr: &ToUuidExpr) -> Result<ResolvedProj, Error> {
     if expr.args.len() != 2 {
         return Err(Error::new(format!(
@@ -3350,6 +3424,20 @@ fn parse_uuid_long(text: &str, kind: &str) -> Result<i64, Error> {
             Error::new(format!("inconvertible value: `{text}` [{kind} -> LONG]"))
         }
     })
+}
+
+fn canonical_uuid(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    if bytes.len() != 36
+        || [8, 13, 18, 23].iter().any(|index| bytes[*index] != b'-')
+        || bytes
+            .iter()
+            .enumerate()
+            .any(|(index, byte)| ![8, 13, 18, 23].contains(&index) && !byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(text.to_ascii_lowercase())
 }
 
 fn to_uuid_scalar(
@@ -4571,6 +4659,10 @@ fn between_value(
 enum InKind {
     Integer,
     Float,
+    Date,
+    Timestamp,
+    Uuid,
+    Ipv4,
     Text,
 }
 
@@ -4579,6 +4671,8 @@ enum InItem {
     Long(i64),
     Double(f64),
     Text(String),
+    Uuid(String),
+    Ipv4(String),
 }
 
 fn resolve_add(table: &Table, expr: &AddExpr) -> Result<ResolvedProj, Error> {
@@ -5155,6 +5249,8 @@ fn resolve_in_list(table: &Table, expr: &InListExpr) -> Result<ResolvedProj, Err
             InKind::Integer
         }
         qdb_types::TAG_DOUBLE | qdb_types::TAG_FLOAT => InKind::Float,
+        qdb_types::TAG_DATE => InKind::Date,
+        qdb_types::TAG_TIMESTAMP => InKind::Timestamp,
         qdb_types::TAG_STRING
         | qdb_types::TAG_SYMBOL
         | qdb_types::TAG_VARCHAR
@@ -5182,10 +5278,59 @@ fn in_type_rejected(actual: &str) -> Error {
 fn in_item(left: &str, kind: InKind, arg: &ConcatArg) -> Result<InItem, Error> {
     match (kind, arg) {
         (_, ConcatArg::Literal(Scalar::Null)) => Ok(InItem::Null),
+        (InKind::Date, ConcatArg::Literal(Scalar::Text(text))) => {
+            if text.chars().count() == 1 {
+                return Err(Error::new("cannot compare TIMESTAMP with type CHAR"));
+            }
+            let date_text = if text.len() == 10 && text.as_bytes().get(4) == Some(&b'-') {
+                format!("{text}T00:00:00Z")
+            } else {
+                text.clone()
+            };
+            qdb_types::parse_date_millis(&date_text)
+                .and_then(|millis| millis.checked_mul(1_000))
+                .map(InItem::Long)
+                .ok_or_else(|| Error::new(format!("Invalid date: {text}")))
+        }
+        (InKind::Timestamp, ConcatArg::Literal(Scalar::Text(text))) => {
+            qdb_types::parse_timestamp_micros(text)
+                .map(InItem::Long)
+                .ok_or_else(|| Error::new(format!("Invalid date: {text}")))
+        }
+        (InKind::Uuid, ConcatArg::Literal(Scalar::Text(text))) if text.chars().count() == 1 => {
+            Err(Error::new("cannot compare UUID with type CHAR"))
+        }
+        (InKind::Uuid, ConcatArg::Literal(Scalar::Text(text))) => canonical_uuid(text)
+            .map(InItem::Uuid)
+            .ok_or_else(|| Error::new(format!("invalid UUID value [{text}]"))),
+        (InKind::Ipv4, ConcatArg::Literal(Scalar::Text(text))) if text.chars().count() == 1 => {
+            Err(Error::new("cannot compare IPv4 with type CHAR"))
+        }
+        (InKind::Ipv4, ConcatArg::Literal(Scalar::Text(text))) => text
+            .parse::<std::net::Ipv4Addr>()
+            .map(|address| InItem::Ipv4(address.to_string()))
+            .map_err(|_| Error::new(format!("invalid IPv4 format: {text}"))),
+        (InKind::Date | InKind::Timestamp, ConcatArg::Literal(Scalar::Long(value))) => {
+            Ok(InItem::Long(*value))
+        }
         (InKind::Integer | InKind::Float, ConcatArg::Literal(Scalar::Long(number))) => {
             Ok(InItem::Long(*number))
         }
         (InKind::Float, ConcatArg::Literal(Scalar::Double(number))) => Ok(InItem::Double(*number)),
+        (InKind::Integer, ConcatArg::Literal(Scalar::Text(text))) if text.chars().count() == 1 => {
+            Err(Error::new("cannot compare LONG with type CHAR"))
+        }
+        (InKind::Integer, ConcatArg::Literal(Scalar::Text(text))) => parse_integer_text(text)
+            .map(InItem::Long)
+            .ok_or_else(|| Error::new(format!("invalid LONG value [{text}]"))),
+        (InKind::Float, ConcatArg::Literal(Scalar::Text(text))) if text.chars().count() == 1 => {
+            Err(Error::new("cannot compare DOUBLE with type CHAR"))
+        }
+        (InKind::Float, ConcatArg::Literal(Scalar::Text(text))) => match parse_questdb_f64(text) {
+            Some(number) if number.is_finite() => Ok(InItem::Double(number)),
+            Some(_) => Ok(InItem::Null),
+            None => Err(Error::new(format!("invalid DOUBLE value [{text}]"))),
+        },
         (InKind::Text, ConcatArg::Literal(Scalar::Text(text))) => Ok(InItem::Text(text.clone())),
         (InKind::Text, ConcatArg::Literal(Scalar::Char(unit))) => {
             Ok(InItem::Text(in_char_text(*unit)))
@@ -5194,7 +5339,14 @@ fn in_item(left: &str, kind: InKind, arg: &ConcatArg) -> Result<InItem, Error> {
             Err(Error::new(format!("unsupported: in list column {name}")))
         }
         _ => Err(Error::new(format!(
-            "cannot compare {left} with type {}",
+            "cannot compare {} with type {}",
+            match kind {
+                InKind::Integer => "LONG",
+                InKind::Date | InKind::Timestamp => "TIMESTAMP",
+                InKind::Uuid => "UUID",
+                InKind::Ipv4 => "IPv4",
+                _ => left,
+            },
             between_literal_type(arg)
         ))),
     }
@@ -5217,7 +5369,10 @@ fn in_list_value(table: &Table, row: usize, index: usize, items: &[InItem]) -> S
         Scalar::Float(number) => in_float(f64::from(*number), items),
         Scalar::Text(text) => in_text(text, items),
         Scalar::Char(unit) => in_text(&in_char_text(*unit), items),
-        Scalar::Timestamp(number) | Scalar::Date(number) => in_long(*number, items),
+        Scalar::Timestamp(number) => in_long(*number, items),
+        Scalar::Date(number) => number
+            .checked_mul(1_000)
+            .is_some_and(|micros| in_long(micros, items)),
         Scalar::Boolean(_) => false,
     })
 }
@@ -5237,9 +5392,10 @@ fn in_float(number: f64, items: &[InItem]) -> bool {
 }
 
 fn in_text(text: &str, items: &[InItem]) -> bool {
-    items
-        .iter()
-        .any(|item| matches!(item, InItem::Text(value) if value == text))
+    items.iter().any(|item| match item {
+        InItem::Text(value) | InItem::Uuid(value) | InItem::Ipv4(value) => value == text,
+        _ => false,
+    })
 }
 
 fn resolve_wmid(table: &Table, expr: &WmidExpr) -> Result<ResolvedProj, Error> {
@@ -5598,6 +5754,9 @@ fn validate_filter_arithmetic(table: &Table, filter: &Filter) -> Result<(), Erro
             validate_filter_arithmetic_operand(table, left)?;
             validate_filter_arithmetic_operand(table, right)?;
         }
+        Filter::InListExpression { value, .. } => {
+            validate_filter_arithmetic_operand(table, value)?;
+        }
         Filter::Not(inner) => validate_filter_arithmetic(table, inner)?,
         Filter::And(left, right) | Filter::Or(left, right) => {
             validate_filter_arithmetic(table, left)?;
@@ -5606,6 +5765,185 @@ fn validate_filter_arithmetic(table: &Table, filter: &Filter) -> Result<(), Erro
         _ => {}
     }
     Ok(())
+}
+
+fn validate_filter_in_expression(table: &Table, filter: &Filter) -> Result<(), Error> {
+    match filter {
+        Filter::InList {
+            column,
+            items,
+            item_positions,
+            position,
+            ..
+        } => {
+            let index = table
+                .column_index(column)
+                .ok_or_else(|| Error::new(format!("Invalid column: {column}")))?;
+            if table.meta.columns[index].tag == qdb_types::TAG_BOOLEAN {
+                let error = boolean_in_type_error(items);
+                return Err(Error::at(error.message, *position));
+            }
+            let tag = table.meta.columns[index].tag;
+            let kind = match tag {
+                qdb_types::TAG_DATE => Some(InKind::Date),
+                qdb_types::TAG_TIMESTAMP => Some(InKind::Timestamp),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                let type_name = qdb_types::type_name(tag);
+                for (index, item) in items.iter().enumerate() {
+                    in_item(type_name, kind, &ConcatArg::Literal(item.clone())).map_err(
+                        |error| {
+                            Error::at(
+                                error.message,
+                                item_positions.get(index).copied().unwrap_or(*position),
+                            )
+                        },
+                    )?;
+                }
+            }
+        }
+        Filter::InListExpression {
+            value,
+            items,
+            item_positions,
+            ..
+        } => {
+            if let Some(bits) = filter_geohash_bits(table, value)? {
+                let error = geohash_in_type_error(bits, items);
+                let position = match filter {
+                    Filter::InListExpression { position, .. } => *position,
+                    _ => unreachable!(),
+                };
+                return Err(Error::at(error.message, position));
+            }
+            let tag = select_operand_tag(table, value)?;
+            if tag == qdb_types::TAG_BOOLEAN {
+                let error = boolean_in_type_error(items);
+                let position = match filter {
+                    Filter::InListExpression { position, .. } => *position,
+                    _ => unreachable!(),
+                };
+                return Err(Error::at(error.message, position));
+            }
+            let kind = if filter_is_ipv4(value) {
+                InKind::Ipv4
+            } else if filter_is_uuid(value) {
+                InKind::Uuid
+            } else {
+                match tag {
+                    qdb_types::TAG_LONG
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_BYTE => InKind::Integer,
+                    qdb_types::TAG_DOUBLE | qdb_types::TAG_FLOAT => InKind::Float,
+                    qdb_types::TAG_DATE => InKind::Date,
+                    qdb_types::TAG_TIMESTAMP => InKind::Timestamp,
+                    qdb_types::TAG_STRING
+                    | qdb_types::TAG_SYMBOL
+                    | qdb_types::TAG_VARCHAR
+                    | qdb_types::TAG_CHAR => InKind::Text,
+                    other => return Err(in_type_rejected(qdb_types::type_name(other))),
+                }
+            };
+            let type_name = match kind {
+                InKind::Uuid => "UUID",
+                InKind::Ipv4 => "IPv4",
+                _ => qdb_types::type_name(tag),
+            };
+            for (index, item) in items.iter().enumerate() {
+                in_item(type_name, kind, &ConcatArg::Literal(item.clone())).map_err(|error| {
+                    if error.position.is_none() {
+                        Error::at(
+                            error.message,
+                            item_positions.get(index).copied().unwrap_or_default(),
+                        )
+                    } else {
+                        error
+                    }
+                })?;
+            }
+        }
+        Filter::Not(inner) => validate_filter_in_expression(table, inner)?,
+        Filter::And(left, right) | Filter::Or(left, right) => {
+            validate_filter_in_expression(table, left)?;
+            validate_filter_in_expression(table, right)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn filter_geohash_bits(table: &Table, operand: &FilterOperand) -> Result<Option<i32>, Error> {
+    let FilterOperand::Projection(projection) = operand else {
+        return Ok(None);
+    };
+    let Proj::MakeGeohash(expression) = projection.as_ref() else {
+        return Ok(None);
+    };
+    let resolved = resolve_make_geohash(table, expression)?;
+    let ResolvedProj::MakeGeohash { bits, .. } = resolved else {
+        return Err(Error::new("internal: make_geohash"));
+    };
+    Ok(Some(bits))
+}
+
+fn filter_is_uuid(operand: &FilterOperand) -> bool {
+    matches!(
+        operand,
+        FilterOperand::Projection(projection)
+            if matches!(projection.as_ref(), Proj::ToUuid(_))
+    )
+}
+
+fn filter_is_ipv4(operand: &FilterOperand) -> bool {
+    matches!(
+        operand,
+        FilterOperand::Projection(projection)
+            if matches!(projection.as_ref(), Proj::Netmask(_))
+    )
+}
+
+fn geohash_in_type_error(bits: i32, items: &[Scalar]) -> Error {
+    let geohash_type = geohash_type_name(bits);
+    if items.len() > 1 {
+        return Error::new(format!(
+            "there is no matching operator `in` with the argument type: {geohash_type}"
+        ));
+    }
+    let item_type = items
+        .first()
+        .map(|item| {
+            if item.is_null() {
+                "NULL"
+            } else {
+                qdb_types::type_name(filter_boolean_literal_tag(item))
+            }
+        })
+        .unwrap_or("NULL");
+    Error::new(format!(
+        "there is no matching operator `in` with the argument types: {geohash_type} in {item_type}"
+    ))
+}
+
+fn boolean_in_type_error(items: &[Scalar]) -> Error {
+    if items.len() > 1 {
+        Error::new("there is no matching operator `in` with the argument type: BOOLEAN")
+    } else {
+        let item_type = items
+            .first()
+            .map(|item| {
+                if item.is_null() {
+                    "NULL"
+                } else {
+                    qdb_types::type_name(literal_tag(item))
+                }
+            })
+            .unwrap_or("NULL");
+        Error::new(format!(
+            "there is no matching operator `in` with the argument types: BOOLEAN in {item_type}"
+        ))
+    }
 }
 
 fn validate_filter_arithmetic_operand(table: &Table, operand: &FilterOperand) -> Result<(), Error> {
@@ -10546,13 +10884,15 @@ fn compile_regex(pattern: &str) -> Result<CompiledRegex, Error> {
         return Err(error);
     }
     match pattern {
-        r"\X" => return Ok(CompiledRegex::GraphemeSimple(GraphemeRegex::Each)),
+        r"\X" | r"(?iu)\X" => {
+            return Ok(CompiledRegex::GraphemeSimple(GraphemeRegex::Each));
+        }
         r"\X+" => return Ok(CompiledRegex::GraphemeSimple(GraphemeRegex::OneOrMore)),
         r"\b{g}" => return Ok(CompiledRegex::GraphemeSimple(GraphemeRegex::Boundary)),
         _ => {}
     }
     if pattern.contains(r"\X") || pattern.contains(r"\b{g}") {
-        let (translated, uses_global_anchor) = translate_java_regex_escapes(pattern, 0, Some("a"));
+        let (translated, uses_global_anchor) = translate_java_regex_escapes(pattern, 0, Some("a"))?;
         let compiled = compile_translated_regex(pattern, &translated)?;
         let template = if uses_global_anchor {
             CompiledRegex::GlobalAnchor {
@@ -10567,7 +10907,7 @@ fn compile_regex(pattern: &str) -> Result<CompiledRegex, Error> {
             template: Box::new(template),
         });
     }
-    let (translated, uses_global_anchor) = translate_java_regex_escapes(pattern, 0, None);
+    let (translated, uses_global_anchor) = translate_java_regex_escapes(pattern, 0, None)?;
     let compiled = compile_translated_regex(pattern, &translated)?;
     if uses_global_anchor {
         Ok(CompiledRegex::GlobalAnchor {
@@ -10585,7 +10925,7 @@ fn compile_materialized_java_grapheme_regex(
     global_anchor_position: usize,
 ) -> Result<CompiledRegex, Error> {
     let (translated, uses_global_anchor) =
-        translate_java_regex_escapes(pattern, global_anchor_position, Some(text));
+        translate_java_regex_escapes(pattern, global_anchor_position, Some(text))?;
     let compiled = compile_translated_regex(pattern, &translated)?;
     Ok(if uses_global_anchor {
         CompiledRegex::GlobalAnchor {
@@ -10597,41 +10937,142 @@ fn compile_materialized_java_grapheme_regex(
     })
 }
 
-fn java_grapheme_atom_occurrences_are_aligned(
+#[derive(Default)]
+struct JavaGraphemeTrieNode {
+    children: HashMap<char, usize>,
+    terminals: Vec<usize>,
+}
+
+struct JavaGraphemeAtomGuards {
+    suffixes: Option<Vec<Vec<String>>>,
+    interior_boundaries: Vec<Vec<usize>>,
+}
+
+fn java_grapheme_suffix_matches(text: &str, suffix: &str, case_keys: &HashMap<char, char>) -> bool {
+    let mut actual = text.chars();
+    suffix.chars().all(|expected| {
+        actual.next().is_some_and(|ch| {
+            case_keys.get(&ch).copied().unwrap_or(ch)
+                == case_keys.get(&expected).copied().unwrap_or(expected)
+        })
+    })
+}
+
+fn java_grapheme_atom_suffix_guards(
     text: &str,
     graphemes: &[&str],
-    ascii_case_insensitive: bool,
-) -> bool {
+    case_keys: &HashMap<char, char>,
+) -> Option<JavaGraphemeAtomGuards> {
     use unicode_segmentation::UnicodeSegmentation;
 
-    if graphemes.len() > 64 || text.chars().count() > 4096 {
-        return false;
+    let case_key = |ch: char| case_keys.get(&ch).copied().unwrap_or(ch);
+    let mut trie = vec![JavaGraphemeTrieNode::default()];
+    for (index, grapheme) in graphemes.iter().enumerate() {
+        let mut node = 0;
+        for ch in grapheme.chars() {
+            let key = case_key(ch);
+            let next = if let Some(&next) = trie[node].children.get(&key) {
+                next
+            } else {
+                let next = trie.len();
+                trie.push(JavaGraphemeTrieNode::default());
+                trie[node].children.insert(key, next);
+                next
+            };
+            node = next;
+        }
+        trie[node].terminals.push(index);
     }
+
     let boundaries = text
         .grapheme_indices(true)
         .map(|(start, _)| start)
         .chain(std::iter::once(text.len()))
         .collect::<Vec<_>>();
-    text.char_indices().all(|(start, _)| {
-        graphemes.iter().all(|grapheme| {
-            let mut end = start;
-            for expected in grapheme.chars() {
-                let Some(actual) = text.get(end..).and_then(|tail| tail.chars().next()) else {
-                    return true;
-                };
-                if actual != expected
-                    && !(ascii_case_insensitive && actual.eq_ignore_ascii_case(&expected))
-                {
-                    return true;
-                }
-                end += actual.len_utf8();
+    let mut valid_ends = vec![Vec::new(); graphemes.len()];
+    let mut suffix_guards = vec![Vec::new(); graphemes.len()];
+    let mut interior_boundaries = vec![Vec::new(); graphemes.len()];
+    let mut proof_work = 0usize;
+    let mut suffix_collision = false;
+
+    for (start, _) in text.char_indices() {
+        let mut node = 0;
+        let mut end = start;
+        let mut matched_chars = 0usize;
+        let mut matched_boundaries = Vec::new();
+        let mut tail = &text[start..];
+        while let Some(actual) = tail.chars().next() {
+            proof_work = proof_work.checked_add(1)?;
+            if proof_work > 1_000_000 {
+                return None;
             }
-            boundaries.binary_search(&start).is_ok() && boundaries.binary_search(&end).is_ok()
-        })
+            let Some(&next_node) = trie[node].children.get(&case_key(actual)) else {
+                break;
+            };
+            end += actual.len_utf8();
+            matched_chars += 1;
+            tail = &text[end..];
+            node = next_node;
+            if boundaries.binary_search(&end).is_ok() {
+                matched_boundaries.push(matched_chars);
+            }
+            proof_work = proof_work.checked_add(trie[node].terminals.len())?;
+            if proof_work > 1_000_000 {
+                return None;
+            }
+            for &index in &trie[node].terminals {
+                let start_boundary = boundaries.binary_search(&start).ok();
+                if let Ok(end_boundary) = boundaries.binary_search(&end) {
+                    if let Some(start_boundary) = start_boundary {
+                        if end_boundary == start_boundary + 1 {
+                            valid_ends[index].push(end);
+                            continue;
+                        }
+                    }
+                    suffix_collision = true;
+                    interior_boundaries[index].extend(
+                        matched_boundaries
+                            .iter()
+                            .copied()
+                            .filter(|offset| *offset < matched_chars),
+                    );
+                    continue;
+                }
+
+                let next_index = boundaries.partition_point(|boundary| *boundary <= end);
+                let next_boundary = *boundaries.get(next_index)?;
+                let suffix = text[end..next_boundary].to_owned();
+                if suffix.is_empty() {
+                    return None;
+                }
+                suffix_guards[index].push(suffix);
+            }
+        }
+    }
+
+    for (index, guards) in suffix_guards.iter_mut().enumerate() {
+        guards.sort_unstable();
+        guards.dedup();
+        for suffix in guards.iter() {
+            if valid_ends[index]
+                .iter()
+                .any(|end| java_grapheme_suffix_matches(&text[*end..], suffix, case_keys))
+            {
+                suffix_collision = true;
+            }
+        }
+    }
+    for guards in &mut interior_boundaries {
+        guards.sort_unstable();
+        guards.dedup();
+    }
+    Some(JavaGraphemeAtomGuards {
+        suffixes: (!suffix_collision).then_some(suffix_guards),
+        interior_boundaries,
     })
 }
 
-fn java_grapheme_atom(text: &str, modes: JavaRegexModes) -> String {
+fn java_grapheme_atom(text: &str, modes: JavaRegexModes) -> Result<String, Error> {
     use unicode_segmentation::UnicodeSegmentation;
 
     let mut graphemes = text.graphemes(true).collect::<Vec<_>>();
@@ -10645,35 +11086,211 @@ fn java_grapheme_atom(text: &str, modes: JavaRegexModes) -> String {
     let grapheme_count = graphemes.len();
     graphemes.dedup();
     if graphemes.is_empty() {
-        return r"[\s\S]".to_owned();
+        return Ok(r"[\s\S]".to_owned());
     }
 
     let each_scalar_is_a_grapheme = graphemes
         .iter()
         .all(|grapheme| grapheme.chars().count() == 1)
         && grapheme_count == text.chars().count();
-    let every_occurrence_is_a_grapheme = (!modes.case_insensitive
-        || java_ascii_case_insensitive(modes))
-        && java_grapheme_atom_occurrences_are_aligned(
-            text,
-            &graphemes,
-            java_ascii_case_insensitive(modes),
-        );
+    let case_keys = java_grapheme_case_keys(text, modes);
+    let atom_guards = case_keys
+        .as_ref()
+        .and_then(|case_keys| java_grapheme_atom_suffix_guards(text, &graphemes, case_keys));
+    if atom_guards.as_ref().is_some_and(|guards| {
+        guards
+            .suffixes
+            .as_ref()
+            .is_some_and(|suffixes| suffixes.iter().all(Vec::is_empty))
+            && guards.interior_boundaries.iter().all(Vec::is_empty)
+    }) {
+        if let Some(compact) = java_compact_grapheme_atom(&graphemes) {
+            return Ok(compact);
+        }
+    }
+    let boundary = java_grapheme_boundary_assertion(text)?;
     let mut alternatives = String::from("(?:");
-    for (index, grapheme) in graphemes.into_iter().enumerate() {
+    for (index, grapheme) in graphemes.iter().enumerate() {
         if index != 0 {
             alternatives.push('|');
         }
-        for ch in grapheme.chars() {
+        for (char_index, ch) in grapheme.chars().enumerate() {
+            let needs_interior_guard = atom_guards.as_ref().map_or(char_index > 0, |guards| {
+                guards.interior_boundaries[index]
+                    .binary_search(&char_index)
+                    .is_ok()
+            });
+            if needs_interior_guard {
+                alternatives.push_str("(?!");
+                alternatives.push_str(&boundary);
+                alternatives.push(')');
+            }
             push_escaped_regex_char(&mut alternatives, ch);
+        }
+        if let Some(guards) = atom_guards.as_ref() {
+            if let Some(suffixes) = &guards.suffixes {
+                for suffix in &suffixes[index] {
+                    alternatives.push_str("(?!");
+                    for ch in suffix.chars() {
+                        push_escaped_regex_char(&mut alternatives, ch);
+                    }
+                    alternatives.push(')');
+                }
+            }
         }
     }
     alternatives.push(')');
-    if each_scalar_is_a_grapheme || every_occurrence_is_a_grapheme {
-        return alternatives;
+    if each_scalar_is_a_grapheme
+        || atom_guards
+            .as_ref()
+            .is_some_and(|guards| guards.suffixes.is_some())
+    {
+        return Ok(alternatives);
     }
-    let boundary = java_grapheme_boundary_assertion(text);
-    format!("(?:(?:{boundary}){alternatives}(?={boundary}))")
+    let expanded = format!("(?:(?:{boundary}){alternatives}(?={boundary}))");
+    Ok(expanded)
+}
+
+fn java_unicode_casefold_is_ascii_safe(text: &str) -> bool {
+    text.chars().all(|ch| {
+        if ch.is_ascii() {
+            return true;
+        }
+        let mut upper = ch.to_uppercase();
+        let upper_is_identity = upper.next() == Some(ch) && upper.next().is_none();
+        let mut lower = ch.to_lowercase();
+        upper_is_identity && lower.next() == Some(ch) && lower.next().is_none()
+    })
+}
+
+fn java_unicode_simple_fold_key(ch: char) -> Option<char> {
+    let mut upper_mapping = ch.to_uppercase();
+    let upper = upper_mapping.next()?;
+    if upper_mapping.next().is_some() {
+        return None;
+    }
+
+    // Rust exposes full lowercase mappings; Java's Character mapping for U+0130
+    // is the simple one-scalar mapping used by Pattern's Unicode case folding.
+    if upper == '\u{0130}' {
+        return Some('i');
+    }
+    let mut lower_mapping = upper.to_lowercase();
+    let lower = lower_mapping.next()?;
+    if lower_mapping.next().is_some() {
+        return None;
+    }
+    Some(lower)
+}
+
+fn java_grapheme_case_keys(text: &str, modes: JavaRegexModes) -> Option<HashMap<char, char>> {
+    let mut chars = text.chars().collect::<Vec<_>>();
+    chars.sort_unstable();
+    chars.dedup();
+
+    if !modes.case_insensitive {
+        return Some(chars.into_iter().map(|ch| (ch, ch)).collect());
+    }
+    if java_ascii_case_insensitive(modes)
+        || (modes.unicode_case && java_unicode_casefold_is_ascii_safe(text))
+    {
+        return Some(
+            chars
+                .into_iter()
+                .map(|ch| {
+                    (
+                        ch,
+                        if ch.is_ascii() {
+                            ch.to_ascii_lowercase()
+                        } else {
+                            ch
+                        },
+                    )
+                })
+                .collect(),
+        );
+    }
+    if !modes.unicode_case {
+        return None;
+    }
+
+    chars
+        .into_iter()
+        .map(|ch| Some((ch, java_unicode_simple_fold_key(ch)?)))
+        .collect()
+}
+
+fn java_compact_grapheme_atom(graphemes: &[&str]) -> Option<String> {
+    let char_sequences = graphemes
+        .iter()
+        .map(|grapheme| grapheme.chars().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let min_length = char_sequences.iter().map(Vec::len).min()?;
+    let common_prefix_len = (0..min_length)
+        .take_while(|index| {
+            char_sequences
+                .iter()
+                .all(|sequence| sequence[*index] == char_sequences[0][*index])
+        })
+        .count();
+    let mut common_suffix_len = 0;
+    while common_prefix_len + common_suffix_len + 1 < min_length {
+        let index = common_suffix_len + 1;
+        if char_sequences.iter().all(|sequence| {
+            sequence[sequence.len() - index] == char_sequences[0][char_sequences[0].len() - index]
+        }) {
+            common_suffix_len += 1;
+        } else {
+            break;
+        }
+    }
+
+    let mut variable_chars = Vec::with_capacity(char_sequences.len());
+    for sequence in &char_sequences {
+        if sequence.len() != common_prefix_len + 1 + common_suffix_len {
+            return None;
+        }
+        variable_chars.push(sequence[common_prefix_len]);
+    }
+    variable_chars.sort_unstable();
+    variable_chars.dedup();
+    if variable_chars.len() != graphemes.len() {
+        return None;
+    }
+
+    let mut atom = String::from("(?:");
+    for ch in &char_sequences[0][..common_prefix_len] {
+        push_escaped_regex_char(&mut atom, *ch);
+    }
+    atom.push('[');
+    let mut index = 0;
+    while index < variable_chars.len() {
+        let start = variable_chars[index];
+        let mut end_index = index;
+        while let Some(next) = variable_chars.get(end_index + 1) {
+            if u32::from(*next) != u32::from(variable_chars[end_index]) + 1 {
+                break;
+            }
+            end_index += 1;
+        }
+        if end_index - index >= 2 {
+            push_escaped_class_char(&mut atom, start);
+            atom.push('-');
+            push_escaped_class_char(&mut atom, variable_chars[end_index]);
+        } else {
+            for ch in &variable_chars[index..=end_index] {
+                push_escaped_class_char(&mut atom, *ch);
+            }
+        }
+        index = end_index + 1;
+    }
+    atom.push(']');
+    let suffix_start = char_sequences[0].len() - common_suffix_len;
+    for ch in &char_sequences[0][suffix_start..] {
+        push_escaped_regex_char(&mut atom, *ch);
+    }
+    atom.push(')');
+    Some(atom)
 }
 
 fn java_grapheme_boundary_is_redundant(chars: &[char], index: usize) -> bool {
@@ -10715,25 +11332,42 @@ fn java_grapheme_atom_ends_at(chars: &[char], end: usize) -> bool {
         || (end >= 6 && chars[end - 6..end] == ['(', '?', ':', '\\', 'X', ')'])
 }
 
-fn java_grapheme_boundary_assertion(text: &str) -> String {
+fn java_grapheme_boundary_assertion(text: &str) -> Result<String, Error> {
     use unicode_segmentation::UnicodeSegmentation;
 
     let character_count = text.chars().count();
     if text.graphemes(true).count() == character_count {
-        return r"(?:\A|(?<=.))".to_owned();
+        return Ok(r"(?:\A|(?<=.))".to_owned());
     }
 
-    let mut result = String::from("(?:\\A");
-    for (start, _) in text.grapheme_indices(true).skip(1) {
-        let position = text[..start].chars().count();
-        result.push_str(&format!(r"|(?<=\A[\s\S]{{{position}}})"));
+    let mut boundaries = Vec::new();
+    let mut character_position = 0;
+    for grapheme in text.graphemes(true) {
+        boundaries.push(character_position);
+        character_position += grapheme.chars().count();
     }
-    let position = text.chars().count();
-    if position != 0 {
-        result.push_str(&format!(r"|(?<=\A[\s\S]{{{position}}})"));
+    boundaries.push(character_position);
+
+    let mut result = String::from("(?:\\A");
+    let mut index = 1;
+    while index < boundaries.len() {
+        let start = boundaries[index];
+        let mut end_index = index;
+        while end_index + 1 < boundaries.len()
+            && boundaries[end_index + 1] == boundaries[end_index] + 1
+        {
+            end_index += 1;
+        }
+        let end = boundaries[end_index];
+        if start == end {
+            result.push_str(&format!(r"|(?<=\A[\s\S]{{{start}}})"));
+        } else {
+            result.push_str(&format!(r"|(?<=\A[\s\S]{{{start},{end}}})"));
+        }
+        index = end_index + 1;
     }
     result.push(')');
-    result
+    Ok(result)
 }
 
 fn compile_translated_regex(pattern: &str, translated: &str) -> Result<CompiledRegex, Error> {
@@ -10764,7 +11398,7 @@ fn translate_java_regex_escapes(
     pattern: &str,
     global_anchor_position: usize,
     grapheme_text: Option<&str>,
-) -> (String, bool) {
+) -> Result<(String, bool), Error> {
     const HORIZONTAL: &str =
         r"\x{9}-\x{d}\x{20}\x{85}\x{a0}\x{1680}\x{180e}\x{2000}-\x{200a}\x{202f}\x{205f}\x{3000}";
     let chars = pattern.chars().collect::<Vec<_>>();
@@ -10832,6 +11466,7 @@ fn translate_java_regex_escapes(
                     modes.unicode_classes,
                     modes.comments,
                     java_ascii_case_insensitive(modes),
+                    modes.case_insensitive && modes.unicode_case,
                 ));
                 index = end + 1;
                 continue;
@@ -10841,6 +11476,12 @@ fn translate_java_regex_escapes(
             if let Some((escape, next)) = translate_java_character_escape(&chars, index) {
                 if java_ascii_case_insensitive(modes) {
                     translated.push_str(&java_ascii_case_literal(&escape));
+                } else if modes.case_insensitive && modes.unicode_case {
+                    if java_turkic_i_escape(&escape) {
+                        translated.push_str("(?-i:[iI\\u{131}\\u{130}])");
+                    } else {
+                        translated.push_str(&escape);
+                    }
                 } else {
                     translated.push_str(&escape);
                 }
@@ -10892,7 +11533,7 @@ fn translate_java_regex_escapes(
                         } else {
                             translated.push_str(&java_grapheme_boundary_assertion(
                                 grapheme_text.unwrap_or(""),
-                            ));
+                            )?);
                         }
                         index += 5;
                         continue;
@@ -10905,7 +11546,7 @@ fn translate_java_regex_escapes(
                     continue;
                 }
                 'X' => {
-                    translated.push_str(&java_grapheme_atom(grapheme_text.unwrap_or(""), modes));
+                    translated.push_str(&java_grapheme_atom(grapheme_text.unwrap_or(""), modes)?);
                     index += 2;
                     continue;
                 }
@@ -10976,14 +11617,29 @@ fn translate_java_regex_escapes(
                 _ => {}
             }
         }
-        if java_ascii_case_insensitive(modes) && chars[index].is_alphabetic() {
+        if modes.case_insensitive && modes.unicode_case && java_turkic_i_case(chars[index]) {
+            translated.push_str("(?-i:[iI\\u{131}\\u{130}])");
+        } else if java_ascii_case_insensitive(modes) && chars[index].is_alphabetic() {
             translated.push_str(&java_ascii_case_char(chars[index]));
         } else {
             translated.push(chars[index]);
         }
         index += 1;
     }
-    (translated, uses_global_anchor)
+    Ok((translated, uses_global_anchor))
+}
+
+fn java_turkic_i_case(ch: char) -> bool {
+    matches!(ch, 'i' | 'I' | '\u{0131}' | '\u{0130}')
+}
+
+fn java_turkic_i_escape(escape: &str) -> bool {
+    escape
+        .strip_prefix(r"\x{")
+        .and_then(|value| value.strip_suffix('}'))
+        .and_then(|value| u32::from_str_radix(value, 16).ok())
+        .and_then(char::from_u32)
+        .is_some_and(java_turkic_i_case)
 }
 
 fn java_ascii_case_insensitive(modes: JavaRegexModes) -> bool {
@@ -11343,6 +11999,7 @@ fn translate_java_character_class(
     unicode_classes: bool,
     comments: bool,
     ascii_case_insensitive: bool,
+    unicode_case_insensitive: bool,
 ) -> String {
     let mut cleaned_body = if comments {
         strip_java_class_comments(body)
@@ -11352,6 +12009,9 @@ fn translate_java_character_class(
     let disable_unicode_case_fold = ascii_case_insensitive;
     if disable_unicode_case_fold {
         cleaned_body = add_ascii_case_variants_to_class(&cleaned_body);
+    }
+    if unicode_case_insensitive {
+        cleaned_body = add_turkic_i_variants_to_class(&cleaned_body);
     }
     let body = cleaned_body.as_slice();
     let negated = body.first() == Some(&'^');
@@ -11406,6 +12066,89 @@ fn translate_java_character_class(
     } else {
         output
     }
+}
+
+fn add_turkic_i_variants_to_class(body: &[char]) -> Vec<char> {
+    let mut output = Vec::with_capacity(body.len());
+    let mut index = 0;
+    while index < body.len() {
+        if body[index] == '\\' {
+            if let Some((escape, next)) = translate_java_character_escape(body, index) {
+                if body.get(next) == Some(&'-') {
+                    if let Some((end, end_next)) = java_turkic_i_class_atom(body, next + 1) {
+                        output.extend_from_slice(&body[index..end_next]);
+                        if let Some((start, _)) = java_turkic_i_class_atom(body, index) {
+                            if (start..=end).contains(&'i') || (start..=end).contains(&'I') {
+                                output.extend(['\u{0131}', '\u{0130}']);
+                            }
+                        }
+                        index = end_next;
+                        continue;
+                    }
+                }
+                output.extend_from_slice(&body[index..next]);
+                if java_turkic_i_escape(&escape) {
+                    output.extend(['\u{0131}', '\u{0130}']);
+                }
+                index = next;
+                continue;
+            }
+            if body.get(index + 1) == Some(&'Q') {
+                let (quoted, next) = take_quoted_regex_literal(body, index + 2);
+                output.extend_from_slice(&body[index..next]);
+                if quoted.iter().any(|ch| matches!(ch, 'i' | 'I')) {
+                    output.extend(['\u{0131}', '\u{0130}']);
+                }
+                index = next;
+                continue;
+            }
+            let next = (index + 2).min(body.len());
+            output.extend_from_slice(&body[index..next]);
+            index = next;
+            continue;
+        }
+        if body[index] == '[' {
+            if let Some(end) = regex_class_end_mode(body, index, false) {
+                output.push('[');
+                output.extend(add_turkic_i_variants_to_class(&body[index + 1..end]));
+                output.push(']');
+                index = end + 1;
+                continue;
+            }
+        }
+        if let Some((start, start_next)) = java_turkic_i_class_atom(body, index) {
+            if body.get(start_next) == Some(&'-') {
+                if let Some((end, end_next)) = java_turkic_i_class_atom(body, start_next + 1) {
+                    output.extend_from_slice(&body[index..end_next]);
+                    if (start..=end).contains(&'i') || (start..=end).contains(&'I') {
+                        output.extend(['\u{0131}', '\u{0130}']);
+                    }
+                    index = end_next;
+                    continue;
+                }
+            }
+            output.extend_from_slice(&body[index..start_next]);
+            if matches!(start, 'i' | 'I') {
+                output.extend(['\u{0131}', '\u{0130}']);
+            }
+            index = start_next;
+            continue;
+        }
+        output.push(body[index]);
+        index += 1;
+    }
+    output
+}
+
+fn java_turkic_i_class_atom(body: &[char], index: usize) -> Option<(char, usize)> {
+    if body.get(index) == Some(&'\\') {
+        return java_escaped_class_char(body, index);
+    }
+    let ch = *body.get(index)?;
+    if matches!(ch, '[' | ']' | '-' | '&') {
+        return None;
+    }
+    Some((ch, index + 1))
 }
 
 fn add_ascii_case_variants_to_class(body: &[char]) -> Vec<char> {
@@ -12226,6 +12969,20 @@ fn resolve_starts_with(table: &Table, expr: &StartsWithExpr) -> Result<ResolvedP
 }
 
 fn resolve_replace(table: &Table, expr: &ReplaceExpr) -> Result<ResolvedProj, Error> {
+    if let Some(trim) = &expr.value_trim {
+        if expr.args.len() != 3
+            || !replace_text_ok(table, &expr.args[1])
+            || !replace_text_ok(table, &expr.args[2])
+        {
+            return Err(text_type_error(table, "replace", &expr.args[1..]));
+        }
+        return Ok(ResolvedProj::ReplaceNested {
+            label: expr.label.clone(),
+            value: Box::new(resolve_trim(table, trim)?),
+            old: resolve_concat_arg(table, &expr.args[1])?,
+            new: resolve_concat_arg(table, &expr.args[2])?,
+        });
+    }
     if expr.args.len() != 3 || expr.args.iter().any(|arg| !replace_text_ok(table, arg)) {
         return Err(text_type_error(table, "replace", &expr.args));
     }
@@ -12268,7 +13025,10 @@ fn resolve_regexp_replace(table: &Table, expr: &RegexpReplaceExpr) -> Result<Res
         _ => None,
     };
     let mode = RegexpReplaceMode::Run {
-        value: resolve_concat_arg(table, &expr.args[0])?,
+        value: match &expr.value_expr {
+            Some(value) => RegexpReplaceValue::Projection(Box::new(resolve_proj(table, value)?)),
+            None => RegexpReplaceValue::Argument(resolve_concat_arg(table, &expr.args[0])?),
+        },
         pattern: resolve_concat_arg(table, &expr.args[1])?,
         regex,
         replacement: resolve_concat_arg(table, &expr.args[2])?,
@@ -12464,6 +13224,24 @@ fn replace_arg_type(table: &Table, arg: &ConcatArg) -> Result<String, Error> {
 }
 
 fn resolve_trim(table: &Table, expr: &TrimExpr) -> Result<ResolvedProj, Error> {
+    if let Some(replace) = &expr.nested_replace {
+        return Ok(ResolvedProj::TrimNested {
+            label: expr.label.clone(),
+            inner: Box::new(resolve_replace(table, replace)?),
+            end: expr.end,
+        });
+    }
+    if let Some(nested_case) = &expr.nested_case {
+        let inner = match nested_case {
+            NestedTextCase::Lower(lower) => resolve_lower(table, lower)?,
+            NestedTextCase::Upper(upper) => resolve_upper(table, upper)?,
+        };
+        return Ok(ResolvedProj::TrimNested {
+            label: expr.label.clone(),
+            inner: Box::new(inner),
+            end: expr.end,
+        });
+    }
     let name = match expr.end {
         TrimEnd::Left => "ltrim",
         TrimEnd::Right => "rtrim",
@@ -12656,6 +13434,25 @@ fn side_arg_type(table: &Table, arg: &ConcatArg) -> Result<String, Error> {
 }
 
 fn resolve_upper(table: &Table, expr: &UpperExpr) -> Result<ResolvedProj, Error> {
+    if let Some(replace) = &expr.nested_replace {
+        return Ok(ResolvedProj::UpperNested {
+            label: expr.label.clone(),
+            inner: Box::new(resolve_replace(table, replace)?),
+        });
+    }
+    if let Some(trim) = &expr.nested_trim {
+        if trim.nested_case.is_some() || trim.nested_replace.is_some() {
+            return Ok(ResolvedProj::UpperNested {
+                label: expr.label.clone(),
+                inner: Box::new(resolve_trim(table, trim)?),
+            });
+        }
+        return Ok(ResolvedProj::UpperTrim {
+            label: expr.label.clone(),
+            arg: resolve_one_text(table, "trim", &trim.args)?,
+            end: trim.end,
+        });
+    }
     Ok(ResolvedProj::Upper {
         label: expr.label.clone(),
         arg: resolve_one_text(table, &function_name(&expr.label), &expr.args)?,
@@ -12663,6 +13460,25 @@ fn resolve_upper(table: &Table, expr: &UpperExpr) -> Result<ResolvedProj, Error>
 }
 
 fn resolve_lower(table: &Table, expr: &LowerExpr) -> Result<ResolvedProj, Error> {
+    if let Some(replace) = &expr.nested_replace {
+        return Ok(ResolvedProj::LowerNested {
+            label: expr.label.clone(),
+            inner: Box::new(resolve_replace(table, replace)?),
+        });
+    }
+    if let Some(trim) = &expr.nested_trim {
+        if trim.nested_case.is_some() || trim.nested_replace.is_some() {
+            return Ok(ResolvedProj::LowerNested {
+                label: expr.label.clone(),
+                inner: Box::new(resolve_trim(table, trim)?),
+            });
+        }
+        return Ok(ResolvedProj::LowerTrim {
+            label: expr.label.clone(),
+            arg: resolve_one_text(table, "trim", &trim.args)?,
+            end: trim.end,
+        });
+    }
     Ok(ResolvedProj::Lower {
         label: expr.label.clone(),
         arg: resolve_one_text(table, &function_name(&expr.label), &expr.args)?,
@@ -12950,9 +13766,16 @@ fn eval_regexp_replace(
             *replacement_position,
         ));
     }
-    let (Some(text), Some(replacement)) =
-        (text_of(table, row, value), text_of(table, row, replacement))
-    else {
+    let value = match value {
+        RegexpReplaceValue::Argument(value) => text_of(table, row, value),
+        RegexpReplaceValue::Projection(value) => match eval_checked(table, row, value)? {
+            Scalar::Text(text) => Some(text),
+            Scalar::Char(0) | Scalar::Null => None,
+            Scalar::Char(unit) => char::from_u32(u32::from(unit)).map(|ch| ch.to_string()),
+            _ => None,
+        },
+    };
+    let (Some(text), Some(replacement)) = (value, text_of(table, row, replacement)) else {
         return Ok(Scalar::Null);
     };
     let Some(regex) = regex else {
@@ -12997,9 +13820,39 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
             Some(text) => Scalar::Text(text.to_lowercase()),
             None => Scalar::Null,
         },
+        ResolvedProj::LowerTrim { arg, end, .. } => match text_of(table, row, arg) {
+            Some(text) => Scalar::Text(trim_ascii_space(&text, *end).to_lowercase()),
+            None => Scalar::Null,
+        },
+        ResolvedProj::LowerNested { inner, .. } => match eval_resolved(table, row, inner) {
+            Scalar::Text(text) => Scalar::Text(text.to_lowercase()),
+            _ => Scalar::Null,
+        },
         ResolvedProj::Upper { arg, .. } => match text_of(table, row, arg) {
             Some(text) => Scalar::Text(text.to_uppercase()),
             None => Scalar::Null,
+        },
+        ResolvedProj::UpperTrim { arg, end, .. } => match text_of(table, row, arg) {
+            Some(text) => Scalar::Text(trim_ascii_space(&text, *end).to_uppercase()),
+            None => Scalar::Null,
+        },
+        ResolvedProj::UpperNested { inner, .. } => match eval_resolved(table, row, inner) {
+            Scalar::Text(text) => Scalar::Text(text.to_uppercase()),
+            Scalar::Null => Scalar::Null,
+            _ => Scalar::Null,
+        },
+        ResolvedProj::ReplaceNested {
+            value, old, new, ..
+        } => match (
+            eval_resolved(table, row, value),
+            text_of(table, row, old),
+            text_of(table, row, new),
+        ) {
+            (Scalar::Text(value), Some(old), Some(_new)) if old.is_empty() => Scalar::Text(value),
+            (Scalar::Text(value), Some(old), Some(new)) => {
+                Scalar::Text(replace_utf16(&value, &old, &new))
+            }
+            _ => Scalar::Null,
         },
         ResolvedProj::Side {
             from_right,
@@ -13502,6 +14355,11 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
         ResolvedProj::Trim { arg, end, .. } => match text_of(table, row, arg) {
             Some(text) => Scalar::Text(trim_ascii_space(&text, *end)),
             None => Scalar::Null,
+        },
+        ResolvedProj::TrimNested { inner, end, .. } => match eval_resolved(table, row, inner) {
+            Scalar::Text(text) => Scalar::Text(trim_ascii_space(&text, *end)),
+            Scalar::Null => Scalar::Null,
+            _ => Scalar::Null,
         },
     }
 }
@@ -15351,7 +16209,12 @@ fn execute_group_key_items(
     let mut group_operands = Vec::with_capacity(group_exprs.len());
     for expression in group_exprs {
         let operand = parse_filter_operand(&expression.source, expression.position)?;
-        select_operand_tag(table, &operand)?;
+        select_operand_tag(table, &operand).map_err(|error| {
+            match nested_text_function_error_position(&operand, &error.message, expression) {
+                Some(position) => Error::at(error.message, position),
+                None => error,
+            }
+        })?;
         group_operands.push(operand);
     }
     let grouped_columns = group_operands
@@ -15500,9 +16363,19 @@ fn execute_group_key_items(
         }
         let key = group_operands
             .iter()
-            .map(|operand| {
+            .enumerate()
+            .map(|(index, operand)| {
                 eval_select_operand(table, row, operand)
                     .map(|(value, _)| normalize_group_key(operand, value))
+                    .map_err(|error| {
+                        let position = group_exprs.get(index).and_then(|group| {
+                            nested_text_function_error_position(operand, &error.message, group)
+                        });
+                        match position {
+                            Some(position) => Error::at(error.message, position),
+                            None => error,
+                        }
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
         if !groups.iter().any(|(found, _)| found == &key) {
@@ -15511,13 +16384,28 @@ fn execute_group_key_items(
     }
     let projection_tags = selected
         .iter()
-        .map(|column| {
+        .enumerate()
+        .map(|(column_index, column)| {
             select_operand_tag(table, &column.operand).map_err(|error| {
                 let position = grouped_pattern_projection_error_position(
                     &column.operand,
                     &error.message,
                     column.position,
                 )
+                .or_else(|| {
+                    selected_groups
+                        .get(column_index)
+                        .copied()
+                        .flatten()
+                        .and_then(|group_index| group_exprs.get(group_index))
+                        .and_then(|group| {
+                            nested_text_function_error_position(
+                                &column.operand,
+                                &error.message,
+                                group,
+                            )
+                        })
+                })
                 .or_else(|| match (&column.operand, error.message.as_str()) {
                     (FilterOperand::Projection(projection), message)
                         if matches!(projection.as_ref(), Proj::Glob(_))
@@ -15646,6 +16534,109 @@ fn execute_group_key_items(
         .map(|row| projected_groups[row].clone())
         .collect();
     Ok(QueryResult { columns, rows })
+}
+
+fn nested_text_function_error_position(
+    operand: &FilterOperand,
+    message: &str,
+    group: &crate::parse::GroupByExpr,
+) -> Option<usize> {
+    let FilterOperand::Projection(projection) = operand else {
+        return None;
+    };
+    let function = match projection.as_ref() {
+        Proj::Trim(expr) => match expr.nested_case.as_ref() {
+            Some(NestedTextCase::Lower(lower))
+                if lower
+                    .nested_replace
+                    .as_ref()
+                    .and_then(|replace| replace.value_trim.as_ref())
+                    .is_some() =>
+            {
+                "trim"
+            }
+            Some(NestedTextCase::Lower(_)) => "lower",
+            Some(NestedTextCase::Upper(upper))
+                if upper
+                    .nested_replace
+                    .as_ref()
+                    .and_then(|replace| replace.value_trim.as_ref())
+                    .is_some() =>
+            {
+                "trim"
+            }
+            Some(NestedTextCase::Upper(_)) => "upper",
+            None if expr
+                .nested_replace
+                .as_ref()
+                .and_then(|replace| replace.value_trim.as_ref())
+                .is_some() =>
+            {
+                "trim"
+            }
+            None => return None,
+        },
+        Proj::Upper(expr)
+            if expr
+                .nested_replace
+                .as_ref()
+                .and_then(|replace| replace.value_trim.as_ref())
+                .is_some() =>
+        {
+            "trim"
+        }
+        Proj::Upper(expr)
+            if expr
+                .nested_trim
+                .as_ref()
+                .and_then(|trim| trim.nested_replace.as_ref())
+                .and_then(|replace| replace.value_trim.as_ref())
+                .is_some() =>
+        {
+            "trim"
+        }
+        Proj::Upper(expr) if expr.nested_replace.is_some() => "replace",
+        Proj::Replace(expr) if expr.value_trim.is_some() => "trim",
+        Proj::Lower(expr)
+            if expr
+                .nested_replace
+                .as_ref()
+                .and_then(|r| r.value_trim.as_ref())
+                .is_some() =>
+        {
+            "trim"
+        }
+        Proj::Lower(expr)
+            if expr
+                .nested_trim
+                .as_ref()
+                .and_then(|trim| trim.nested_replace.as_ref())
+                .and_then(|replace| replace.value_trim.as_ref())
+                .is_some() =>
+        {
+            "trim"
+        }
+        _ => return None,
+    };
+    let function = if function == "trim"
+        && message.starts_with("there is no matching function `ltrim`")
+    {
+        "ltrim"
+    } else if function == "trim" && message.starts_with("there is no matching function `rtrim`") {
+        "rtrim"
+    } else {
+        function
+    };
+    if !message.starts_with(&format!("there is no matching function `{function}`")) {
+        return None;
+    }
+    let source = group.source.to_ascii_lowercase();
+    let find_function = if matches!(function, "trim" | "ltrim" | "rtrim") {
+        source.rfind(&format!("{function}("))
+    } else {
+        source.find(&format!("{function}("))
+    };
+    find_function.map(|offset| group.position + offset)
 }
 
 fn source_dependency_offset_last(source: &str, dependency: &str) -> Option<usize> {
@@ -15805,6 +16796,75 @@ fn same_filter_operand(left: &FilterOperand, right: &FilterOperand) -> bool {
         }
         _ => false,
     }
+}
+
+fn same_lower_expr(left: &LowerExpr, right: &LowerExpr) -> bool {
+    left.args == right.args
+        && match (&left.nested_replace, &right.nested_replace) {
+            (Some(left), Some(right)) => {
+                left.args == right.args
+                    && match (&left.value_trim, &right.value_trim) {
+                        (Some(left), Some(right)) => same_trim_expr(left, right),
+                        (None, None) => true,
+                        _ => false,
+                    }
+            }
+            (None, None) => true,
+            _ => false,
+        }
+        && match (&left.nested_trim, &right.nested_trim) {
+            (Some(left), Some(right)) => same_trim_expr(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+}
+
+fn same_upper_expr(left: &UpperExpr, right: &UpperExpr) -> bool {
+    left.args == right.args
+        && match (&left.nested_replace, &right.nested_replace) {
+            (Some(left), Some(right)) => {
+                left.args == right.args
+                    && match (&left.value_trim, &right.value_trim) {
+                        (Some(left), Some(right)) => same_trim_expr(left, right),
+                        (None, None) => true,
+                        _ => false,
+                    }
+            }
+            (None, None) => true,
+            _ => false,
+        }
+        && match (&left.nested_trim, &right.nested_trim) {
+            (Some(left), Some(right)) => same_trim_expr(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+}
+
+fn same_trim_expr(left: &TrimExpr, right: &TrimExpr) -> bool {
+    left.args == right.args
+        && left.end == right.end
+        && match (&left.nested_case, &right.nested_case) {
+            (Some(NestedTextCase::Lower(left)), Some(NestedTextCase::Lower(right))) => {
+                same_lower_expr(left, right)
+            }
+            (Some(NestedTextCase::Upper(left)), Some(NestedTextCase::Upper(right))) => {
+                same_upper_expr(left, right)
+            }
+            (None, None) => true,
+            _ => false,
+        }
+        && match (&left.nested_replace, &right.nested_replace) {
+            (Some(left), Some(right)) => {
+                left.args == right.args
+                    && match (&left.value_trim, &right.value_trim) {
+                        (Some(left), Some(right)) => same_trim_expr(left, right),
+                        (None, None) => true,
+                        _ => false,
+                    }
+            }
+            (None, None) => true,
+            _ => false,
+        }
 }
 
 fn same_projection(left: &Proj, right: &Proj) -> bool {
@@ -15971,10 +17031,17 @@ fn same_projection(left: &Proj, right: &Proj) -> bool {
         }
         (Proj::TimestampFloor(left), Proj::TimestampFloor(right)) => left.args == right.args,
         (Proj::TimestampCeil(left), Proj::TimestampCeil(right)) => left.args == right.args,
-        (Proj::Lower(left), Proj::Lower(right)) => left.args == right.args,
-        (Proj::Upper(left), Proj::Upper(right)) => left.args == right.args,
-        (Proj::Trim(left), Proj::Trim(right)) => left.args == right.args && left.end == right.end,
-        (Proj::Replace(left), Proj::Replace(right)) => left.args == right.args,
+        (Proj::Lower(left), Proj::Lower(right)) => same_lower_expr(left, right),
+        (Proj::Upper(left), Proj::Upper(right)) => same_upper_expr(left, right),
+        (Proj::Trim(left), Proj::Trim(right)) => same_trim_expr(left, right),
+        (Proj::Replace(left), Proj::Replace(right)) => {
+            left.args == right.args
+                && match (&left.value_trim, &right.value_trim) {
+                    (Some(left), Some(right)) => same_trim_expr(left, right),
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
         (Proj::Abs(left), Proj::Abs(right)) => left.args == right.args,
         (Proj::DateTrunc(left), Proj::DateTrunc(right)) => left.args == right.args,
         _ => left == right,
@@ -15995,6 +17062,7 @@ fn filter_dependencies(filter: &Filter) -> Vec<String> {
             dependencies.extend(filter_operand_dependencies(right));
             dependencies
         }
+        Filter::InListExpression { value, .. } => filter_operand_dependencies(value),
         Filter::Like {
             column, pattern, ..
         }
@@ -16002,6 +17070,22 @@ fn filter_dependencies(filter: &Filter) -> Vec<String> {
             column, pattern, ..
         } => {
             let mut dependencies = vec![column.to_ascii_lowercase()];
+            if let ConcatArg::Column(name) = pattern {
+                dependencies.push(name.to_ascii_lowercase());
+            }
+            dependencies
+        }
+        Filter::RegexExpression { value, pattern, .. } => {
+            let mut dependencies =
+                filter_operand_dependencies(&FilterOperand::Projection(value.clone()));
+            if let ConcatArg::Column(name) = pattern {
+                dependencies.push(name.to_ascii_lowercase());
+            }
+            dependencies
+        }
+        Filter::LikeExpression { value, pattern, .. } => {
+            let mut dependencies =
+                filter_operand_dependencies(&FilterOperand::Projection(value.clone()));
             if let ConcatArg::Column(name) = pattern {
                 dependencies.push(name.to_ascii_lowercase());
             }
@@ -16022,8 +17106,8 @@ fn filter_operand_dependencies(operand: &FilterOperand) -> Vec<String> {
         FilterOperand::Projection(projection) => match projection.as_ref() {
             Proj::Column(name) => vec![name.to_ascii_lowercase()],
             Proj::Abs(expr) => concat_arg_dependencies(&expr.args),
-            Proj::Lower(expr) => concat_arg_dependencies(&expr.args),
-            Proj::Upper(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Lower(expr) => lower_dependencies(expr),
+            Proj::Upper(expr) => upper_dependencies(expr),
             Proj::Length(expr) => concat_arg_dependencies(&expr.args),
             Proj::SizePretty(expr) => concat_arg_dependencies(&expr.args),
             Proj::Typeof(expr) => typeof_dependencies(expr),
@@ -16183,7 +17267,7 @@ fn filter_operand_dependencies(operand: &FilterOperand) -> Vec<String> {
             },
             Proj::TimestampFloor(expr) => concat_arg_dependencies(&expr.args),
             Proj::TimestampCeil(expr) => concat_arg_dependencies(&expr.args),
-            Proj::Trim(expr) => concat_arg_dependencies(&expr.args),
+            Proj::Trim(expr) => trim_dependencies(expr),
             Proj::Concat(expr) => concat_arg_dependencies(&expr.args),
             Proj::Replace(expr) => concat_arg_dependencies(&expr.args),
             Proj::DateTrunc(expr) => concat_arg_dependencies(&expr.args),
@@ -16344,6 +17428,10 @@ fn filter_pattern_literal(filter: &Filter) -> Option<&str> {
         | Filter::Regex {
             pattern: ConcatArg::Literal(Scalar::Text(pattern)),
             ..
+        }
+        | Filter::RegexExpression {
+            pattern: ConcatArg::Literal(Scalar::Text(pattern)),
+            ..
         } => Some(pattern),
         Filter::Not(inner) => filter_pattern_literal(inner),
         Filter::And(left, right) | Filter::Or(left, right) => {
@@ -16375,6 +17463,53 @@ fn typeof_dependencies(expr: &TypeofExpr) -> Vec<String> {
         );
     }
     concat_arg_dependencies(&expr.args)
+}
+
+fn lower_dependencies(expr: &LowerExpr) -> Vec<String> {
+    if let Some(replace) = &expr.nested_replace {
+        let mut dependencies = replace
+            .value_trim
+            .as_ref()
+            .map_or_else(Vec::new, |trim| trim_dependencies(trim));
+        dependencies.extend(concat_arg_dependencies(&replace.args));
+        return dependencies;
+    }
+    expr.nested_trim.as_ref().map_or_else(
+        || concat_arg_dependencies(&expr.args),
+        |trim| trim_dependencies(trim),
+    )
+}
+
+fn upper_dependencies(expr: &UpperExpr) -> Vec<String> {
+    if let Some(replace) = &expr.nested_replace {
+        let mut dependencies = replace
+            .value_trim
+            .as_ref()
+            .map_or_else(Vec::new, |trim| trim_dependencies(trim));
+        dependencies.extend(concat_arg_dependencies(&replace.args));
+        dependencies
+    } else {
+        expr.nested_trim.as_ref().map_or_else(
+            || concat_arg_dependencies(&expr.args),
+            |trim| trim_dependencies(trim),
+        )
+    }
+}
+
+fn trim_dependencies(expr: &TrimExpr) -> Vec<String> {
+    if let Some(replace) = &expr.nested_replace {
+        let mut dependencies = replace
+            .value_trim
+            .as_ref()
+            .map_or_else(Vec::new, |trim| trim_dependencies(trim));
+        dependencies.extend(concat_arg_dependencies(&replace.args));
+        return dependencies;
+    }
+    match &expr.nested_case {
+        Some(NestedTextCase::Lower(lower)) => lower_dependencies(lower),
+        Some(NestedTextCase::Upper(upper)) => upper_dependencies(upper),
+        None => concat_arg_dependencies(&expr.args),
+    }
 }
 
 fn concat_arg_dependencies(args: &[ConcatArg]) -> Vec<String> {
@@ -19808,8 +20943,41 @@ fn row_matches(table: &Table, row: usize, filter: &Filter) -> Result<bool, Error
             )
         }
         Filter::CompareExpressions { left, op, right } => {
+            if matches!(op, CmpOp::Eq | CmpOp::NotEq) {
+                if let (
+                    FilterOperand::Projection(projection),
+                    FilterOperand::Literal(Scalar::Text(text)),
+                ) = (left, right)
+                {
+                    if let ResolvedProj::MakeGeohash { lon, lat, bits, .. } =
+                        resolve_proj(table, projection)?
+                    {
+                        let lon = make_geohash_coord(table, row, &lon)?;
+                        let lat = make_geohash_coord(table, row, &lat)?;
+                        let left_hash = Some(geohash_from_coordinates(lat, lon, bits));
+                        let right_hash = geohash_text_value(text, bits)?;
+                        let equal = left_hash == right_hash;
+                        return Ok(if *op == CmpOp::Eq { equal } else { !equal });
+                    }
+                }
+            }
             let (left, left_tag) = eval_filter_operand(table, row, left)?;
             match right {
+                FilterOperand::Literal(literal)
+                    if is_text_tag(left_tag) && is_numeric_tag(literal_tag(literal)) =>
+                {
+                    compare_columns(&left, left_tag, literal, literal_tag(literal), *op).map_err(
+                        |error| {
+                            if error.position.is_none()
+                                && error.message.starts_with("inconvertible value:")
+                            {
+                                Error::at(error.message, 0)
+                            } else {
+                                error
+                            }
+                        },
+                    )
+                }
                 FilterOperand::Literal(literal)
                     if matches!(left_tag, qdb_types::TAG_DATE | qdb_types::TAG_TIMESTAMP)
                         && is_numeric_tag(literal_tag(literal)) =>
@@ -19910,6 +21078,43 @@ fn row_matches(table: &Table, row: usize, filter: &Filter) -> Result<bool, Error
             };
             Ok(if *negated { !matched } else { matched })
         }
+        Filter::RegexExpression {
+            value,
+            pattern,
+            negated,
+            position,
+            ..
+        } => {
+            let ConcatArg::Literal(Scalar::Text(pattern_text)) = pattern else {
+                if matches!(pattern, ConcatArg::Literal(Scalar::Null)) {
+                    return Ok(false);
+                }
+                return Err(Error::new(
+                    if matches!(pattern, ConcatArg::Column(_)) && !negated {
+                        "not implemented: dynamic pattern would be very slow to execute"
+                    } else {
+                        "regex operator requires a constant string pattern"
+                    },
+                ));
+            };
+            let regex = compile_regex(pattern_text).map_err(|error| {
+                let position = regex_error_position(pattern_text, *position, &error.message);
+                Error::at(error.message, position)
+            })?;
+            let resolved = resolve_proj(table, value)?;
+            let scalar = eval_checked(table, row, &resolved)?;
+            let text = match scalar {
+                Scalar::Text(text) => Some(text),
+                Scalar::Char(0) | Scalar::Null => None,
+                Scalar::Char(unit) => char::from_u32(u32::from(unit)).map(|ch| ch.to_string()),
+                _ => None,
+            };
+            let matched = match text {
+                Some(text) => regex.is_match(&text)?,
+                None => false,
+            };
+            Ok(if *negated { !matched } else { matched })
+        }
         Filter::Like {
             column,
             pattern,
@@ -19951,10 +21156,41 @@ fn row_matches(table: &Table, row: usize, filter: &Filter) -> Result<bool, Error
             let matched = like_row(table, row, &value, &pattern, *case_insensitive);
             Ok(if *negated { !matched } else { matched })
         }
+        Filter::LikeExpression {
+            value,
+            pattern,
+            case_insensitive,
+            negated,
+            ..
+        } => {
+            let pattern = match pattern {
+                ConcatArg::Literal(Scalar::Text(text)) if !text.is_empty() => {
+                    IlikePattern::Tokens(compile_ilike(text, *case_insensitive)?)
+                }
+                _ => IlikePattern::Never,
+            };
+            let resolved = resolve_proj(table, value)?;
+            let scalar = eval_checked(table, row, &resolved)?;
+            let text = match scalar {
+                Scalar::Text(text) => Some(text),
+                Scalar::Char(0) | Scalar::Null => None,
+                Scalar::Char(unit) => char::from_u32(u32::from(unit)).map(|ch| ch.to_string()),
+                _ => None,
+            };
+            let matched = match (pattern, text) {
+                (IlikePattern::Tokens(tokens), Some(text)) => {
+                    let chars = text.chars().collect::<Vec<_>>();
+                    ilike_match(&chars, &tokens, 0, 0, *case_insensitive)
+                }
+                _ => false,
+            };
+            Ok(if *negated { !matched } else { matched })
+        }
         Filter::InList {
             column,
             items,
             negated,
+            ..
         } => {
             let index = table
                 .column_index(column)
@@ -19966,6 +21202,8 @@ fn row_matches(table: &Table, row: usize, filter: &Filter) -> Result<bool, Error
                 | qdb_types::TAG_SHORT
                 | qdb_types::TAG_BYTE => InKind::Integer,
                 qdb_types::TAG_DOUBLE | qdb_types::TAG_FLOAT => InKind::Float,
+                qdb_types::TAG_DATE => InKind::Date,
+                qdb_types::TAG_TIMESTAMP => InKind::Timestamp,
                 qdb_types::TAG_STRING
                 | qdb_types::TAG_SYMBOL
                 | qdb_types::TAG_VARCHAR
@@ -19988,7 +21226,66 @@ fn row_matches(table: &Table, row: usize, filter: &Filter) -> Result<bool, Error
                 Scalar::Float(number) => in_float(f64::from(*number), &items),
                 Scalar::Text(text) => in_text(text, &items),
                 Scalar::Char(unit) => in_text(&in_char_text(*unit), &items),
-                Scalar::Timestamp(number) | Scalar::Date(number) => in_long(*number, &items),
+                Scalar::Timestamp(number) => in_long(*number, &items),
+                Scalar::Date(number) => number
+                    .checked_mul(1_000)
+                    .is_some_and(|micros| in_long(micros, &items)),
+                Scalar::Boolean(_) => false,
+            };
+            Ok(if *negated { !matched } else { matched })
+        }
+        Filter::InListExpression {
+            value,
+            items,
+            negated,
+            ..
+        } => {
+            let ipv4 = filter_is_ipv4(value);
+            let uuid = filter_is_uuid(value);
+            let (value, tag) = eval_filter_operand(table, row, value)?;
+            let kind = if ipv4 {
+                InKind::Ipv4
+            } else if uuid {
+                InKind::Uuid
+            } else {
+                match tag {
+                    qdb_types::TAG_LONG
+                    | qdb_types::TAG_INT
+                    | qdb_types::TAG_SHORT
+                    | qdb_types::TAG_BYTE => InKind::Integer,
+                    qdb_types::TAG_DOUBLE | qdb_types::TAG_FLOAT => InKind::Float,
+                    qdb_types::TAG_DATE => InKind::Date,
+                    qdb_types::TAG_TIMESTAMP => InKind::Timestamp,
+                    qdb_types::TAG_STRING
+                    | qdb_types::TAG_SYMBOL
+                    | qdb_types::TAG_VARCHAR
+                    | qdb_types::TAG_CHAR => InKind::Text,
+                    other => return Err(in_type_rejected(qdb_types::type_name(other))),
+                }
+            };
+            let left_type = match kind {
+                InKind::Uuid => "UUID",
+                InKind::Ipv4 => "IPv4",
+                _ => qdb_types::type_name(tag),
+            };
+            let items = items
+                .iter()
+                .map(|item| in_item(left_type, kind, &ConcatArg::Literal(item.clone())))
+                .collect::<Result<Vec<_>, _>>()?;
+            let matched = match &value {
+                Scalar::Null => items.iter().any(|item| matches!(item, InItem::Null)),
+                Scalar::Long(number) => in_long(*number, &items),
+                Scalar::Int(number) => in_long(i64::from(*number), &items),
+                Scalar::Short(number) => in_long(i64::from(*number), &items),
+                Scalar::Byte(number) => in_long(i64::from(*number), &items),
+                Scalar::Double(number) => in_float(*number, &items),
+                Scalar::Float(number) => in_float(f64::from(*number), &items),
+                Scalar::Text(text) => in_text(text, &items),
+                Scalar::Char(unit) => in_text(&in_char_text(*unit), &items),
+                Scalar::Timestamp(number) => in_long(*number, &items),
+                Scalar::Date(number) => number
+                    .checked_mul(1_000)
+                    .is_some_and(|micros| in_long(micros, &items)),
                 Scalar::Boolean(_) => false,
             };
             Ok(if *negated { !matched } else { matched })
@@ -20063,6 +21360,178 @@ fn validate_filter_regex(table: &Table, filter: &Filter) -> Result<(), Error> {
                 }
             }
         }
+        Filter::RegexExpression {
+            label,
+            value,
+            pattern,
+            position,
+            operator_position,
+            value_position,
+            negated,
+            ..
+        } => {
+            let resolved = resolve_proj(table, value).map_err(|error| {
+                if error.position.is_none() {
+                    let argument = match (error.message.as_str(), value.as_ref()) {
+                        (
+                            "index must be either a constant expression or a placeholder",
+                            Proj::SplitPart(_),
+                        ) => Some(2),
+                        ("constant or bind variable expected", Proj::JsonExtract(_)) => Some(1),
+                        (
+                            "expression type mismatch, expected: INT, actual: LONG",
+                            Proj::FormatType(_),
+                        ) => Some(0),
+                        (message, Proj::PgGetUserById(_))
+                            if message.starts_with(
+                                "argument type mismatch for function `pg_catalog.pg_get_userbyid` at #1",
+                            ) =>
+                        {
+                            Some(0)
+                        }
+                        (message, Proj::ToChar(_))
+                            if message.starts_with(
+                                "argument type mismatch for function `to_char` at #1",
+                            ) =>
+                        {
+                            Some(0)
+                        }
+                        _ => None,
+                    };
+                    let position = argument
+                        .and_then(|index| call_argument_position(label, index))
+                        .map_or(*value_position, |offset| value_position + offset);
+                    Error::at(error.message, position)
+                } else {
+                    error
+                }
+            })?;
+            let value_tag = match &resolved {
+                ResolvedProj::Column { index } => table.meta.columns[*index].tag,
+                _ => resolved.expr_tag(),
+            };
+            let geohash_bits = match &resolved {
+                ResolvedProj::MakeGeohash { bits, .. } => Some(*bits),
+                _ => None,
+            };
+            let is_text = geohash_bits.is_none()
+                && matches!(
+                    value_tag,
+                    qdb_types::TAG_STRING
+                        | qdb_types::TAG_SYMBOL
+                        | qdb_types::TAG_VARCHAR
+                        | qdb_types::TAG_CHAR
+                        | qdb_types::TAG_IPV4
+                );
+            if !is_text {
+                let value_type = geohash_bits
+                    .map(geohash_type_name)
+                    .unwrap_or_else(|| qdb_types::type_name(value_tag).to_string());
+                let pattern_type = match pattern {
+                    ConcatArg::Literal(Scalar::Text(text)) if text.chars().count() <= 1 => "CHAR",
+                    ConcatArg::Literal(Scalar::Text(_)) => "STRING",
+                    ConcatArg::Literal(Scalar::Null) => "NULL",
+                    ConcatArg::Literal(value) => qdb_types::type_name(literal_tag(value)),
+                    ConcatArg::Column(name) => table
+                        .column_index(name)
+                        .map(|index| qdb_types::type_name(table.meta.columns[index].tag))
+                        .unwrap_or("UNKNOWN"),
+                };
+                return Err(Error::at(
+                    format!(
+                        "there is no matching operator `{}` with the argument types: {} ~ {}",
+                        if *negated { "!~" } else { "~" },
+                        value_type,
+                        pattern_type
+                    ),
+                    *operator_position,
+                ));
+            }
+            if let ConcatArg::Literal(Scalar::Text(pattern)) = pattern {
+                compile_regex(pattern).map_err(|error| {
+                    let position = regex_error_position(pattern, *position, &error.message);
+                    Error::at(error.message, position)
+                })?;
+            } else if matches!(pattern, ConcatArg::Literal(_))
+                && !matches!(pattern, ConcatArg::Literal(Scalar::Null))
+            {
+                return Err(Error::new("regex operator requires a string pattern"));
+            }
+        }
+        Filter::LikeExpression {
+            label,
+            value,
+            pattern,
+            operator_position,
+            value_position,
+            case_insensitive,
+            negated,
+            ..
+        } => {
+            let resolved = resolve_proj(table, value).map_err(|error| {
+                if error.position.is_none() {
+                    Error::at(error.message, *value_position)
+                } else {
+                    error
+                }
+            })?;
+            let value_tag = match &resolved {
+                ResolvedProj::Column { index } => table.meta.columns[*index].tag,
+                _ => resolved.expr_tag(),
+            };
+            let geohash_bits = match &resolved {
+                ResolvedProj::MakeGeohash { bits, .. } => Some(*bits),
+                _ => None,
+            };
+            let is_text = geohash_bits.is_none()
+                && matches!(
+                    value_tag,
+                    qdb_types::TAG_STRING
+                        | qdb_types::TAG_SYMBOL
+                        | qdb_types::TAG_VARCHAR
+                        | qdb_types::TAG_CHAR
+                        | qdb_types::TAG_IPV4
+                );
+            if !is_text {
+                let value_type = geohash_bits
+                    .map(geohash_type_name)
+                    .unwrap_or_else(|| qdb_types::type_name(value_tag).to_string());
+                let pattern_type = match pattern {
+                    ConcatArg::Literal(Scalar::Text(text)) if text.chars().count() <= 1 => "CHAR",
+                    ConcatArg::Literal(Scalar::Text(_)) => "STRING",
+                    ConcatArg::Literal(Scalar::Null) => "NULL",
+                    ConcatArg::Literal(value) => qdb_types::type_name(literal_tag(value)),
+                    ConcatArg::Column(name) => table
+                        .column_index(name)
+                        .map(|index| qdb_types::type_name(table.meta.columns[index].tag))
+                        .unwrap_or("UNKNOWN"),
+                };
+                let operator = match (*case_insensitive, *negated) {
+                    (true, true) => "not ilike",
+                    (true, false) => "ilike",
+                    (false, true) => "not like",
+                    (false, false) => "like",
+                };
+                return Err(Error::at(
+                    format!(
+                        "there is no matching operator `{operator}` with the argument types: {} {operator} {}",
+                        value_type, pattern_type
+                    ),
+                    *operator_position,
+                ));
+            }
+            if let ConcatArg::Literal(Scalar::Text(pattern)) = pattern {
+                compile_ilike(pattern, *case_insensitive)?;
+            } else if matches!(pattern, ConcatArg::Literal(value) if !matches!(value, Scalar::Null))
+            {
+                return Err(Error::at(
+                    "LIKE pattern must be a string",
+                    *operator_position,
+                ));
+            } else if matches!(pattern, ConcatArg::Column(_)) {
+                let _ = label;
+            }
+        }
         Filter::Not(inner) => validate_filter_regex(table, inner)?,
         Filter::And(left, right) | Filter::Or(left, right) => {
             validate_filter_regex(table, left)?;
@@ -20071,6 +21540,49 @@ fn validate_filter_regex(table: &Table, filter: &Filter) -> Result<(), Error> {
         _ => {}
     }
     Ok(())
+}
+
+fn call_argument_position(call: &str, argument: usize) -> Option<usize> {
+    let bytes = call.as_bytes();
+    let open = bytes.iter().position(|byte| *byte == b'(')?;
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut starts = Vec::new();
+    let mut start = open + 1;
+    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    starts.push(start);
+    let mut index = open + 1;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(quote_byte) = quote {
+            if byte == quote_byte {
+                if bytes.get(index + 1) == Some(&quote_byte) {
+                    index += 1;
+                } else {
+                    quote = None;
+                }
+            }
+        } else {
+            match byte {
+                b'\'' | b'"' => quote = Some(byte),
+                b'(' => depth += 1,
+                b')' if depth == 0 => return starts.get(argument).copied(),
+                b')' => depth -= 1,
+                b',' if depth == 0 => {
+                    let mut start = index + 1;
+                    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+                        start += 1;
+                    }
+                    starts.push(start);
+                }
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+    starts.get(argument).copied()
 }
 
 fn eval_filter_operand(
@@ -24552,6 +26064,951 @@ mod tests {
     }
 
     #[test]
+    fn trim_preserves_non_space_ascii_controls() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("ltrim", "\rX", "\rX"),
+            ("rtrim", "X\r", "X\r"),
+            ("trim", "\nX\n", "\nX\n"),
+            ("trim", "\u{000c}X\u{000c}", "\u{000c}X\u{000c}"),
+            ("trim", "\u{000b}X\u{000b}", "\u{000b}X\u{000b}"),
+        ];
+        for (function, input, expected) in cases {
+            let sql = format!(
+                "SELECT {function}('{input}') AS value FROM sensors GROUP BY {function}('{input}')"
+            );
+            let result = execute(&sensors, &sql).unwrap();
+            assert_eq!(
+                result.rows,
+                vec![vec![Scalar::Text(expected.to_string())]],
+                "{sql:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn trim_character_boundaries_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let mut codepoints: Vec<u32> = (0x00..=0x20).collect();
+        codepoints.extend([
+            0x7f, 0x85, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006,
+            0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff,
+        ]);
+        for codepoint in codepoints {
+            let character = char::from_u32(codepoint).unwrap();
+            let literal = character.to_string().replace('\'', "''");
+            let sql = format!(
+                "SELECT trim('{literal}X{literal}') AS value FROM sensors GROUP BY trim('{literal}X{literal}')"
+            );
+            let expected = if codepoint == 0x20 {
+                "X".to_string()
+            } else {
+                format!("{character}X{character}")
+            };
+            let result = execute(&sensors, &sql).unwrap();
+            assert_eq!(
+                result.rows,
+                vec![vec![Scalar::Text(expected)]],
+                "U+{codepoint:04X}: {sql:?}"
+            );
+            for (function, expected) in [
+                (
+                    "ltrim",
+                    if codepoint == 0x20 {
+                        format!("X{character}")
+                    } else {
+                        format!("{character}X{character}")
+                    },
+                ),
+                (
+                    "rtrim",
+                    if codepoint == 0x20 {
+                        format!("{character}X")
+                    } else {
+                        format!("{character}X{character}")
+                    },
+                ),
+            ] {
+                let sql = format!(
+                    "SELECT {function}('{literal}X{literal}') AS value FROM sensors GROUP BY {function}('{literal}X{literal}')"
+                );
+                let result = execute(&sensors, &sql).unwrap();
+                assert_eq!(
+                    result.rows,
+                    vec![vec![Scalar::Text(expected)]],
+                    "U+{codepoint:04X}: {sql:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn trim_preserves_surrogate_pairs_and_combining_marks() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("trim", "😀", "😀"),
+            ("ltrim", "😀", "😀 "),
+            ("rtrim", "😀", " 😀"),
+            ("trim", "e\u{0301}", "e\u{0301}"),
+            ("ltrim", "e\u{0301}", "e\u{0301} "),
+            ("rtrim", "e\u{0301}", " e\u{0301}"),
+        ];
+        for (function, sequence, expected) in cases {
+            let input = format!(" {sequence} ");
+            let sql = format!(
+                "SELECT {function}('{input}') AS value FROM sensors GROUP BY {function}('{input}')"
+            );
+            let result = execute(&sensors, &sql).unwrap();
+            assert_eq!(
+                result.rows,
+                vec![vec![Scalar::Text(expected.to_string())]],
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn trim_preserves_emoji_zwj_and_variation_sequences() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let sequences = ["👨‍👩‍👧‍👦", "🏳️‍🌈", "☀️"];
+        for sequence in sequences {
+            for (function, expected) in [
+                ("trim", sequence.to_string()),
+                ("ltrim", format!("{sequence} ")),
+                ("rtrim", format!(" {sequence}")),
+            ] {
+                let input = format!(" {sequence} ");
+                let sql = format!(
+                    "SELECT {function}('{input}') AS value FROM sensors GROUP BY {function}('{input}')"
+                );
+                let result = execute(&sensors, &sql).unwrap();
+                assert_eq!(result.rows, vec![vec![Scalar::Text(expected)]], "{sql}");
+            }
+        }
+    }
+
+    #[test]
+    fn trim_preserves_keycaps_and_emoji_skin_modifiers() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let sequences = ["1️⃣", "👍🏽", "✌️🏽"];
+        for sequence in sequences {
+            for (function, expected) in [
+                ("trim", sequence.to_string()),
+                ("ltrim", format!("{sequence} ")),
+                ("rtrim", format!(" {sequence}")),
+            ] {
+                let input = format!(" {sequence} ");
+                let sql = format!(
+                    "SELECT {function}('{input}') AS value FROM sensors GROUP BY {function}('{input}')"
+                );
+                let result = execute(&sensors, &sql).unwrap();
+                assert_eq!(result.rows, vec![vec![Scalar::Text(expected)]], "{sql}");
+            }
+        }
+    }
+
+    #[test]
+    fn trim_preserves_regional_and_tag_flags() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let tagged_flag = "🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}";
+        let sequences = ["🇺🇸", "🇳🇿", tagged_flag];
+        for sequence in sequences {
+            for (function, expected) in [
+                ("trim", sequence.to_string()),
+                ("ltrim", format!("{sequence} ")),
+                ("rtrim", format!(" {sequence}")),
+            ] {
+                let input = format!(" {sequence} ");
+                let sql = format!(
+                    "SELECT {function}('{input}') AS value FROM sensors GROUP BY {function}('{input}')"
+                );
+                let result = execute(&sensors, &sql).unwrap();
+                assert_eq!(result.rows, vec![vec![Scalar::Text(expected)]], "{sql}");
+            }
+        }
+    }
+
+    #[test]
+    fn trim_preserves_varied_skin_tones_and_additional_flags() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let scotland_flag = "🏴\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}";
+        let sequences = ["👍🏻", "👍🏿", "👋🏽", "🏃🏾‍♀️", "🇨🇦", "🇯🇵", "🇺🇳", scotland_flag];
+        for sequence in sequences {
+            for (function, expected) in [
+                ("trim", sequence.to_string()),
+                ("ltrim", format!("{sequence} ")),
+                ("rtrim", format!(" {sequence}")),
+            ] {
+                let input = format!(" {sequence} ");
+                let sql = format!(
+                    "SELECT {function}('{input}') AS value FROM sensors GROUP BY {function}('{input}')"
+                );
+                let result = execute(&sensors, &sql).unwrap();
+                assert_eq!(result.rows, vec![vec![Scalar::Text(expected)]], "{sql}");
+            }
+        }
+    }
+
+    #[test]
+    fn trim_functions_match_unicode_null_and_empty_column_fixture() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/trim-cases");
+        let cases = [
+            (
+                "trim",
+                vec![
+                    Scalar::Text("café".into()),
+                    Scalar::Text("🇨🇦".into()),
+                    Scalar::Text("é".into()),
+                    Scalar::Text(String::new()),
+                    Scalar::Text(String::new()),
+                    Scalar::Null,
+                    Scalar::Text("\tpad\t".into()),
+                    Scalar::Text("\u{2003}wide\u{2003}".into()),
+                ],
+            ),
+            (
+                "ltrim",
+                vec![
+                    Scalar::Text("café  ".into()),
+                    Scalar::Text("🇨🇦  ".into()),
+                    Scalar::Text("é  ".into()),
+                    Scalar::Text(String::new()),
+                    Scalar::Text(String::new()),
+                    Scalar::Null,
+                    Scalar::Text("\tpad\t ".into()),
+                    Scalar::Text("\u{2003}wide\u{2003} ".into()),
+                ],
+            ),
+            (
+                "rtrim",
+                vec![
+                    Scalar::Text("  café".into()),
+                    Scalar::Text("  🇨🇦".into()),
+                    Scalar::Text("  é".into()),
+                    Scalar::Text(String::new()),
+                    Scalar::Text(String::new()),
+                    Scalar::Null,
+                    Scalar::Text(" \tpad\t".into()),
+                    Scalar::Text(" \u{2003}wide\u{2003}".into()),
+                ],
+            ),
+        ];
+        for (function, values) in cases {
+            let sql = format!("SELECT {function}(txt) AS value FROM trim_cases ORDER BY ts");
+            let result = execute(&fixture, &sql).unwrap();
+            assert_eq!(result.columns, vec!["value"], "{sql}");
+            assert_eq!(
+                result.rows,
+                values
+                    .into_iter()
+                    .map(|value| vec![value])
+                    .collect::<Vec<_>>(),
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn where_trim_functions_match_unicode_null_and_empty_column_fixture() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/trim-cases");
+        let cases = [
+            ("trim(txt) = 'café'", vec![0]),
+            ("trim(txt) = '🇨🇦'", vec![1]),
+            ("trim(txt) = 'é'", vec![2]),
+            ("trim(txt) = ''", vec![3, 4]),
+            ("trim(txt) = NULL", vec![5]),
+            ("trim(txt) != NULL", vec![0, 1, 2, 3, 4, 6, 7]),
+            ("ltrim(txt) = 'café  '", vec![0]),
+            ("ltrim(txt) = ''", vec![3, 4]),
+            ("ltrim(txt) = NULL", vec![5]),
+            ("rtrim(txt) = '  🇨🇦'", vec![1]),
+            ("rtrim(txt) = ''", vec![3, 4]),
+            ("rtrim(txt) = NULL", vec![5]),
+        ];
+        for (predicate, selected) in cases {
+            let sql = format!("SELECT ts, txt FROM trim_cases WHERE {predicate} ORDER BY ts");
+            let result = execute(&fixture, &sql).unwrap();
+            assert_eq!(result.columns, vec!["ts", "txt"], "{sql}");
+            let expected = selected
+                .into_iter()
+                .map(|row| {
+                    vec![
+                        Scalar::Timestamp(1_577_836_800_000_000 + row * 1_000_000),
+                        match row {
+                            0 => Scalar::Text("  café  ".into()),
+                            1 => Scalar::Text("  🇨🇦  ".into()),
+                            2 => Scalar::Text("  é  ".into()),
+                            3 => Scalar::Text("   ".into()),
+                            4 => Scalar::Text(String::new()),
+                            5 => Scalar::Null,
+                            6 => Scalar::Text(" \tpad\t ".into()),
+                            7 => Scalar::Text(" \u{2003}wide\u{2003} ".into()),
+                            _ => unreachable!(),
+                        },
+                    ]
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(result.rows, expected, "{sql}");
+        }
+
+        for (predicate, message) in [
+            (
+                "trim(txt) = 1",
+                "inconvertible value: `café` [STRING -> INT]",
+            ),
+            (
+                "trim(txt) > 1",
+                "inconvertible value: `café` [STRING -> INT]",
+            ),
+        ] {
+            let sql = format!("SELECT ts, txt FROM trim_cases WHERE {predicate} ORDER BY ts");
+            let error = execute(&fixture, &sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(0), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_text_scalar_functions_match_unicode_null_and_empty_fixture() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/trim-cases");
+        let source_rows = [
+            Scalar::Text("  café  ".into()),
+            Scalar::Text("  🇨🇦  ".into()),
+            Scalar::Text("  é  ".into()),
+            Scalar::Text("   ".into()),
+            Scalar::Text(String::new()),
+            Scalar::Null,
+            Scalar::Text(" \tpad\t ".into()),
+            Scalar::Text(" \u{2003}wide\u{2003} ".into()),
+        ];
+        let cases = [
+            (
+                "SELECT ts, txt FROM trim_cases WHERE lower(txt) = '  café  ' ORDER BY ts",
+                vec![0],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE upper(txt) = '  CAFÉ  ' ORDER BY ts",
+                vec![0],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE replace(txt, ' ', '') = '🇨🇦' ORDER BY ts",
+                vec![1],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE concat(txt, '!') = '!' ORDER BY ts",
+                vec![4, 5],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE lower(txt) = NULL ORDER BY ts",
+                vec![5],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE lower(txt) != NULL ORDER BY ts",
+                vec![0, 1, 2, 3, 4, 6, 7],
+            ),
+        ];
+        for (sql, selected) in cases {
+            let result = execute(&fixture, sql).unwrap();
+            assert_eq!(result.columns, vec!["ts", "txt"], "{sql}");
+            let expected = selected
+                .into_iter()
+                .map(|row| {
+                    vec![
+                        Scalar::Timestamp(1_577_836_800_000_000 + row * 1_000_000),
+                        source_rows[row as usize].clone(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(result.rows, expected, "{sql}");
+        }
+
+        for (sql, message) in [
+            (
+                "SELECT ts, txt FROM trim_cases WHERE lower(txt) = 1 ORDER BY ts",
+                "inconvertible value: `  café  ` [STRING -> INT]",
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE concat(txt, '!') = 1 ORDER BY ts",
+                "inconvertible value: `  café  !` [STRING -> INT]",
+            ),
+        ] {
+            let error = execute(&fixture, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(0), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_text_scalar_is_null_predicates_match_questdb() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/trim-cases");
+        let source_rows = [
+            Scalar::Text("  café  ".into()),
+            Scalar::Text("  🇨🇦  ".into()),
+            Scalar::Text("  é  ".into()),
+            Scalar::Text("   ".into()),
+            Scalar::Text(String::new()),
+            Scalar::Null,
+            Scalar::Text(" \tpad\t ".into()),
+            Scalar::Text(" \u{2003}wide\u{2003} ".into()),
+        ];
+        let cases = [
+            (
+                "SELECT ts, txt FROM trim_cases WHERE trim(txt) IS NULL ORDER BY ts",
+                vec![5],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE trim(txt) IS NOT NULL ORDER BY ts",
+                vec![0, 1, 2, 3, 4, 6, 7],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE lower(txt) IS NULL ORDER BY ts",
+                vec![5],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE lower(txt) IS NOT NULL ORDER BY ts",
+                vec![0, 1, 2, 3, 4, 6, 7],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE concat(txt, '!') IS NULL ORDER BY ts",
+                vec![],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE concat(txt, '!') IS NOT NULL ORDER BY ts",
+                vec![0, 1, 2, 3, 4, 5, 6, 7],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE trim(txt) IS NULL OR trim(txt) = '' ORDER BY ts",
+                vec![3, 4, 5],
+            ),
+        ];
+        for (sql, selected) in cases {
+            let result = execute(&fixture, sql).unwrap();
+            assert_eq!(result.columns, vec!["ts", "txt"], "{sql}");
+            let expected = selected
+                .into_iter()
+                .map(|row| {
+                    vec![
+                        Scalar::Timestamp(1_577_836_800_000_000 + row * 1_000_000),
+                        source_rows[row as usize].clone(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(result.rows, expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_is_null_handles_arithmetic_and_parenthesized_projections() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT ts, id FROM sensors WHERE id + 1 IS NULL ORDER BY ts",
+                "ts\tid\n2020-01-02T03:04:07.000000Z\tNULL\n",
+            ),
+            (
+                "SELECT ts, id FROM sensors WHERE (id + 1) IS NULL ORDER BY ts",
+                "ts\tid\n2020-01-02T03:04:07.000000Z\tNULL\n",
+            ),
+            (
+                "SELECT ts, id FROM sensors WHERE ((id + 1)) IS NOT NULL ORDER BY ts",
+                "ts\tid\n2020-01-02T03:04:05.000000Z\t1\n2020-01-02T03:04:06.000000Z\t2\n2020-01-02T03:04:08.000000Z\t-1\n",
+            ),
+            (
+                "SELECT ts, flags FROM sensors WHERE (flags + 1) IS NULL ORDER BY ts",
+                "ts\tflags\n2020-01-02T03:04:06.000000Z\tNULL\n",
+            ),
+            (
+                "SELECT ts, note FROM sensors WHERE (trim(note)) IS NULL ORDER BY ts",
+                "ts\tnote\n2020-01-02T03:04:06.000000Z\tNULL\n",
+            ),
+            (
+                "SELECT ts, note FROM sensors WHERE ((lower(note))) IS NOT NULL ORDER BY ts",
+                "ts\tnote\n2020-01-02T03:04:05.000000Z\talpha\n2020-01-02T03:04:07.000000Z\t\n2020-01-02T03:04:08.000000Z\tβeta\n",
+            ),
+            (
+                "SELECT ts, id FROM sensors WHERE (id + 1) IS NULL OR id = 1 ORDER BY ts",
+                "ts\tid\n2020-01-02T03:04:05.000000Z\t1\n2020-01-02T03:04:07.000000Z\tNULL\n",
+            ),
+            (
+                "SELECT ts, id FROM sensors WHERE (id + 1) IS NOT NULL AND id > 0 ORDER BY ts",
+                "ts\tid\n2020-01-02T03:04:05.000000Z\t1\n2020-01-02T03:04:06.000000Z\t2\n",
+            ),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_text_scalar_in_lists_match_questdb() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/trim-cases");
+        let source_rows = [
+            Scalar::Text("  café  ".into()),
+            Scalar::Text("  🇨🇦  ".into()),
+            Scalar::Text("  é  ".into()),
+            Scalar::Text("   ".into()),
+            Scalar::Text(String::new()),
+            Scalar::Null,
+            Scalar::Text(" \tpad\t ".into()),
+            Scalar::Text(" \u{2003}wide\u{2003} ".into()),
+        ];
+        let cases = [
+            (
+                "SELECT ts, txt FROM trim_cases WHERE trim(txt) IN ('café', '🇨🇦') ORDER BY ts",
+                vec![0, 1],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE trim(txt) IN ('', 'é') ORDER BY ts",
+                vec![2, 3, 4],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE lower(txt) IN ('  café  ', '  🇨🇦  ') ORDER BY ts",
+                vec![0, 1],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE lower(txt) IN ('café', NULL) ORDER BY ts",
+                vec![5],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE trim(txt) NOT IN ('café', '🇨🇦') ORDER BY ts",
+                vec![2, 3, 4, 5, 6, 7],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE concat(txt, '!') IN ('!') ORDER BY ts",
+                vec![4, 5],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE trim(txt) NOT IN ('café', '🇨🇦', NULL) ORDER BY ts",
+                vec![2, 3, 4, 6, 7],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE ((lower(txt))) IN ('  café  ', '  🇨🇦  ') ORDER BY ts",
+                vec![0, 1],
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE trim(txt) IN ('café') OR lower(txt) IN ('  🇨🇦  ') ORDER BY ts",
+                vec![0, 1],
+            ),
+        ];
+        for (sql, selected) in cases {
+            let result = execute(&fixture, sql).unwrap();
+            assert_eq!(result.columns, vec!["ts", "txt"], "{sql}");
+            let expected = selected
+                .into_iter()
+                .map(|row| {
+                    vec![
+                        Scalar::Timestamp(1_577_836_800_000_000 + row * 1_000_000),
+                        source_rows[row as usize].clone(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(result.rows, expected, "{sql}");
+        }
+
+        for (sql, message, position) in [
+            (
+                "SELECT ts, txt FROM trim_cases WHERE trim(txt) IN () ORDER BY ts",
+                "too few arguments for 'in'",
+                47,
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE trim(txt) NOT IN () ORDER BY ts",
+                "too few arguments for 'in'",
+                51,
+            ),
+            (
+                "SELECT ts, txt FROM trim_cases WHERE lower(txt) IN (1) ORDER BY ts",
+                "cannot compare STRING with type INT",
+                52,
+            ),
+        ] {
+            let error = execute(&fixture, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_numeric_scalar_and_arithmetic_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            (
+                "SELECT ts, flags FROM sensors WHERE abs(flags) IN (0, 10, 42) ORDER BY ts",
+                "ts\tflags\n2020-01-02T03:04:05.000000Z\t10\n2020-01-02T03:04:07.000000Z\t0\n2020-01-02T03:04:08.000000Z\t42\n",
+            ),
+            (
+                "SELECT ts, flags FROM sensors WHERE (flags + 1) IN (1, 11, 43) ORDER BY ts",
+                "ts\tflags\n2020-01-02T03:04:05.000000Z\t10\n2020-01-02T03:04:07.000000Z\t0\n2020-01-02T03:04:08.000000Z\t42\n",
+            ),
+            (
+                "SELECT ts, id FROM sensors WHERE (id + 1) IN (0, 2, 3) ORDER BY ts",
+                "ts\tid\n2020-01-02T03:04:05.000000Z\t1\n2020-01-02T03:04:06.000000Z\t2\n2020-01-02T03:04:08.000000Z\t-1\n",
+            ),
+            (
+                "SELECT ts, flags FROM sensors WHERE abs(flags) NOT IN (10) ORDER BY ts",
+                "ts\tflags\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\t0\n2020-01-02T03:04:08.000000Z\t42\n",
+            ),
+            (
+                "SELECT ts, flags FROM sensors WHERE abs(flags) IN (10, NULL) ORDER BY ts",
+                "ts\tflags\n2020-01-02T03:04:05.000000Z\t10\n2020-01-02T03:04:06.000000Z\tNULL\n",
+            ),
+            (
+                "SELECT ts, flags FROM sensors WHERE abs(flags) IN ('10') ORDER BY ts",
+                "ts\tflags\n2020-01-02T03:04:05.000000Z\t10\n",
+            ),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+
+        for (sql, message, position) in [
+            (
+                "SELECT ts, flags FROM sensors WHERE abs(flags) IN (10.0) ORDER BY ts",
+                "cannot compare LONG with type DOUBLE",
+                51,
+            ),
+            (
+                "SELECT ts, flags FROM sensors WHERE abs(flags) IN ('x') ORDER BY ts",
+                "cannot compare LONG with type CHAR",
+                51,
+            ),
+            (
+                "SELECT ts, flags FROM sensors WHERE abs(flags) IN ('10x') ORDER BY ts",
+                "invalid LONG value [10x]",
+                51,
+            ),
+            (
+                "SELECT ts, flags FROM sensors WHERE abs(flags) IN () ORDER BY ts",
+                "too few arguments for 'in'",
+                47,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_float_double_scalar_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT ts, reading FROM sensors WHERE abs(reading) IN (0.0, 1.5) ORDER BY ts", "ts\treading\n2020-01-02T03:04:05.000000Z\t1.5\n2020-01-02T03:04:07.000000Z\t0.0\n2020-01-02T03:04:08.000000Z\t-0.0\n"),
+            ("SELECT ts, reading FROM sensors WHERE reading IN (-0.0) ORDER BY ts", "ts\treading\n2020-01-02T03:04:07.000000Z\t0.0\n2020-01-02T03:04:08.000000Z\t-0.0\n"),
+            ("SELECT ts, score FROM sensors WHERE score IN (1.25, 0) ORDER BY ts", "ts\tscore\n2020-01-02T03:04:05.000000Z\t1.25\n2020-01-02T03:04:07.000000Z\t0.0\n"),
+            ("SELECT ts, score FROM sensors WHERE score NOT IN (1.25) ORDER BY ts", "ts\tscore\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\t0.0\n2020-01-02T03:04:08.000000Z\t-1.5\n"),
+            ("SELECT ts, reading FROM sensors WHERE abs(reading) IN (1.5, NULL) ORDER BY ts", "ts\treading\n2020-01-02T03:04:05.000000Z\t1.5\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts, reading FROM sensors WHERE sqrt(reading) IN (0.0) ORDER BY ts", "ts\treading\n2020-01-02T03:04:07.000000Z\t0.0\n2020-01-02T03:04:08.000000Z\t-0.0\n"),
+            ("SELECT ts, reading FROM sensors WHERE abs(reading) IN ('1.5') ORDER BY ts", "ts\treading\n2020-01-02T03:04:05.000000Z\t1.5\n"),
+            ("SELECT ts, reading FROM sensors WHERE abs(reading) IN ('NaN') ORDER BY ts", "ts\treading\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts, reading FROM sensors WHERE abs(reading) NOT IN ('NaN') ORDER BY ts", "ts\treading\n2020-01-02T03:04:05.000000Z\t1.5\n2020-01-02T03:04:07.000000Z\t0.0\n2020-01-02T03:04:08.000000Z\t-0.0\n"),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message) in [
+            (
+                "SELECT ts FROM sensors WHERE abs(reading) IN (true) ORDER BY ts",
+                "cannot compare DOUBLE with type BOOLEAN",
+            ),
+            (
+                "SELECT ts FROM sensors WHERE abs(reading) IN ('x') ORDER BY ts",
+                "cannot compare DOUBLE with type CHAR",
+            ),
+            (
+                "SELECT ts FROM sensors WHERE abs(reading) IN ('1.5x') ORDER BY ts",
+                "invalid DOUBLE value [1.5x]",
+            ),
+            (
+                "SELECT ts FROM sensors WHERE abs(reading) IN ('1') ORDER BY ts",
+                "cannot compare DOUBLE with type CHAR",
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(46), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_boolean_in_lists_match_questdb_errors() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, message, position) in [
+            (
+                "SELECT ts, ok FROM sensors WHERE ok IN (true) ORDER BY ts",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                36,
+            ),
+            (
+                "SELECT ts, ok FROM sensors WHERE ok NOT IN (false) ORDER BY ts",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                40,
+            ),
+            (
+                "SELECT ts, ok FROM sensors WHERE NOT ok IN (false) ORDER BY ts",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                40,
+            ),
+            (
+                "SELECT ts, ok FROM sensors WHERE ok IN (NULL) ORDER BY ts",
+                "there is no matching operator `in` with the argument types: BOOLEAN in NULL",
+                36,
+            ),
+            (
+                "SELECT ts, ok FROM sensors WHERE ok IN (true, NULL) ORDER BY ts",
+                "there is no matching operator `in` with the argument type: BOOLEAN",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ok IN (true, false) ORDER BY ts",
+                "there is no matching operator `in` with the argument type: BOOLEAN",
+                32,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE starts_with(note, 'a') IN (false) ORDER BY ts",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                52,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE starts_with(note, 'a') NOT IN (true) ORDER BY ts",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                56,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ok IN (1) ORDER BY ts",
+                "there is no matching operator `in` with the argument types: BOOLEAN in INT",
+                32,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ok IN ('true') ORDER BY ts",
+                "there is no matching operator `in` with the argument types: BOOLEAN in STRING",
+                32,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ok IN () ORDER BY ts",
+                "too few arguments for 'in'",
+                32,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ok NOT IN () ORDER BY ts",
+                "too few arguments for 'in'",
+                36,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_date_timestamp_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT ts, day FROM sensors WHERE day IN ('2020-01-02') ORDER BY ts", "ts\tday\n2020-01-02T03:04:05.000000Z\t2020-01-02T00:00:00.000Z\n"),
+            ("SELECT ts, day FROM sensors WHERE day IN ('1970-01-01', '2020-06-15T12:30:00Z') ORDER BY ts", "ts\tday\n2020-01-02T03:04:07.000000Z\t1970-01-01T00:00:00.000Z\n2020-01-02T03:04:08.000000Z\t2020-06-15T12:30:00.000Z\n"),
+            ("SELECT ts, day FROM sensors WHERE day NOT IN ('2020-01-02') ORDER BY ts", "ts\tday\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\t1970-01-01T00:00:00.000Z\n2020-01-02T03:04:08.000000Z\t2020-06-15T12:30:00.000Z\n"),
+            ("SELECT ts, day FROM sensors WHERE day IN (1577923200000000) ORDER BY ts", "ts\tday\n2020-01-02T03:04:05.000000Z\t2020-01-02T00:00:00.000Z\n"),
+            ("SELECT ts, day FROM sensors WHERE day IN ('2020-01-02', NULL) ORDER BY ts", "ts\tday\n2020-01-02T03:04:05.000000Z\t2020-01-02T00:00:00.000Z\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts FROM sensors WHERE ts IN ('2020-01-02T03:04:05Z') ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE ts IN (1577934245000000) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE ts NOT IN (NULL) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:06.000000Z\n2020-01-02T03:04:07.000000Z\n2020-01-02T03:04:08.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE ts IN (NULL) ORDER BY ts", "ts\n"),
+            ("SELECT ts FROM sensors WHERE dateadd('d', 0, ts) IN ('2020-01-02T03:04:05Z') ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors WHERE day IN ('not-a-date') ORDER BY ts",
+                "Invalid date: not-a-date",
+                37,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE day IN ('x') ORDER BY ts",
+                "cannot compare TIMESTAMP with type CHAR",
+                37,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE day IN (true) ORDER BY ts",
+                "cannot compare TIMESTAMP with type BOOLEAN",
+                37,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE day IN (1.5) ORDER BY ts",
+                "cannot compare TIMESTAMP with type DOUBLE",
+                37,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ts IN ('not-a-time') ORDER BY ts",
+                "Invalid date: not-a-time",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE ts IN ('1577934245000000') ORDER BY ts",
+                "Invalid date: 1577934245000000",
+                36,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_geohash_in_lists_match_questdb_errors() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, message, position) in [
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 5) IN ('s') ORDER BY ts", "there is no matching operator `in` with the argument types: GEOHASH(1c) in CHAR", 60),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 5) NOT IN ('s') ORDER BY ts", "there is no matching operator `in` with the argument types: GEOHASH(1c) in CHAR", 64),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 5) IN ('not-a-hash') ORDER BY ts", "there is no matching operator `in` with the argument types: GEOHASH(1c) in STRING", 60),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 5) IN ('s', '0') ORDER BY ts", "there is no matching operator `in` with the argument type: GEOHASH(1c)", 60),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 5) IN (NULL) ORDER BY ts", "there is no matching operator `in` with the argument types: GEOHASH(1c) in NULL", 60),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 5) IN ('s', NULL) ORDER BY ts", "there is no matching operator `in` with the argument type: GEOHASH(1c)", 60),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 5) IN (1) ORDER BY ts", "there is no matching operator `in` with the argument types: GEOHASH(1c) in INT", 60),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 5) IN (true) ORDER BY ts", "there is no matching operator `in` with the argument types: GEOHASH(1c) in BOOLEAN", 60),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 5) IN (1.5) ORDER BY ts", "there is no matching operator `in` with the argument types: GEOHASH(1c) in DOUBLE", 60),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 8) IN ('not-a-hash') ORDER BY ts", "there is no matching operator `in` with the argument types: GEOHASH(8b) in STRING", 60),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 10) IN (NULL) ORDER BY ts", "there is no matching operator `in` with the argument types: GEOHASH(2c) in NULL", 61),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 5) IN () ORDER BY ts", "too few arguments for 'in'", 60),
+            ("SELECT ts FROM sensors WHERE make_geohash(reading, 41.0, 5) NOT IN () ORDER BY ts", "too few arguments for 'in'", 64),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_uuid_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT ts, to_uuid(id, id) FROM sensors WHERE to_uuid(id, id) IN ('00000000-0000-0001-0000-000000000001') ORDER BY ts", "ts\tto_uuid(id, id)\n2020-01-02T03:04:05.000000Z\t00000000-0000-0001-0000-000000000001\n"),
+            ("SELECT ts FROM sensors WHERE to_uuid(id,id) IN ('00000000-0000-0001-0000-000000000001', '00000000-0000-0002-0000-000000000002') ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:06.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE to_uuid(id,id) IN ('00000000-0000-0001-0000-000000000001', '00000000-0000-0001-0000-000000000001') ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE to_uuid(id,id) NOT IN ('00000000-0000-0001-0000-000000000001') ORDER BY ts", "ts\n2020-01-02T03:04:06.000000Z\n2020-01-02T03:04:07.000000Z\n2020-01-02T03:04:08.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE to_uuid(id,id) IN (NULL) ORDER BY ts", "ts\n2020-01-02T03:04:07.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE to_uuid(id,id) IN ('00000000-0000-0001-0000-000000000001', NULL) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:07.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE to_uuid(id,id) NOT IN (NULL) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:06.000000Z\n2020-01-02T03:04:08.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE to_uuid(id,id) IN ('FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF') ORDER BY ts", "ts\n2020-01-02T03:04:08.000000Z\n"),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors WHERE to_uuid(id,id) IN ('bad-uuid') ORDER BY ts",
+                "invalid UUID value [bad-uuid]",
+                48,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE to_uuid(id,id) IN ('x') ORDER BY ts",
+                "cannot compare UUID with type CHAR",
+                48,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE to_uuid(id,id) IN (1) ORDER BY ts",
+                "cannot compare UUID with type INT",
+                48,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE to_uuid(id,id) IN (true) ORDER BY ts",
+                "cannot compare UUID with type BOOLEAN",
+                48,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE to_uuid(id,id) IN (1.5) ORDER BY ts",
+                "cannot compare UUID with type DOUBLE",
+                48,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE to_uuid(id,id) IN () ORDER BY ts",
+                "too few arguments for 'in'",
+                44,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE to_uuid(id,id) NOT IN () ORDER BY ts",
+                "too few arguments for 'in'",
+                48,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn where_ipv4_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let cases = [
+            ("SELECT ts, netmask(tag) FROM sensors WHERE netmask(tag) IN ('255.255.255.255') ORDER BY ts", "ts\tnetmask(tag)\n2020-01-02T03:04:05.000000Z\t255.255.255.255\n2020-01-02T03:04:07.000000Z\t255.255.255.255\n2020-01-02T03:04:08.000000Z\t255.255.255.255\n"),
+            ("SELECT ts FROM sensors WHERE netmask(tag) IN ('255.255.255.0') ORDER BY ts", "ts\n"),
+            ("SELECT ts FROM sensors WHERE netmask(tag) NOT IN ('255.255.255.255') ORDER BY ts", "ts\n2020-01-02T03:04:06.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE netmask(tag) IN (NULL) ORDER BY ts", "ts\n2020-01-02T03:04:06.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE netmask(tag) IN ('255.255.255.255', NULL) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:06.000000Z\n2020-01-02T03:04:07.000000Z\n2020-01-02T03:04:08.000000Z\n"),
+            ("SELECT ts FROM sensors WHERE netmask(tag) NOT IN (NULL) ORDER BY ts", "ts\n2020-01-02T03:04:05.000000Z\n2020-01-02T03:04:07.000000Z\n2020-01-02T03:04:08.000000Z\n"),
+        ];
+        for (sql, expected) in cases {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors WHERE netmask(tag) IN ('bad-ip') ORDER BY ts",
+                "invalid IPv4 format: bad-ip",
+                46,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE netmask(tag) IN ('x') ORDER BY ts",
+                "cannot compare IPv4 with type CHAR",
+                46,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE netmask(tag) IN (1) ORDER BY ts",
+                "cannot compare IPv4 with type INT",
+                46,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE netmask(tag) IN (1.5) ORDER BY ts",
+                "cannot compare IPv4 with type DOUBLE",
+                46,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE netmask(tag) IN (true) ORDER BY ts",
+                "cannot compare IPv4 with type BOOLEAN",
+                46,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE netmask(tag) IN () ORDER BY ts",
+                "too few arguments for 'in'",
+                42,
+            ),
+            (
+                "SELECT ts FROM sensors WHERE netmask(tag) NOT IN () ORDER BY ts",
+                "too few arguments for 'in'",
+                46,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
     fn replace_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
@@ -28217,6 +30674,16 @@ mod tests {
             assert_eq!(render_tsv(&result), expected, "{sql}");
         }
 
+        let error = execute(
+            &sensors,
+            "SELECT id FROM sensors WHERE make_geohash(reading,reading,4) LIKE '%' ORDER BY ts",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.message,
+            "there is no matching operator `like` with the argument types: GEOHASH(4b) like CHAR"
+        );
+
         let err = execute(&sensors, "SELECT id FROM sensors WHERE flags LIKE '1%'").unwrap_err();
         assert!(
             err.message.contains(
@@ -28572,6 +31039,33 @@ mod tests {
     }
 
     #[test]
+    fn scalar_like_and_geohash_comparisons_match_captured_exec() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let queries =
+            std::fs::read_to_string(sensors.join("where_scalar_like_queries.tsv")).unwrap();
+        for line in queries.lines() {
+            let (name, sql) = line.split_once('\t').unwrap();
+            let result = execute(&sensors, sql).unwrap_or_else(|error| panic!("{name}: {error}"));
+            let expected =
+                std::fs::read_to_string(sensors.join(format!("expected/where_{name}.tsv")))
+                    .unwrap();
+            assert_eq!(render_tsv(&result), expected, "{name}: {sql}");
+        }
+        let errors =
+            std::fs::read_to_string(sensors.join("where_scalar_like_errors_queries.tsv")).unwrap();
+        for line in errors.lines() {
+            let mut fields = line.splitn(4, '\t');
+            let name = fields.next().unwrap();
+            let sql = fields.next().unwrap();
+            let expected_message = fields.next().unwrap();
+            let expected_position = fields.next().unwrap().parse::<usize>().unwrap();
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, expected_message, "{name}: {sql}");
+            assert_eq!(error.position, Some(expected_position), "{name}: {sql}");
+        }
+    }
+
+    #[test]
     fn regex_java_word_boundaries_match_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let cases = std::fs::read_to_string(sensors.join("regex_java_word_boundaries_queries.tsv"))
@@ -28661,6 +31155,16 @@ mod tests {
     }
 
     #[test]
+    fn regex_java_grapheme_boundary_without_atom_matches_mixed_long_text() {
+        let text = format!("e\u{301}b\u{301}{}", "a".repeat(1024));
+        let regex = compile_regex(r"\b{g}a{512}\b{g}").unwrap();
+        let spans = regex.capture_spans(&text).unwrap();
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0][0], Some((6, 518)));
+        assert_eq!(spans[1][0], Some((518, 1030)));
+    }
+
+    #[test]
     fn regex_java_unanchored_grapheme_boundaries_match_long_text() {
         let text = "a".repeat(1024);
         let regex = compile_regex(r"\b{g}a{512}\b{g}").unwrap();
@@ -28707,6 +31211,216 @@ mod tests {
 
         let text = "a\u{301}a".repeat(128);
         let regex = compile_regex(r"\X{256}").unwrap();
+        let spans = regex.capture_spans(&text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, text.len())));
+    }
+
+    #[test]
+    fn regex_java_unicode_case_grapheme_ascii_fast_path_matches_long_text() {
+        let text = "aA".repeat(512);
+        let regex = compile_regex(r"(?iu)\X{1024}").unwrap();
+        let spans = regex.capture_spans(&text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, text.len())));
+    }
+
+    #[test]
+    fn regex_java_unicode_case_grapheme_inert_non_ascii_fast_path_matches_long_text() {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        let text = "e\u{301}A".repeat(512);
+        assert_eq!(text.graphemes(true).count(), 1024);
+        assert!(java_unicode_casefold_is_ascii_safe(&text));
+        assert!(!java_unicode_casefold_is_ascii_safe("K"));
+
+        let regex = compile_regex(r"(?iu)\X{1024}").unwrap();
+        let spans = regex.capture_spans(&text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, text.len())));
+    }
+
+    #[test]
+    fn regex_java_ascii_case_grapheme_suffix_guard_matches_longer_cluster() {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        let text = "a\u{301}A";
+        let graphemes = text.graphemes(true).collect::<Vec<_>>();
+        assert_eq!(graphemes.len(), 2);
+        let modes = JavaRegexModes {
+            case_insensitive: true,
+            ..JavaRegexModes::default()
+        };
+        let case_keys = java_grapheme_case_keys(text, modes).unwrap();
+        assert!(java_grapheme_atom_suffix_guards(text, &graphemes, &case_keys).is_some());
+
+        for pattern in [r"(?i)\X{2}", r"(?iu)\X{2}"] {
+            let regex = compile_regex(pattern).unwrap();
+            let spans = regex.capture_spans(text).unwrap();
+            assert_eq!(spans.len(), 1, "{pattern}");
+            assert_eq!(spans[0][0], Some((0, text.len())), "{pattern}");
+        }
+    }
+
+    #[test]
+    fn regex_java_unicode_case_grapheme_mapped_prefix_guard_matches_longer_cluster() {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        let text = "K\u{301}k";
+        let modes = JavaRegexModes {
+            case_insensitive: true,
+            unicode_case: true,
+            ..JavaRegexModes::default()
+        };
+        let case_keys = java_grapheme_case_keys(text, modes).unwrap();
+        assert_eq!(case_keys[&'K'], case_keys[&'k']);
+        let graphemes = text.graphemes(true).collect::<Vec<_>>();
+        assert_eq!(graphemes.len(), 2);
+        assert!(java_grapheme_atom_suffix_guards(text, &graphemes, &case_keys).is_some());
+
+        let regex = compile_regex(r"(?iu)\X{2}").unwrap();
+        let spans = regex.capture_spans(text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, text.len())));
+
+        let greek_text = "Σ\u{301}ς";
+        let greek_keys = java_grapheme_case_keys(greek_text, modes).unwrap();
+        assert_eq!(greek_keys[&'Σ'], greek_keys[&'ς']);
+        let greek_graphemes = greek_text.graphemes(true).collect::<Vec<_>>();
+        assert!(
+            java_grapheme_atom_suffix_guards(greek_text, &greek_graphemes, &greek_keys).is_some()
+        );
+        let regex = compile_regex(r"(?iu)\X{2}").unwrap();
+        let spans = regex.capture_spans(greek_text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, greek_text.len())));
+
+        for sample in ["Σςσ", "Ssſ", "Iiıİ"] {
+            let keys = java_grapheme_case_keys(sample, modes).unwrap();
+            let first_key = keys[&sample.chars().next().unwrap()];
+            assert!(sample.chars().all(|ch| keys[&ch] == first_key), "{sample}");
+        }
+        assert!(java_grapheme_case_keys("ßss", modes).is_none());
+    }
+
+    #[test]
+    fn regex_java_grapheme_suffix_guard_falls_back_on_valid_match_collision() {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        let text = "a\u{0345}aι";
+        let graphemes = text.graphemes(true).collect::<Vec<_>>();
+        assert_eq!(graphemes, ["a\u{0345}", "a", "ι"]);
+
+        let modes = JavaRegexModes {
+            case_insensitive: true,
+            unicode_case: true,
+            ..JavaRegexModes::default()
+        };
+        let case_keys = java_grapheme_case_keys(text, modes).unwrap();
+        assert_eq!(case_keys[&'\u{0345}'], case_keys[&'ι']);
+
+        // The partial match of `a` in the first grapheme would guard its
+        // U+0345 suffix. That guard also matches the valid iota after the
+        // standalone `a`, so the local-guard optimization must be abandoned.
+        let guards = java_grapheme_atom_suffix_guards(text, &graphemes, &case_keys).unwrap();
+        assert!(guards.suffixes.is_none());
+        assert!(guards.interior_boundaries[0].contains(&1));
+    }
+
+    #[test]
+    fn regex_java_grapheme_boundary_assertion_has_no_artificial_size_cap() {
+        let text = "a\u{301}".repeat(60_000);
+        let boundary = java_grapheme_boundary_assertion(&text).unwrap();
+        assert!(
+            boundary.len() > 1_048_576,
+            "boundary length was only {}",
+            boundary.len()
+        );
+    }
+
+    #[test]
+    fn regex_java_grapheme_prefix_trie_scales_past_work_budget() {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        let mut probe = String::with_capacity(8);
+        let mut marks = Vec::new();
+        for codepoint in 0x0300..=0xfe20 {
+            let Some(ch) = char::from_u32(codepoint) else {
+                continue;
+            };
+            probe.clear();
+            probe.push('a');
+            probe.push(ch);
+            if probe.graphemes(true).count() == 1 {
+                marks.push(ch);
+                if marks.len() == 700 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(marks.len(), 700);
+
+        let mut text = String::new();
+        for mark in &marks {
+            text.push('a');
+            text.push(*mark);
+        }
+        let graphemes = text.graphemes(true).collect::<Vec<_>>();
+        assert_eq!(graphemes.len(), 700);
+        let naive_work = text.chars().count()
+            * graphemes
+                .iter()
+                .map(|grapheme| grapheme.chars().count())
+                .sum::<usize>();
+        assert!(naive_work > 1_000_000);
+        let case_keys = java_grapheme_case_keys(&text, JavaRegexModes::default()).unwrap();
+        assert!(java_grapheme_atom_suffix_guards(&text, &graphemes, &case_keys).is_some());
+
+        let regex = compile_regex(r"\X{700}").unwrap();
+        let spans = regex.capture_spans(&text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, text.len())));
+    }
+
+    #[test]
+    fn regex_java_high_cardinality_grapheme_atoms_match_long_text() {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        let mut text = String::new();
+        for offset in 0..65 {
+            text.push(char::from_u32(0x1f600 + offset).unwrap());
+            text.push('\u{1f3fb}');
+        }
+        let regex = compile_regex(r"\X{65}").unwrap();
+        let spans = regex.capture_spans(&text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, text.len())));
+
+        let mut high_cardinality_text = String::new();
+        for offset in 0..257 {
+            high_cardinality_text.push(char::from_u32(0x1f600 + offset).unwrap());
+            high_cardinality_text.push('\u{1f3fb}');
+        }
+        let graphemes = high_cardinality_text.graphemes(true).collect::<Vec<_>>();
+        assert_eq!(graphemes.len(), 257);
+        let case_keys =
+            java_grapheme_case_keys(&high_cardinality_text, JavaRegexModes::default()).unwrap();
+        assert!(
+            java_grapheme_atom_suffix_guards(&high_cardinality_text, &graphemes, &case_keys)
+                .is_some()
+        );
+
+        let regex = compile_regex(r"\X{257}").unwrap();
+        let spans = regex.capture_spans(&high_cardinality_text).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0][0], Some((0, high_cardinality_text.len())));
+    }
+
+    #[test]
+    fn regex_java_grapheme_atom_alignment_proof_handles_long_text() {
+        let text = "e\u{301}a".repeat(2049);
+        assert!(text.chars().count() > 4096);
+        let regex = compile_regex(r"\X{4098}").unwrap();
         let spans = regex.capture_spans(&text).unwrap();
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0][0], Some((0, text.len())));
@@ -55117,6 +57831,26 @@ mod tests {
             err.message.contains("no matching function"),
             "{}",
             err.message
+        );
+    }
+
+    #[test]
+    fn long_grapheme_patterns_execute_through_sql_projection_and_filter() {
+        let mut table = open_table(&root(), "sensors").unwrap();
+        let note = table.column_index("note").unwrap();
+        table.columns[note][0] = Scalar::Text("a\u{301}".repeat(60_000));
+
+        let projection =
+            parse_query("SELECT regexp_replace(note, '(?iu)\\X', 'X') FROM sensors LIMIT 1")
+                .unwrap();
+        let result = execute_on(&table, &projection).unwrap();
+        assert_eq!(result.rows[0][0], Scalar::Text("X".repeat(60_000)));
+
+        let filter = parse_query("SELECT id FROM sensors WHERE note ~ '(?iu)\\X'").unwrap();
+        let result = execute_on(&table, &filter).unwrap();
+        assert_eq!(
+            result.rows,
+            vec![vec![Scalar::Long(1)], vec![Scalar::Long(-1)]]
         );
     }
 }

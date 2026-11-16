@@ -1,0 +1,7 @@
+{"query":"SELECT ts FROM sensors WHERE to_uuid(id,id) IN ('bad-uuid') ORDER BY ts","case":"uuid_invalid_string","error":"invalid UUID value [bad-uuid]","position":48}
+{"query":"SELECT ts FROM sensors WHERE to_uuid(id,id) IN ('x') ORDER BY ts","case":"uuid_char_member","error":"cannot compare UUID with type CHAR","position":48}
+{"query":"SELECT ts FROM sensors WHERE to_uuid(id,id) IN (1) ORDER BY ts","case":"uuid_int_member","error":"cannot compare UUID with type INT","position":48}
+{"query":"SELECT ts FROM sensors WHERE to_uuid(id,id) IN (true) ORDER BY ts","case":"uuid_boolean_member","error":"cannot compare UUID with type BOOLEAN","position":48}
+{"query":"SELECT ts FROM sensors WHERE to_uuid(id,id) IN (1.5) ORDER BY ts","case":"uuid_double_member","error":"cannot compare UUID with type DOUBLE","position":48}
+{"query":"SELECT ts FROM sensors WHERE to_uuid(id,id) IN () ORDER BY ts","case":"uuid_empty_list","error":"too few arguments for 'in'","position":44}
+{"query":"SELECT ts FROM sensors WHERE to_uuid(id,id) NOT IN () ORDER BY ts","case":"uuid_not_in_empty_list","error":"too few arguments for 'in'","position":48}

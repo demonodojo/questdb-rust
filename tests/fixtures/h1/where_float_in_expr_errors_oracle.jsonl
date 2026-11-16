@@ -1,0 +1,4 @@
+{"query":"SELECT ts FROM sensors WHERE abs(reading) IN (true) ORDER BY ts","error":"cannot compare DOUBLE with type BOOLEAN","position":46,"case":"double_boolean_member"}
+{"query":"SELECT ts FROM sensors WHERE abs(reading) IN ('x') ORDER BY ts","error":"cannot compare DOUBLE with type CHAR","position":46,"case":"double_char_member"}
+{"query":"SELECT ts FROM sensors WHERE abs(reading) IN ('1.5x') ORDER BY ts","error":"invalid DOUBLE value [1.5x]","position":46,"case":"double_bad_numeric_string"}
+{"query":"SELECT ts FROM sensors WHERE abs(reading) IN ('1') ORDER BY ts","error":"cannot compare DOUBLE with type CHAR","position":46,"case":"double_single_digit_string"}

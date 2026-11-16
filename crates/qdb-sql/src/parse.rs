@@ -434,6 +434,8 @@ pub struct LowerExpr {
     /// Original call spelling, preserved for source positions after alias rewriting.
     pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
+    pub nested_trim: Option<Box<TrimExpr>>,
+    pub nested_replace: Option<Box<ReplaceExpr>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -442,6 +444,8 @@ pub struct UpperExpr {
     /// Original call spelling, preserved for source positions after alias rewriting.
     pub source_label: Box<str>,
     pub args: Vec<ConcatArg>,
+    pub nested_trim: Option<Box<TrimExpr>>,
+    pub nested_replace: Option<Box<ReplaceExpr>>,
 }
 
 /// `left` or `right`: a text and a character count.
@@ -467,12 +471,20 @@ pub enum TrimEnd {
     Right,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NestedTextCase {
+    Lower(LowerExpr),
+    Upper(UpperExpr),
+}
+
 /// `trim`, `ltrim` or `rtrim`: one text argument, ASCII spaces removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrimExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
     pub end: TrimEnd,
+    pub nested_case: Option<NestedTextCase>,
+    pub nested_replace: Option<Box<ReplaceExpr>>,
 }
 
 /// `replace(value, old, new)`.
@@ -480,13 +492,16 @@ pub struct TrimExpr {
 pub struct ReplaceExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
+    pub value_trim: Option<Box<TrimExpr>>,
 }
 
 /// `regexp_replace(value, pattern, replacement)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RegexpReplaceExpr {
     pub label: String,
     pub args: Vec<ConcatArg>,
+    /// Optional scalar expression for the input argument. Currently parsed for `lpad`/`rpad`.
+    pub value_expr: Option<Box<Proj>>,
     /// Byte position of the function name and each argument in the SQL text.
     pub position: usize,
     pub arg_positions: Vec<usize>,
@@ -1309,8 +1324,24 @@ fn filter_expression_label(filter: &Filter) -> String {
             column,
             items,
             negated,
+            ..
         } => format!(
             "{column} {}in ({})",
+            if *negated { "not " } else { "" },
+            items
+                .iter()
+                .map(eq_literal_label)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Filter::InListExpression {
+            value,
+            items,
+            negated,
+            ..
+        } => format!(
+            "{} {}in ({})",
+            filter_operand_label(value),
             if *negated { "not " } else { "" },
             items
                 .iter()
@@ -1337,6 +1368,28 @@ fn filter_expression_label(filter: &Filter) -> String {
         } => format!(
             "{column} {} {}",
             if *negated { "!~" } else { "~" },
+            concat_arg_label(pattern)
+        ),
+        Filter::RegexExpression {
+            label,
+            pattern,
+            negated,
+            ..
+        } => format!(
+            "{label} {} {}",
+            if *negated { "!~" } else { "~" },
+            concat_arg_label(pattern)
+        ),
+        Filter::LikeExpression {
+            label,
+            pattern,
+            case_insensitive,
+            negated,
+            ..
+        } => format!(
+            "{label} {}{}like {}",
+            if *negated { "not " } else { "" },
+            if *case_insensitive { "i" } else { "" },
             concat_arg_label(pattern)
         ),
         Filter::Not(inner) => format!("not({})", filter_expression_label(inner)),
@@ -1667,7 +1720,16 @@ pub enum Filter {
     InList {
         column: String,
         items: Vec<Scalar>,
+        item_positions: Vec<usize>,
         negated: bool,
+        position: usize,
+    },
+    InListExpression {
+        value: FilterOperand,
+        items: Vec<Scalar>,
+        item_positions: Vec<usize>,
+        negated: bool,
+        position: usize,
     },
     Like {
         column: String,
@@ -1680,6 +1742,24 @@ pub enum Filter {
         pattern: ConcatArg,
         negated: bool,
         position: usize,
+    },
+    RegexExpression {
+        label: String,
+        value: Box<Proj>,
+        pattern: ConcatArg,
+        negated: bool,
+        position: usize,
+        operator_position: usize,
+        value_position: usize,
+    },
+    LikeExpression {
+        label: String,
+        value: Box<Proj>,
+        pattern: ConcatArg,
+        case_insensitive: bool,
+        negated: bool,
+        operator_position: usize,
+        value_position: usize,
     },
     Not(Box<Filter>),
     And(Box<Filter>, Box<Filter>),
@@ -2063,12 +2143,24 @@ fn strip_alias_refs(
                             *name = strip_table_alias(name, alias);
                         }
                     }
+                    if let Some(trim) = &mut expr.nested_trim {
+                        strip_trim_aliases(trim, alias);
+                    }
+                    if let Some(replace) = &mut expr.nested_replace {
+                        strip_replace_aliases(replace, alias);
+                    }
                 }
                 if let Proj::Upper(expr) = item {
                     for arg in &mut expr.args {
                         if let ConcatArg::Column(name) = arg {
                             *name = strip_table_alias(name, alias);
                         }
+                    }
+                    if let Some(trim) = &mut expr.nested_trim {
+                        strip_trim_aliases(trim, alias);
+                    }
+                    if let Some(replace) = &mut expr.nested_replace {
+                        strip_replace_aliases(replace, alias);
                     }
                 }
                 if let Proj::Concat(expr) = item {
@@ -2098,6 +2190,7 @@ fn strip_alias_refs(
                             *name = strip_table_alias(name, alias);
                         }
                     }
+                    strip_trim_aliases(expr, alias);
                 }
                 if let Proj::StartsWith(expr) = item {
                     for arg in &mut expr.args {
@@ -2397,6 +2490,9 @@ fn strip_alias_refs(
                             *name = strip_table_alias(name, alias);
                         }
                     }
+                    if let Some(trim) = &mut expr.value_trim {
+                        strip_trim_aliases(trim, alias);
+                    }
                 }
                 if let Proj::RegexpReplace(expr) = item {
                     for arg in &mut expr.args {
@@ -2581,6 +2677,11 @@ fn strip_filter_alias(filter: &mut Filter, alias: &str) {
         | Filter::InList { column, .. } => {
             *column = strip_table_alias(column, alias);
         }
+        Filter::InListExpression { value, .. } => match value {
+            FilterOperand::Projection(expr) => strip_filter_expr_alias(expr, alias),
+            FilterOperand::Arithmetic(expr) => strip_filter_arithmetic_alias(expr, alias),
+            FilterOperand::Literal(_) => {}
+        },
         Filter::CompareColumns { left, right, .. } => {
             *left = strip_table_alias(left, alias);
             *right = strip_table_alias(right, alias);
@@ -2615,6 +2716,18 @@ fn strip_filter_alias(filter: &mut Filter, alias: &str) {
                 *name = strip_table_alias(name, alias);
             }
         }
+        Filter::RegexExpression { value, pattern, .. } => {
+            strip_filter_expr_alias(value, alias);
+            if let ConcatArg::Column(name) = pattern {
+                *name = strip_table_alias(name, alias);
+            }
+        }
+        Filter::LikeExpression { value, pattern, .. } => {
+            strip_filter_expr_alias(value, alias);
+            if let ConcatArg::Column(name) = pattern {
+                *name = strip_table_alias(name, alias);
+            }
+        }
         Filter::BooleanLiteral(_) | Filter::NonBooleanLiteral { .. } => {}
         Filter::Not(inner) => strip_filter_alias(inner, alias),
         Filter::And(left, right) | Filter::Or(left, right) => {
@@ -2635,8 +2748,49 @@ fn strip_filter_expr_alias(expr: &mut Proj, alias: &str) {
         }
         Proj::Abs(expr) => strip_concat_aliases(&mut expr.args, alias),
         Proj::Length(expr) => strip_concat_aliases(&mut expr.args, alias),
-        Proj::Lower(expr) => strip_concat_aliases(&mut expr.args, alias),
-        Proj::Upper(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Lower(expr) => {
+            strip_concat_aliases(&mut expr.args, alias);
+            if let Some(trim) = &mut expr.nested_trim {
+                strip_trim_aliases(trim, alias);
+            }
+        }
+        Proj::Upper(expr) => {
+            strip_concat_aliases(&mut expr.args, alias);
+            if let Some(trim) = &mut expr.nested_trim {
+                strip_trim_aliases(trim, alias);
+            }
+            if let Some(replace) = &mut expr.nested_replace {
+                strip_replace_aliases(replace, alias);
+            }
+        }
+        Proj::Trim(expr) => strip_trim_aliases(expr, alias),
+        Proj::Concat(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Replace(expr) => strip_replace_aliases(expr, alias),
+        Proj::Substr(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Pad(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::RegexpReplace(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::QuoteIdent(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Md5(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Sha1(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Sha256(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Side(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::SplitPart(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::ToStr(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::FormatType(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::JsonExtract(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::ToUuid(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::PgGetUserById(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::PgGetPartKeyDef(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::PgGetExpr(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Bar(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::MakeGeohash(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::Netmask(expr) => strip_concat_aliases(&mut expr.args, alias),
+        Proj::ToChar(expr) => {
+            strip_concat_aliases(&mut expr.args, alias);
+            if let Some(base64) = &mut expr.base64 {
+                strip_concat_aliases(&mut base64.args, alias);
+            }
+        }
         _ => {}
     }
 }
@@ -2646,6 +2800,42 @@ fn strip_concat_aliases(args: &mut [ConcatArg], alias: &str) {
         if let ConcatArg::Column(name) = arg {
             *name = strip_table_alias(name, alias);
         }
+    }
+}
+
+fn strip_trim_aliases(expr: &mut TrimExpr, alias: &str) {
+    strip_concat_aliases(&mut expr.args, alias);
+    match &mut expr.nested_case {
+        Some(NestedTextCase::Lower(lower)) => {
+            strip_concat_aliases(&mut lower.args, alias);
+            if let Some(trim) = &mut lower.nested_trim {
+                strip_trim_aliases(trim, alias);
+            }
+            if let Some(replace) = &mut lower.nested_replace {
+                strip_replace_aliases(replace, alias);
+            }
+        }
+        Some(NestedTextCase::Upper(upper)) => {
+            strip_concat_aliases(&mut upper.args, alias);
+            if let Some(trim) = &mut upper.nested_trim {
+                strip_trim_aliases(trim, alias);
+            }
+            if let Some(replace) = &mut upper.nested_replace {
+                strip_replace_aliases(replace, alias);
+            }
+        }
+        None => {
+            if let Some(replace) = &mut expr.nested_replace {
+                strip_replace_aliases(replace, alias);
+            }
+        }
+    }
+}
+
+fn strip_replace_aliases(expr: &mut ReplaceExpr, alias: &str) {
+    strip_concat_aliases(&mut expr.args, alias);
+    if let Some(trim) = &mut expr.value_trim {
+        strip_trim_aliases(trim, alias);
     }
 }
 
@@ -3195,6 +3385,208 @@ fn top_level_cmp(src: &[u8], start: usize) -> Option<(usize, CmpOp)> {
                         CmpOp::Gt
                     },
                 ));
+            }
+            _ => {}
+        }
+        pos += 1;
+    }
+    None
+}
+
+fn top_level_is_null(src: &[u8], start: usize) -> Option<(usize, bool, usize)> {
+    let mut pos = start;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    while pos < src.len() {
+        match src[pos] {
+            b'\'' => {
+                if quoted && src.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+                pos += 1;
+                continue;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if !quoted
+            && depth == 0
+            && src[pos..].len() >= 2
+            && src[pos..pos + 2].eq_ignore_ascii_case(b"is")
+        {
+            let before_is = pos == start || !is_filter_keyword_byte(src[pos - 1]);
+            let after_is = src
+                .get(pos + 2)
+                .is_none_or(|byte| !is_filter_keyword_byte(*byte));
+            if before_is && after_is {
+                let mut end = pos + 2;
+                while src.get(end).is_some_and(u8::is_ascii_whitespace) {
+                    end += 1;
+                }
+                let negated = src
+                    .get(end..end + 3)
+                    .is_some_and(|word| word.eq_ignore_ascii_case(b"not"))
+                    && src
+                        .get(end + 3)
+                        .is_none_or(|byte| !is_filter_keyword_byte(*byte));
+                if negated {
+                    end += 3;
+                    while src.get(end).is_some_and(u8::is_ascii_whitespace) {
+                        end += 1;
+                    }
+                }
+                if src
+                    .get(end..end + 4)
+                    .is_some_and(|word| word.eq_ignore_ascii_case(b"null"))
+                    && src
+                        .get(end + 4)
+                        .is_none_or(|byte| !is_filter_keyword_byte(*byte))
+                {
+                    return Some((pos, negated, end + 4));
+                }
+            }
+        }
+        pos += 1;
+    }
+    None
+}
+
+fn top_level_in_operator(src: &[u8], start: usize) -> Option<(usize, usize, bool, usize)> {
+    let mut pos = start;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    while pos < src.len() {
+        match src[pos] {
+            b'\'' => {
+                if quoted && src.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+                pos += 1;
+                continue;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if !quoted
+            && depth == 0
+            && src[pos..].len() >= 2
+            && src[pos..pos + 2].eq_ignore_ascii_case(b"in")
+        {
+            let before_in = pos == start || !is_filter_keyword_byte(src[pos - 1]);
+            let after_in = src
+                .get(pos + 2)
+                .is_none_or(|byte| !is_filter_keyword_byte(*byte));
+            if before_in && after_in {
+                let mut previous_end = pos;
+                while previous_end > start && src[previous_end - 1].is_ascii_whitespace() {
+                    previous_end -= 1;
+                }
+                let mut previous_start = previous_end;
+                while previous_start > start && is_filter_keyword_byte(src[previous_start - 1]) {
+                    previous_start -= 1;
+                }
+                let negated = previous_start < previous_end
+                    && src[previous_start..previous_end].eq_ignore_ascii_case(b"not");
+                return Some((
+                    if negated { previous_start } else { pos },
+                    pos,
+                    negated,
+                    pos + 2,
+                ));
+            }
+        }
+        pos += 1;
+    }
+    None
+}
+
+fn is_filter_keyword_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn top_level_regex_operator(src: &[u8], start: usize) -> Option<(usize, bool, usize)> {
+    let mut pos = start;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    while pos < src.len() {
+        match src[pos] {
+            b'\'' => {
+                if quoted && src.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            b'!' if !quoted && depth == 0 && src.get(pos + 1) == Some(&b'~') => {
+                return Some((pos, true, 2));
+            }
+            b'~' if !quoted && depth == 0 => return Some((pos, false, 1)),
+            _ => {}
+        }
+        pos += 1;
+    }
+    None
+}
+
+fn top_level_like_operator(src: &[u8], start: usize) -> Option<(usize, bool, bool, usize)> {
+    let mut pos = start;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    while pos < src.len() {
+        match src[pos] {
+            b'\'' => {
+                if quoted && src.get(pos + 1) == Some(&b'\'') {
+                    pos += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            byte if !quoted && depth == 0 && (byte.is_ascii_alphabetic() || byte == b'_') => {
+                let word_start = pos;
+                pos += 1;
+                while matches!(src.get(pos), Some(byte) if byte.is_ascii_alphanumeric() || *byte == b'_')
+                {
+                    pos += 1;
+                }
+                let word = &src[word_start..pos];
+                if word.eq_ignore_ascii_case(b"like") || word.eq_ignore_ascii_case(b"ilike") {
+                    return Some((
+                        word_start,
+                        false,
+                        word.eq_ignore_ascii_case(b"ilike"),
+                        pos - word_start,
+                    ));
+                }
+                if word.eq_ignore_ascii_case(b"not") {
+                    let mut next = pos;
+                    while matches!(src.get(next), Some(byte) if byte.is_ascii_whitespace()) {
+                        next += 1;
+                    }
+                    let like_start = next;
+                    while matches!(src.get(next), Some(byte) if byte.is_ascii_alphabetic()) {
+                        next += 1;
+                    }
+                    let like = &src[like_start..next];
+                    if like.eq_ignore_ascii_case(b"like") || like.eq_ignore_ascii_case(b"ilike") {
+                        return Some((
+                            word_start,
+                            true,
+                            like.eq_ignore_ascii_case(b"ilike"),
+                            next - word_start,
+                        ));
+                    }
+                }
+                continue;
             }
             _ => {}
         }
@@ -9411,6 +9803,37 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_replace(&mut self) -> Result<ReplaceExpr, Error> {
+        let start = self.pos;
+        let name = self.ident_spelling()?;
+        self.skip();
+        if self.eat(b'(') {
+            self.skip();
+            if self.starts_trim_call() {
+                let trim = self.parse_trim()?;
+                self.skip();
+                if !self.eat(b',') {
+                    return Err(Error::new("unsupported: expected ',' after replace value"));
+                }
+                let (old_label, old) = self.parse_call_arg(false)?;
+                self.skip();
+                if !self.eat(b',') {
+                    return Err(Error::new(
+                        "unsupported: expected ',' after replace old value",
+                    ));
+                }
+                let (new_label, new) = self.parse_call_arg(false)?;
+                self.skip();
+                if !self.eat(b')') {
+                    return Err(Error::new("unsupported: expected ')' after replace"));
+                }
+                return Ok(ReplaceExpr {
+                    label: format!("{name}({}, {old_label}, {new_label})", trim.label),
+                    args: vec![ConcatArg::Literal(Scalar::Null), old, new],
+                    value_trim: Some(Box::new(trim)),
+                });
+            }
+        }
+        self.pos = start;
         let name = self.ident_spelling()?;
         let (labels, args) = self.parse_call_args(&name, false)?;
         if args.is_empty() {
@@ -9422,6 +9845,7 @@ impl<'a> Parser<'a> {
         Ok(ReplaceExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
+            value_trim: None,
         })
     }
 
@@ -9432,7 +9856,58 @@ impl<'a> Parser<'a> {
     fn parse_regexp_replace(&mut self) -> Result<RegexpReplaceExpr, Error> {
         let position = self.pos;
         let name = self.ident_spelling()?;
-        let (labels, args, arg_positions) = self.parse_call_args_with_positions(&name, true)?;
+        let call_start = self.pos;
+        self.skip();
+        let nested_value = if self.eat(b'(') {
+            self.skip();
+            if self.starts_pad_call() {
+                let value_position = self.pos;
+                let value = self.parse_pad()?;
+                self.skip();
+                if !self.eat(b',') {
+                    return Err(Error::new(format!(
+                        "unsupported: expected ')' after {name}"
+                    )));
+                }
+                self.skip();
+                let pattern_position = self.pos;
+                let (pattern_label, pattern) = self.parse_call_arg(true)?;
+                self.skip();
+                if !self.eat(b',') {
+                    return Err(Error::new(format!(
+                        "unsupported: expected ')' after {name}"
+                    )));
+                }
+                self.skip();
+                let replacement_position = self.pos;
+                let (replacement_label, replacement) = self.parse_call_arg(true)?;
+                self.skip();
+                if !self.eat(b')') {
+                    return Err(Error::new(format!(
+                        "unsupported: expected ')' after {name}"
+                    )));
+                }
+                Some((
+                    vec![value.label.clone(), pattern_label, replacement_label],
+                    vec![ConcatArg::Literal(Scalar::Null), pattern, replacement],
+                    vec![value_position, pattern_position, replacement_position],
+                    Box::new(Proj::Pad(value)),
+                ))
+            } else {
+                self.pos = call_start;
+                None
+            }
+        } else {
+            self.pos = call_start;
+            None
+        };
+        let (labels, args, arg_positions, value_expr) = match nested_value {
+            Some((labels, args, positions, value)) => (labels, args, positions, Some(value)),
+            None => {
+                let (labels, args, positions) = self.parse_call_args_with_positions(&name, true)?;
+                (labels, args, positions, None)
+            }
+        };
         if args.is_empty() {
             return Err(Error::new(
                 "function `regexp_replace` requires arguments".to_string(),
@@ -9441,6 +9916,7 @@ impl<'a> Parser<'a> {
         Ok(RegexpReplaceExpr {
             label: format!("{name}({})", labels.join(", ")),
             args,
+            value_expr,
             position,
             arg_positions,
         })
@@ -9453,6 +9929,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_trim(&mut self) -> Result<TrimExpr, Error> {
+        let start = self.pos;
         let name = self.ident_spelling()?;
         let end = if name.eq_ignore_ascii_case("ltrim") {
             TrimEnd::Left
@@ -9461,6 +9938,57 @@ impl<'a> Parser<'a> {
         } else {
             TrimEnd::Both
         };
+        self.skip();
+        if self.eat(b'(') {
+            self.skip();
+            let nested_case = if self.starts_named_call("lower") {
+                Some(NestedTextCase::Lower(self.parse_lower()?))
+            } else if self.starts_named_call("upper") {
+                Some(NestedTextCase::Upper(self.parse_upper()?))
+            } else {
+                None
+            };
+            if let Some(nested_case) = nested_case {
+                self.skip();
+                if !self.eat(b')') {
+                    return Err(Error::new(format!(
+                        "unsupported: expected ')' after {}",
+                        name.to_ascii_lowercase()
+                    )));
+                }
+                let nested_label = match &nested_case {
+                    NestedTextCase::Lower(expr) => &expr.label,
+                    NestedTextCase::Upper(expr) => &expr.label,
+                };
+                return Ok(TrimExpr {
+                    label: format!("{name}({nested_label})"),
+                    args: Vec::new(),
+                    end,
+                    nested_case: Some(nested_case),
+                    nested_replace: None,
+                });
+            }
+            if self.starts_named_call("replace") {
+                let replace = self.parse_replace()?;
+                self.skip();
+                if !self.eat(b')') {
+                    return Err(Error::new(format!(
+                        "unsupported: expected ')' after {}",
+                        name.to_ascii_lowercase()
+                    )));
+                }
+                let label = format!("{name}({})", replace.label);
+                return Ok(TrimExpr {
+                    label,
+                    args: Vec::new(),
+                    end,
+                    nested_case: None,
+                    nested_replace: Some(Box::new(replace)),
+                });
+            }
+        }
+        self.pos = start;
+        let name = self.ident_spelling()?;
         let (labels, args) = self.parse_call_args(&name, false)?;
         if args.is_empty() {
             return Err(Error::new(format!(
@@ -9472,6 +10000,8 @@ impl<'a> Parser<'a> {
             label: format!("{name}({})", labels.join(", ")),
             args,
             end,
+            nested_case: None,
+            nested_replace: None,
         })
     }
 
@@ -9508,6 +10038,42 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_upper(&mut self) -> Result<UpperExpr, Error> {
+        let start = self.pos;
+        let name = self.ident_spelling()?;
+        self.skip();
+        if self.eat(b'(') {
+            self.skip();
+            if self.starts_trim_call() {
+                let trim = self.parse_trim()?;
+                self.skip();
+                if !self.eat(b')') {
+                    return Err(Error::new("unsupported: expected ')' after upper"));
+                }
+                let label = format!("{name}({})", trim.label);
+                return Ok(UpperExpr {
+                    source_label: label.clone().into(),
+                    label,
+                    args: Vec::new(),
+                    nested_trim: Some(Box::new(trim)),
+                    nested_replace: None,
+                });
+            } else if self.starts_named_call("replace") {
+                let replace = self.parse_replace()?;
+                self.skip();
+                if !self.eat(b')') {
+                    return Err(Error::new("unsupported: expected ')' after upper"));
+                }
+                let label = format!("{name}({})", replace.label);
+                return Ok(UpperExpr {
+                    source_label: label.clone().into(),
+                    label,
+                    args: Vec::new(),
+                    nested_trim: None,
+                    nested_replace: Some(Box::new(replace)),
+                });
+            }
+        }
+        self.pos = start;
         let name = self.ident_spelling()?;
         let (labels, args) = self.parse_call_args(&name, false)?;
         if args.is_empty() {
@@ -9521,10 +10087,48 @@ impl<'a> Parser<'a> {
             source_label: label.clone().into(),
             label,
             args,
+            nested_trim: None,
+            nested_replace: None,
         })
     }
 
     fn parse_lower(&mut self) -> Result<LowerExpr, Error> {
+        let start = self.pos;
+        let name = self.ident_spelling()?;
+        self.skip();
+        if self.eat(b'(') {
+            self.skip();
+            if self.starts_trim_call() {
+                let trim = self.parse_trim()?;
+                self.skip();
+                if !self.eat(b')') {
+                    return Err(Error::new("unsupported: expected ')' after lower"));
+                }
+                let label = format!("{name}({})", trim.label);
+                return Ok(LowerExpr {
+                    source_label: label.clone().into(),
+                    label,
+                    args: Vec::new(),
+                    nested_trim: Some(Box::new(trim)),
+                    nested_replace: None,
+                });
+            } else if self.starts_named_call("replace") {
+                let replace = self.parse_replace()?;
+                self.skip();
+                if !self.eat(b')') {
+                    return Err(Error::new("unsupported: expected ')' after lower"));
+                }
+                let label = format!("{name}({})", replace.label);
+                return Ok(LowerExpr {
+                    source_label: label.clone().into(),
+                    label,
+                    args: Vec::new(),
+                    nested_trim: None,
+                    nested_replace: Some(Box::new(replace)),
+                });
+            }
+        }
+        self.pos = start;
         let name = self.ident_spelling()?;
         let (labels, args) = self.parse_call_args(&name, false)?;
         if args.is_empty() {
@@ -9538,6 +10142,8 @@ impl<'a> Parser<'a> {
             source_label: label.clone().into(),
             label,
             args,
+            nested_trim: None,
+            nested_replace: None,
         })
     }
 
@@ -10790,6 +11396,78 @@ impl<'a> Parser<'a> {
 
     fn parse_filter_function_comparison(&mut self) -> Result<Filter, Error> {
         let start = self.pos;
+        if let Some((operator_start, negated, operator_len)) =
+            top_level_regex_operator(self.src, start)
+        {
+            let label = std::str::from_utf8(&self.src[start..operator_start])
+                .map_err(|_| Error::new("unsupported expression in WHERE regex"))?
+                .trim()
+                .to_string();
+            let value_position = start
+                + self.src[start..operator_start]
+                    .iter()
+                    .take_while(|byte| byte.is_ascii_whitespace())
+                    .count();
+            let value = parse_filter_projection(&label)?;
+            let right_start = operator_start + operator_len;
+            let right_end = filter_expr_end(self.src, right_start);
+            let mut pattern_parser = Parser {
+                src: &self.src[right_start..right_end],
+                pos: 0,
+            };
+            let (_, pattern) = pattern_parser.parse_call_arg(true)?;
+            pattern_parser.skip();
+            if pattern_parser.peek().is_some() {
+                return Err(Error::new("unsupported expression in WHERE regex pattern"));
+            }
+            let position =
+                filter_regex_pattern_position(self.src, operator_start, right_end, &pattern);
+            self.pos = right_end;
+            return Ok(Filter::RegexExpression {
+                label,
+                value: Box::new(value),
+                pattern,
+                negated,
+                position,
+                operator_position: operator_start,
+                value_position,
+            });
+        }
+        if let Some((operator_start, negated, case_insensitive, operator_len)) =
+            top_level_like_operator(self.src, start)
+        {
+            let label = std::str::from_utf8(&self.src[start..operator_start])
+                .map_err(|_| Error::new("unsupported expression in WHERE LIKE"))?
+                .trim()
+                .to_string();
+            let value_position = start
+                + self.src[start..operator_start]
+                    .iter()
+                    .take_while(|byte| byte.is_ascii_whitespace())
+                    .count();
+            let value = parse_filter_projection(&label)?;
+            let right_start = operator_start + operator_len;
+            let right_end = filter_expr_end(self.src, right_start);
+            let mut pattern_parser = Parser {
+                src: &self.src[right_start..right_end],
+                pos: 0,
+            };
+            let (_, pattern) = pattern_parser.parse_call_arg(true)?;
+            pattern_parser.skip();
+            if pattern_parser.peek().is_some() {
+                return Err(Error::new("unsupported expression in WHERE LIKE pattern"));
+            }
+            self.pos = right_end;
+            return Ok(Filter::LikeExpression {
+                label,
+                value: Box::new(value),
+                pattern,
+                case_insensitive,
+                negated,
+                operator_position: operator_start,
+                value_position,
+            });
+        }
         let (op_pos, _) = top_level_cmp(self.src, start)
             .ok_or_else(|| Error::new("unsupported: expected comparison after function"))?;
         let left_text = std::str::from_utf8(&self.src[start..op_pos])
@@ -10880,16 +11558,20 @@ impl<'a> Parser<'a> {
                 negated,
             });
         }
+        let in_position = self.pos;
         if self.eat_keyword("in") {
             if !self.eat(b'(') {
                 return Err(Error::new("unsupported: expected '(' after in"));
             }
             self.skip();
             if self.eat(b')') {
-                return Err(Error::new("too few arguments for 'in'"));
+                return Err(Error::at("too few arguments for 'in'", in_position));
             }
             let mut items = Vec::new();
+            let mut item_positions = Vec::new();
             loop {
+                self.skip();
+                item_positions.push(self.pos);
                 items.push(self.parse_literal()?);
                 self.skip();
                 if self.eat(b',') {
@@ -10903,7 +11585,9 @@ impl<'a> Parser<'a> {
             return Ok(Filter::InList {
                 column,
                 items,
+                item_positions,
                 negated,
+                position: in_position,
             });
         }
         if self.eat_keyword("like") {
@@ -11048,6 +11732,77 @@ impl<'a> Parser<'a> {
 
     fn parse_extended_filter_comparison(&mut self) -> Result<Option<Filter>, Error> {
         let start = self.pos;
+        if let Some((operator_start, in_position, negated, items_start)) =
+            top_level_in_operator(self.src, start)
+        {
+            let left_text = std::str::from_utf8(&self.src[start..operator_start])
+                .map_err(|_| Error::new("unsupported expression in WHERE IN"))?
+                .trim();
+            if needs_extended_filter_expr(left_text) || unwrapped_filter_expr(left_text).is_some() {
+                let left_leading = self.src[start..operator_start]
+                    .iter()
+                    .take_while(|byte| byte.is_ascii_whitespace())
+                    .count();
+                let value = parse_filter_operand(left_text, start + left_leading)?;
+                let items_end = filter_expr_end(self.src, items_start);
+                let mut parser = Parser {
+                    src: &self.src[items_start..items_end],
+                    pos: 0,
+                };
+                if !parser.eat(b'(') {
+                    return Err(Error::at("unsupported: expected '(' after in", in_position));
+                }
+                parser.skip();
+                let mut items = Vec::new();
+                let mut item_positions = Vec::new();
+                if parser.eat(b')') {
+                    return Err(Error::at("too few arguments for 'in'", in_position));
+                }
+                loop {
+                    parser.skip();
+                    item_positions.push(items_start + parser.pos);
+                    items.push(parser.parse_literal()?);
+                    parser.skip();
+                    if parser.eat(b',') {
+                        continue;
+                    }
+                    if parser.eat(b')') {
+                        break;
+                    }
+                    return Err(Error::new("unsupported: expected ')' after in list"));
+                }
+                parser.skip();
+                if parser.peek().is_some() {
+                    return Err(Error::new("unsupported: trailing input after in list"));
+                }
+                self.pos = items_end;
+                return Ok(Some(Filter::InListExpression {
+                    value,
+                    items,
+                    item_positions,
+                    negated,
+                    position: in_position,
+                }));
+            }
+        }
+        if let Some((null_pos, negated, end)) = top_level_is_null(self.src, start) {
+            let left_text = std::str::from_utf8(&self.src[start..null_pos])
+                .map_err(|_| Error::new("unsupported expression in WHERE NULL check"))?
+                .trim();
+            if needs_extended_filter_expr(left_text) || unwrapped_filter_expr(left_text).is_some() {
+                let left_leading = self.src[start..null_pos]
+                    .iter()
+                    .take_while(|byte| byte.is_ascii_whitespace())
+                    .count();
+                let left = parse_filter_operand(left_text, start + left_leading)?;
+                self.pos = end;
+                return Ok(Some(Filter::CompareExpressions {
+                    left,
+                    op: if negated { CmpOp::NotEq } else { CmpOp::Eq },
+                    right: FilterOperand::Literal(Scalar::Null),
+                }));
+            }
+        }
         let Some((cmp_pos, op)) = top_level_cmp(self.src, start) else {
             return Ok(None);
         };

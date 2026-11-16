@@ -1,0 +1,12 @@
+scalar_netmask_not_ilike	SELECT id FROM sensors WHERE netmask('192.168.1.1/24') NOT ILIKE '10%' ORDER BY ts
+scalar_netmask_like	SELECT id FROM sensors WHERE netmask('192.168.1.1/24') LIKE '255.%' ORDER BY ts
+scalar_netmask_ilike	SELECT id FROM sensors WHERE netmask('192.168.1.1/24') ILIKE '255.%' ORDER BY ts
+scalar_netmask_not_like	SELECT id FROM sensors WHERE netmask('192.168.1.1/24') NOT LIKE '10%' ORDER BY ts
+scalar_uuid_like	SELECT id FROM sensors WHERE to_uuid(id,id) LIKE '%0000%' ORDER BY ts
+scalar_uuid_ilike	SELECT id FROM sensors WHERE to_uuid(id,id) ILIKE '%0000%' ORDER BY ts
+scalar_uuid_not_like	SELECT id FROM sensors WHERE to_uuid(id,id) NOT LIKE '%ffff%' ORDER BY ts
+scalar_uuid_not_ilike	SELECT id FROM sensors WHERE to_uuid(id,id) NOT ILIKE '%ffff%' ORDER BY ts
+geohash_eq_text	SELECT id FROM sensors WHERE make_geohash(reading,reading,4) = '1100' ORDER BY ts
+geohash_ne_text	SELECT id FROM sensors WHERE make_geohash(reading,reading,4) != '1100' ORDER BY ts
+geohash_eq_empty	SELECT id FROM sensors WHERE make_geohash(reading,reading,4) = '' ORDER BY ts
+geohash_ne_empty	SELECT id FROM sensors WHERE make_geohash(reading,reading,4) != '' ORDER BY ts

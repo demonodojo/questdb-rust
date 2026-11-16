@@ -1,0 +1,2 @@
+{"query":"SELECT ts, txt FROM trim_cases WHERE lower(txt) = 1 ORDER BY ts","error":"inconvertible value: `  café  ` [STRING -> INT]","position":0,"case":"lower_eq_int"}
+{"query":"SELECT ts, txt FROM trim_cases WHERE concat(txt, '!') = 1 ORDER BY ts","error":"inconvertible value: `  café  !` [STRING -> INT]","position":0,"case":"concat_eq_int"}

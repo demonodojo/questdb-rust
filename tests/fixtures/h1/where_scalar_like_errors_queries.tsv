@@ -1,0 +1,2 @@
+geohash_like_error	SELECT id FROM sensors WHERE make_geohash(reading,reading,4) LIKE '%' ORDER BY ts	there is no matching operator `like` with the argument types: GEOHASH(4b) like CHAR	61
+geohash_ilike_error	SELECT id FROM sensors WHERE make_geohash(reading,reading,4) ILIKE '%' ORDER BY ts	there is no matching operator `ilike` with the argument types: GEOHASH(4b) ilike CHAR	61

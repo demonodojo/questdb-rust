@@ -1143,10 +1143,275 @@ Se implementó `\G` como posición inicial del matcher y como final de la coinci
 
 Se fijó la segmentación extendida de `unicode-segmentation` 1.12.0. En patrones con grafemas, `\X` se materializa como alternancia de los grafemas presentes en el texto y `\b{g}` como aserciones en los límites calculados de la cadena. Esto permite combinarlos con grupos de captura, cuantificadores, alternativas, anclas y otros look-around; el reemplazo conserva los grupos y `\b{g}` produce una coincidencia vacía en cada límite, también en la cadena vacía. Las capturas cubren marcas combinantes, emoji familiar con ZWJ, indicadores regionales, texto vacío, columnas `note` con NULL y filtros con límites al inicio y al final.
 
-Se verificaron los 1093 casos de `GraphemeBreakTest-16.0.0.txt` contra QuestDB 10.1.0 en dos consultas agrupadas con separadores de control, y también directamente contra `unicode-segmentation` 1.12.0 (`UNICODE_VERSION = 16.0.0`). El test `unicode_16_grapheme_break_test_vectors_match_segmentation` valida los límites y spans de cada vector. `regex_java_grapheme_boundaries_match_captured_exec` compara 36 respuestas completas; el runner diferencial también coteja esos resultados en vivo. Las regresiones adicionales cubren patrones compuestos, grupos, cuantificadores, alternativas, anclas, look-around, prefijos ambiguos y 1024 grafemas ASCII y combinados.
+Se verificaron los 1093 casos de `GraphemeBreakTest-16.0.0.txt` contra QuestDB 10.1.0 en dos consultas agrupadas con separadores de control, y también directamente contra `unicode-segmentation` 1.12.0 (`UNICODE_VERSION = 16.0.0`). El test `unicode_16_grapheme_break_test_vectors_match_segmentation` valida los límites y spans de cada vector. `regex_java_grapheme_boundaries_match_captured_exec` compara 47 respuestas completas; el runner diferencial también coteja esos resultados en vivo. Las regresiones adicionales cubren patrones compuestos, grupos, cuantificadores, alternativas, anclas, look-around, prefijos ambiguos, case-fold Unicode en grafemas combinados, Kelvin, sigma griega, s larga, I con y sin punto, 65 grafemas emoji distintos y 1024 grafemas ASCII y combinados.
 
-La ruta directa `\\X`/`\\b{g}` usa los spans de Unicode. Para `\\X` compuesto, se omiten las aserciones por aparición solo si se verifica que cada aparición, incluidas las variantes ASCII case-insensitive de Java, empieza y termina en límites reales; la optimización queda desactivada para `(?iu)`, más de 64 grafemas distintos o más de 4096 caracteres. `regex_java_unanchored_grapheme_boundaries_match_long_text` compara 1024 grafemas mixtos con el patrón agrupado `\\b{g}(?:\\X){1024}\\b{g}`: pasó en 0,39 s frente a 16,90 s antes de la optimización. El caso ambiguo `áa` repetido 128 veces, que conserva guardas, pasó en 1,70 s. El camino de reemplazo que empieza con `\\b{g}` avanza un carácter Unicode después de cada coincidencia no vacía, según las respuestas capturadas de QuestDB para los casos ASCII, combinados y case-insensitive.
+La ruta directa `\\X`/`\\b{g}` usa los spans de Unicode. Para `\\X` compuesto, las guardas se omiten si todas las variantes posibles coinciden con spans de un único grafema; cuando una aparición solo puede terminar dentro del grafema, se usa una guarda de sufijo local si no descarta ninguna aparición válida, incluso con case-fold ASCII o Unicode simple. La prueba de alineación recorre un trie de prefijos y limita a 1.000.000 las transiciones y candidatos terminales visitados; solo materializa límites cuando se supera ese presupuesto o no puede demostrar seguridad. No tiene un límite fijo por cardinalidad o longitud. `(?iu)` deriva claves de plegado de un escalar para el texto presente, incluidas Kelvin `K`, sigma final/griega, s larga y las I con punto y sin punto; si el mapeo se expande a varios escalares, como `ß`, conserva el fallback. `regex_java_grapheme_prefix_trie_scales_past_work_budget` comprueba 700 grafemas `a`+marca con prefijo compartido: el producto cartesiano previo superaba 1.960.000 comparaciones, y el trie resuelve y compila el patrón en 0,18 s. Para grafemas con un único escalar variable y prefijo/sufijo común, el generador los compacta en clases y rangos; así 257 grafemas emoji compilan en 0,05 s y evitan superar el límite de 10 MiB que alcanzaba la alternancia literal. `regex_java_unicode_case_grapheme_ascii_fast_path_matches_long_text` valida `(?iu)\\X{1024}` sobre texto ASCII en 0,07 s. `regex_java_grapheme_atom_alignment_proof_handles_long_text` valida 4098 grafemas mixtos (6147 escalares Unicode) en 3,14 s. `regex_java_unanchored_grapheme_boundaries_match_long_text` mide 1024 grafemas mixtos con el patrón agrupado `\\b{g}(?:\\X){1024}\\b{g}`: 0,39 s frente a 16,90 s antes de optimizar. Para `áa` repetido 128 veces, la ruta con guardas locales bajó de 1,70 s a 0,76 s. `regex_java_grapheme_boundary_without_atom_matches_mixed_long_text` mide por separado `\\b{g}a{512}\\b{g}` sobre 1024 caracteres ASCII después de un grafema combinado: devuelve los dos spans y tarda 0,02 s tras compactar los límites consecutivos. El caso capturado de 65 grafemas emoji distintos baja de 0,20 s a 0,03 s frente al fallback con materialización. Las capturas `grapheme_replace_unicode_casefold_inert_non_ascii` y `grapheme_replace_unicode_casefold_ambiguous_inert_non_ascii` confirman con QuestDB que `(?iu)\\X{2}` reemplaza tanto el par combinado y ASCII como el caso donde una alternativa `A` puede terminar dentro de `á`. Las capturas nuevas verifican equivalencias para Kelvin, sigma, s larga, I con punto/sin punto y que `ß` no se expande a `ss`; `grapheme_replace_unicode_casefold_greek_prefix` ejercita la guarda dentro de `Σ́`. El camino de reemplazo que empieza con `\\b{g}` avanza un carácter Unicode después de cada coincidencia no vacía, según las respuestas capturadas de QuestDB para los casos ASCII, combinados y case-insensitive.
 
 ## Próxima tarea
 
-Reducir el coste de los casos largos donde `\\X` aún necesita guardas por prefijos ambiguos, como `áa`, y donde `\\b{g}` aparece sin un átomo `\\X` que permita quitar aserciones redundantes. Mantener la semántica capturada de avance de búsqueda en `regexp_replace`.
+Se amplió el fold Unicode de `i` en `(?iu)` a clases anidadas e intersecciones. La recursión modifica cada clase hoja conservando el lado correcto de `&&` y la semántica de negación. Las capturas completas de QuestDB verifican clases planas, `[\\Qi\\E]`, el rango escapado `[\\u0068-\\u0069]` las intersecciones `[a-z&&[^aeiou]]` y `[a-z&&[i]]`, cuatro combinaciones de negación exterior con intersección, y clases citadas o con rangos Unicode escapados dentro de intersecciones negadas. Los casos incluyen los cuatro equivalentes turcos `i`, `I`, `ı`, `İ`.
+
+La comparación con QuestDB mostró que no hay un rechazo de 1 MiB para `(?iu)\\X`: QuestDB reemplaza 60.000 grafemas combinados y evalúa el patrón en `WHERE`. Se retiró ese límite artificial y se añadió un camino directo para `(?iu)\\X`, pues los flags de case-fold no cambian qué constituye un grafema. La respuesta completa de QuestDB para `rpad` con 60.000 grafemas está capturada en `regex_java_grapheme_oracle.jsonl`; el parser y ejecutor ahora aceptan `rpad(...)` como primer argumento de `regexp_replace` y ejecutan exactamente esa consulta capturada. `long_grapheme_patterns_execute_through_sql_projection_and_filter` verifica reemplazo de 60.000 grafemas y filtro por columna; `regex_java_grapheme_boundary_assertion_has_no_artificial_size_cap` verifica que la traducción no inventa el error de tamaño. El caso `aͅaι` sigue forzando la desactivación de una guarda de sufijo conflictiva y devuelve los tres grafemas conforme a QuestDB.
+
+`tools/check.sh` pasó con 345 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` pasó en vivo: 120 respuestas completas de grafemas, 4447 recuentos y los conjuntos de comparación completa y errores registrados. También pasaron `cargo fmt --all -- --check` y `git diff --check`.
+
+La prueba `long_grapheme_patterns_execute_through_sql_projection_and_filter` confirma que los dos recorridos aceptan entradas largas, en vez de convertir el límite interno del port en un error SQL. Una regresión adicional detectó y corrigió que los extremos escapados de un rango se expandían individualmente y producían un rango inválido; ahora se preserva el rango y se añaden variantes solo si incluye `i` o `I`. `regex_java_grapheme_boundaries_match_captured_exec` cubre ocho composiciones nuevas y el runner las comparó en vivo. Las capturas verifican rangos escapados que cruzan `i` bajo intersección, negación interior y negación exterior; el rango incluye `i`, `I`, `ı` e `İ` como demuestra QuestDB. Se añadió `Filter::RegexExpression` para expresiones como operando izquierdo de `WHERE ... ~` y `!~`. Cuatro capturas completas de QuestDB verifican `rpad` con alias cualificado, negación, NULL y cadena vacía, además de la consulta larga de 60.000 grafemas. `regex_java_grapheme_boundaries_match_captured_exec` y el runner diferencial comparan las 120 respuestas completas. Se amplió la normalización del alias dentro de `lower`, `upper`, `trim`, `concat`, `replace`, `substring`, `left`, `right`, `split_part`, `to_str`, `quote_ident` y `regexp_replace`; `ltrim`/`rtrim` y `to_lowercase`/`to_uppercase`, `md5`, `sha1`, `sha256`, `json_extract` y `format_type` también quedan cubiertos. Las capturas incluyen aliases cualificados, negación, NULL/cadena vacía, delimitador dinámico y extracción JSON UTF-8. Una captura de `abs(s.id) ~ 'x'` comprueba el error de tipos y la posición del operador (41). `tools/check.sh` pasó con 345 pruebas SQL, 4 de storage y 3 de types; el diferencial vivo comparó 4447 recuentos, 120 respuestas completas y 30 errores de `WHERE` regex. Las capturas nuevas cubren `left`, `right`, `split_part`, `to_str`, hashes, JSON, `format_type`, `to_uuid`, `pg_get_userbyid`, `pg_get_expr`, `pg_get_partkeydef`, funciones de contexto, `current_setting`, `to_char(from_base64(...))` y `bar`; errores cotejan tipos incompatibles, ruta JSON dinámica, índice dinámico de `split_part` y operandos regex booleanos, todos con posición. `mid` produce `DOUBLE`; `to_char(from_base64(...))` y `bar(...)` coinciden como texto. QuestDB permite regex sobre UUID e IPv4 como texto; `netmask(...)` se cotejó con `255.255.255.0`. Rechaza `make_geohash(...) ~ ...` como `GEOHASH(4b) ~ STRING`, y el port conserva ese tipo y la posición del operador. QuestDB también admite `LIKE`/`ILIKE` sobre UUID e IPv4 y rechaza ambos operadores sobre GEOHASH con tipo y posición. Se añadió `Filter::LikeExpression` para `LIKE`, `ILIKE` y sus negaciones sobre proyecciones, con validación de tipos y evaluación escalar; se capturaron once respuestas completas de netmask, UUID y comparación GEOHASH. La igualdad `make_geohash(...) = texto` convierte el texto a la precisión en bits del GEOHASH (por ejemplo, a 4 bits, `1100` se trunca a su primer carácter y se compara como 0), conforme a `EqGeoHashStrFunctionFactory` y `CastStrToGeoHashFunctionFactory` del tag fijado. Los once resultados coinciden con QuestDB, incluidas igualdad y desigualdad con valores nulos. Dos respuestas de error verifican `LIKE`/`ILIKE` sobre GEOHASH con posición 61. `scalar_like_and_geohash_comparisons_match_captured_exec` cubre estos casos; el runner comprueba respuestas completas y errores contra el oráculo vivo. La siguiente tarea continúa al final de este documento.
+
+
+## 2026-11-16 — `LIKE`/`ILIKE` en proyecciones y comparación GEOHASH/texto
+
+El parser y el ejecutor aceptan `LIKE`, `ILIKE`, `NOT LIKE` y `NOT ILIKE` cuando el operando izquierdo es una proyección escalar. Se probaron IPv4 (`netmask`) y UUID (`to_uuid`); GEOHASH se rechaza con su tipo y la posición upstream. La igualdad y desigualdad GEOHASH/texto convierten el texto a la precisión del hash antes de comparar, siguiendo `EqGeoHashStrFunctionFactory` y `CastStrToGeoHashFunctionFactory` del commit fijado. Doce respuestas `/exec` completas cubren los cuatro operadores sobre IPv4/UUID y comparaciones GEOHASH, y dos errores comprueban `LIKE`/`ILIKE` con posición. `scalar_like_and_geohash_comparisons_match_captured_exec` y los manifiestos/capturas `where_scalar_like*` verifican estos casos.
+
+Verificación de esta sesión: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` pasó: 4447 cuentas de filas, doce respuestas completas nuevas y dos errores nuevos con mensaje/posición, además de las comparaciones completas ya registradas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`. La comparación viva verifica estas doce consultas y dos errores completos; las 4447 consultas generales solo se comparan por cuenta.
+
+## 2026-11-16 — `GROUP BY lower(trim(...))`
+
+QuestDB aceptaba `SELECT lower(trim(note)) ... GROUP BY lower(trim(note))`, pero el parser rechazaba la función anidada. Se añadió `nested_trim` a `LowerExpr` y `UpperExpr`, con resolución/evaluación escalar, comparación exacta de claves y retiro del alias de tabla para el `trim` interno. La identidad de clave ignora etiquetas de origen y compara argumentos y extremo del `trim`. Cuatro capturas completas cubren `lower(trim(...))` y `upper(trim(...))`, con y sin alias; `group_by_function_projection_keys_match_captured_exec` ahora compara 259 respuestas completas.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y 259 respuestas completas de `GROUP BY` de funciones, incluidas las consultas anidadas cualificadas; las cuentas generales solo acreditan número de filas. `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check` pasaron.
+
+## 2026-11-16 — `GROUP BY` con funciones de texto anidadas
+
+Se amplió el soporte a `trim(lower(...))` y `ltrim(upper(...))`. El parser conserva la función interna, el ejecutor resuelve y evalúa la composición y la comparación de claves ignora etiquetas de origen manteniendo argumentos y modificadores. El retiro de alias y la recolección de dependencias recorren los argumentos internos. Se añadieron cuatro respuestas completas, con y sin alias, y un error de `lower(INT)` que conserva la posición 59. `group_by_function_projection_keys_match_captured_exec` compara ahora 263 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 139 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` confirmó 4447 cuentas de filas, 263 respuestas completas y 139 errores completos de proyecciones de funciones `GROUP BY`, además de los demás grupos de capturas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY upper(replace(...))`
+
+Se añadió la composición `upper(replace(...))` como clave agrupada. Alias cualificados en el argumento interno se normalizan antes de comparar claves; las dependencias incluyen las tres entradas de `replace`. Dos capturas completas comprueban las variantes simple y cualificada. Un `replace(LONG, CHAR, CHAR)` inválido conserva el error de QuestDB y su posición 73. `group_by_function_projection_keys_match_captured_exec` compara 265 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 140 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` confirmó 4447 cuentas generales, 265 respuestas completas de funciones `GROUP BY` y 140 errores con mensaje/posición. Las comparaciones completas abarcan todos los casos específicos; las 4447 consultas generales solo cotejan el número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY lower(replace(trim(...)))`
+
+Se extendió la composición de funciones de texto a `lower(replace(trim(...), ...))`. El parser conserva el `trim` interno y el ejecutor lo resuelve como valor de `replace` antes de aplicar `lower`. La identidad de la clave y sus dependencias recorren toda la composición, incluidos argumentos cualificados; dos capturas completas cubren las formas simple y cualificada, con los grupos NULL y vacío. Un argumento `LONG` conserva el error de `trim` de QuestDB y su posición 87. `group_by_function_projection_keys_match_captured_exec` compara 267 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 141 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 267 respuestas completas y 141 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY upper(replace(trim(...)))`
+
+Se añadió evidencia completa para `upper(replace(trim(...), ...))`. La variante cualificada reveló que el retiro de alias recorría los argumentos de `replace` pero no su `trim` interno; se corrigió en la normalización del `SELECT` y en las claves agrupadas. La comparación semántica y las dependencias ahora incluyen la estructura de `value_trim`. Dos capturas prueban las formas simple y cualificada, incluidos los grupos NULL y vacío; el error de tipo de `trim(LONG)` coincide con QuestDB en la posición 87. `group_by_function_projection_keys_match_captured_exec` compara 269 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 142 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 269 respuestas completas y 142 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY trim(replace(trim(...)))`
+
+Se extendió `TrimExpr` para conservar un `replace` anidado y se conectaron la resolución, evaluación, normalización de alias, igualdad semántica de claves y dependencias. Dos capturas completas comparan las formas simple y cualificada, con los grupos NULL y vacío. El error interior de `trim(LONG)` coincide con QuestDB en la posición 85. `group_by_function_projection_keys_match_captured_exec` compara 271 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 143 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 271 respuestas completas y 143 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY trim(upper(replace(trim(...))))`
+
+Se añadió cobertura para una composición de tres niveles: `trim(upper(replace(trim(...), ...)))`. La normalización de alias ahora sigue `TrimExpr` hacia `UpperExpr`, `ReplaceExpr` y el `TrimExpr` de entrada. El error de tipo del `trim` más interno conserva la posición 98. Dos respuestas completas comparan las variantes simple y cualificada con NULL y cadena vacía; la igualdad de clave y las dependencias recorren las expresiones anidadas. `group_by_function_projection_keys_match_captured_exec` compara 273 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 144 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 273 respuestas completas y 144 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY trim(lower(replace(trim(...))))`
+
+Se añadieron capturas completas de la composición `trim(lower(replace(trim(...), ...)))`, cualificada y no cualificada, con grupos NULL y vacío. La comparación del error de tipo interno reveló que el localizador escogía `lower` en vez del `trim` inválido; ahora recorre la composición y conserva la posición 98 de QuestDB. La identidad de la clave y sus dependencias ya se procesaban recursivamente. `group_by_function_projection_keys_match_captured_exec` compara 275 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 145 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 275 respuestas completas y 145 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY upper(trim(replace(trim(...))))`
+
+Se conectó `UpperExpr` con la resolución recursiva de `TrimExpr`, permitiendo evaluar el `replace` y el `trim` interiores. Se añadieron capturas completas cualificadas y no cualificadas, incluidos NULL y cadena vacía. El error del `trim` interno sobre LONG coincide con QuestDB en la posición 98. `group_by_function_projection_keys_match_captured_exec` compara 277 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 146 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 277 respuestas completas y 146 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY lower(trim(replace(trim(...))))`
+
+Se añadieron capturas completas para la composición con `lower`, tanto cualificada como no cualificada, con grupos NULL y vacío. El error del `trim` interno sobre LONG conserva la posición 98; para ello se amplió el mapeo de posiciones en la ruta `LowerExpr` → `TrimExpr` → `ReplaceExpr`. `group_by_function_projection_keys_match_captured_exec` compara 279 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 147 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 279 respuestas completas y 147 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY replace(trim(upper(trim(...))), ...)`
+
+Se capturaron las formas cualificada y no cualificada de `replace(trim(upper(trim(...))), ...)`. La resolución y dependencias recorrieron la composición existente; se amplió el mapeo de error para conservar la posición del `trim` interno sobre LONG (98). Ambas respuestas completas incluyen los grupos NULL y vacío. `group_by_function_projection_keys_match_captured_exec` compara 281 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 148 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 281 respuestas completas y 148 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY replace(trim(upper(replace(trim(...), ...))), ...)`
+
+Se añadieron capturas completas para dos niveles de `replace` anidados dentro de `trim(upper(...))`, con y sin alias. Los valores derivados de las filas, NULL y vacío coinciden con QuestDB. El error del `trim` interior conserva la posición 125. `group_by_function_projection_keys_match_captured_exec` compara 283 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 149 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 283 respuestas completas y 149 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY trim(replace(trim(upper(replace(trim(...), ...))), ...))`
+
+Se añadieron capturas para una composición de cuatro niveles con `trim` exterior y dos `replace`, cualificada y no cualificada. Se verifican los grupos NULL y vacío, los valores transformados y el error del `trim` interior sobre LONG en la posición 136. `group_by_function_projection_keys_match_captured_exec` compara 285 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 150 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 285 respuestas completas y 150 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY replace(ltrim(upper(replace(ltrim(...), ...))), ...)`
+
+Se añadieron capturas completas de la composición con `ltrim`, cualificada y no cualificada, incluidos NULL y vacío. El port conserva el nombre `ltrim` en el error de tipo sobre LONG y su posición 128; el mapeo de errores ahora identifica variantes `trim`, `ltrim` y `rtrim`. `group_by_function_projection_keys_match_captured_exec` compara 287 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 151 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 287 respuestas completas y 151 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY replace(rtrim(upper(replace(rtrim(...), ...))), ...)`
+
+Se añadieron capturas de `replace(rtrim(upper(replace(rtrim(...), ...))), ...)`, cualificada y no cualificada. Los resultados incluyen NULL y vacío; el error conserva el nombre `rtrim` y la posición 128. `group_by_function_projection_keys_match_captured_exec` compara 289 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 152 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 289 respuestas completas y 152 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY replace(ltrim(upper(replace(rtrim(...), ...))), ...)`
+
+Se verificó una composición mixta con `rtrim` en el argumento interior y `ltrim` en el valor reemplazado. Las formas cualificada y no cualificada coinciden con QuestDB, incluidos NULL y vacío. El error conserva la función interior `rtrim` y la posición 128. `group_by_function_projection_keys_match_captured_exec` compara 291 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 153 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 291 respuestas completas y 153 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `GROUP BY` con composición inversa de `ltrim` y `rtrim`
+
+Se añadieron respuestas completas para `replace(rtrim(upper(replace(ltrim(...), ...))), ...)`, cualificada y no cualificada, además del error `ltrim(LONG)` en posición 128. Como `note` no tiene espacios iniciales/finales, se agregaron dos casos que convierten `a` en espacio y después los espacios en `_`: `LPH_` frente a `_LPH` y `ΒET_` frente a `ΒET`. Así las capturas demuestran el efecto direccional de `ltrim` y `rtrim`, además de NULL y vacío. `group_by_function_projection_keys_match_captured_exec` compara 295 respuestas y `group_by_function_projection_errors_match_captured_exec` compara 154 errores.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 295 respuestas completas y 154 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — caracteres recortados por `trim`, `ltrim` y `rtrim`
+
+Se consultó QuestDB con valores literales y se capturaron cinco casos: `ltrim`/`rtrim` conservan tabuladores; `trim` conserva NBSP (`U+00A0`), espacio em (`U+2003`) y espacio ideográfico (`U+3000`). Por tanto, el comportamiento observado recorta el espacio ASCII `U+0020` solamente, igual que el port. El tabulador se almacena literalmente en SQL/TSV; QuestDB no interpreta `\t` como escape. Las cinco respuestas completas aumentan a 300 las claves de función verificadas; los 154 errores permanecen.
+
+Verificación: `tools/check.sh` pasó con 346 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas de filas y confirmó 300 respuestas completas y 154 errores completos de funciones `GROUP BY`; las comparaciones generales solo acreditan número de filas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — controles ASCII preservados por `trim`
+
+QuestDB conserva CR, LF, form feed y vertical tab dentro de los argumentos de `trim`/`ltrim`/`rtrim`; el port también los conserva. Se añadió `trim_control_characters_oracle.jsonl` con cinco respuestas originales completas y una prueba Rust que evalúa sus grupos de una fila. El runner diferencial compara esas cinco respuestas por columnas, dataset y count. El JSONL permite capturar el caso LF sin introducir una fila física nueva en un manifiesto TSV.
+
+Verificación: `tools/check.sh` pasó con 347 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas generales, 300 respuestas completas y 154 errores de funciones `GROUP BY`, más cinco respuestas completas de controles de trim. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — límites ASCII/Unicode de `trim`
+
+Se recorrieron 54 caracteres: `U+0000..U+0020`, DEL, NEL, NBSP, OGHAM SPACE MARK, `U+2000..U+200A`, separadores de línea/párrafo, NNBSP, MMSP, ideográfico y BOM. Solo `U+0020` se recorta en QuestDB; los otros 53 se conservan. Las 54 respuestas completas se guardan en `trim_character_boundaries_oracle.jsonl`, el test `trim_character_boundaries_match_questdb` las reproduce en el port y el runner coteja columnas, dataset y count contra el oráculo vivo. La cobertura separada de cinco controles CR/LF/FF/VT permanece en `trim_control_characters_oracle.jsonl`.
+
+Verificación: `tools/check.sh` pasó con 348 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas generales, 300 respuestas completas y 154 errores de funciones `GROUP BY`, además de 5 respuestas de controles y 54 límites de caracteres completos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — límites ASCII/Unicode de `ltrim` y `rtrim`
+
+Se repitieron los 54 valores del barrido con `ltrim` y `rtrim`. Ambas funciones eliminan solamente `U+0020` y solo en el extremo correspondiente (`ltrim` conserva el espacio final y `rtrim` conserva el inicial); los otros 53 caracteres se preservan en ambos lados. Las capturas completas están en `ltrim_character_boundaries_oracle.jsonl` y `rtrim_character_boundaries_oracle.jsonl`; `trim_character_boundaries_match_questdb` las reproduce junto con el barrido de `trim` y el runner compara las tres series con columnas, dataset y count.
+
+Verificación: `tools/check.sh` pasó con 348 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas generales, 300 respuestas completas y 154 errores de funciones `GROUP BY`, más 5 controles de trim y 54 respuestas completas para cada una de `trim`, `ltrim` y `rtrim`. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — recorte alrededor de pares sustitutos y marcas combinantes
+
+Se añadieron seis consultas con espacios ASCII alrededor de `😀` (par sustituto UTF-16) y `e` + acento combinante. Para `trim`, `ltrim` y `rtrim`, las respuestas coinciden con QuestDB: los puntos de código y la secuencia combinante permanecen intactos y solo se quita el espacio del extremo pedido. Las respuestas completas se guardan en `trim_unicode_edge_oracle.jsonl`; `trim_preserves_surrogate_pairs_and_combining_marks` las reproduce y el runner las coteja en vivo.
+
+Verificación: `tools/check.sh` pasó con 349 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas generales, 300 respuestas completas y 154 errores de funciones `GROUP BY`, además de 5 respuestas de controles, 54 límites para cada función de recorte y seis bordes Unicode completos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — secuencias emoji ZWJ y selectores de variación
+
+Se añadieron nueve casos con la familia `👨‍👩‍👧‍👦`, la bandera `🏳️‍🌈` (ZWJ + VS16) y `☀️` (VS16), cada una rodeada por espacios ASCII y evaluada con `trim`, `ltrim` y `rtrim`. QuestDB y el port conservan los puntos de código exactamente y solo eliminan el espacio del extremo pedido. Las respuestas completas están en `trim_emoji_oracle.jsonl`; `trim_preserves_emoji_zwj_and_variation_sequences` las reproduce y el runner las coteja en vivo.
+
+Verificación: `tools/check.sh` pasó con 350 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas generales, 300 respuestas completas y 154 errores de funciones `GROUP BY`, junto con los conjuntos de controles, 54 límites por función y 15 bordes Unicode completos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — keycaps y modificadores de tono en recortes Unicode
+
+Se añadieron nueve capturas para keycap `1️⃣`, `👍🏽` y `✌️🏽`, junto a espacios ASCII y con `trim`, `ltrim` y `rtrim`. Las secuencias se mantienen idénticas; solo se quita el espacio del extremo pedido. Las respuestas están en `trim_keycap_skin_oracle.jsonl`; el test `trim_preserves_keycaps_and_emoji_skin_modifiers` las reproduce y el runner compara respuestas completas en vivo.
+
+Verificación: `tools/check.sh` pasó con 351 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas generales, 300 respuestas completas y 154 errores de funciones `GROUP BY`, más 5 controles, 54 límites por función de recorte, 6 bordes UTF-16/combinantes y 18 respuestas emoji completas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — banderas regionales y secuencia de etiqueta con `trim`
+
+Se capturaron nueve respuestas de QuestDB para `🇺🇸`, `🇳🇿` y la bandera de Inglaterra compuesta por etiquetas Unicode, cada una con espacios ASCII y las funciones `trim`, `ltrim` y `rtrim`. Las secuencias de puntos de código quedan intactas y solo se elimina el espacio del extremo indicado. `trim_preserves_regional_and_tag_flags` las reproduce y el runner las compara en vivo mediante columnas, dataset y count. Capturas: `trim_flag_oracle.jsonl`.
+
+Verificación: `tools/check.sh` pasó con 352 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 cuentas generales, 300 respuestas completas y 154 errores de funciones `GROUP BY`, más 5 controles, 54 límites por función de recorte, 6 bordes UTF-16/combinantes y 27 respuestas emoji completas. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — variantes de tonos de piel y banderas adicionales con `trim`
+
+Se capturaron 24 respuestas completas de QuestDB 10.1.0 para cuatro secuencias con tonos de piel variados (`👍🏻`, `👍🏿`, `👋🏽`, `🏃🏾‍♀️`) y cuatro banderas adicionales: Canadá, Japón, ONU y Escocia mediante etiquetas Unicode. `trim`, `ltrim` y `rtrim` conservan las secuencias y quitan solamente los espacios ASCII del extremo correspondiente. `trim_preserves_varied_skin_tones_and_additional_flags` reproduce los casos; el runner compara columnas, dataset y count contra el oráculo vivo. Capturas: `trim_emoji_variants_oracle.jsonl`.
+
+Verificación: `tools/check.sh` pasó con 353 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 consultas generales por cantidad de filas; además, 300 respuestas y 154 errores completos de funciones `GROUP BY`, 54 casos de límites por cada función de recorte, 9 casos de banderas regionales/etiquetas y 24 casos emoji/bandera completos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — recorte de valores Unicode en columna, con NULL y vacío
+
+Se creó la fixture binaria aislada `tests/fixtures/trim-cases` desde QuestDB 10.1.0 apagado y sin WAL. Sus ocho filas incluyen texto con acento, bandera regional, marca combinante, solo espacios, vacío, NULL, tabuladores y espacio U+2003. Las capturas completas de `/exec` para las tres funciones están en `trim_column_oracle.jsonl`, junto con SQL reproducible y hashes. `trim_functions_match_unicode_null_and_empty_column_fixture` verifica cada valor y el runner compara en vivo columnas, dataset y count.
+
+Verificación: `tools/check.sh` pasó con 354 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 consultas generales por cantidad de filas, 300 respuestas y 154 errores completos de funciones `GROUP BY`, además de 3 respuestas completas sobre columna; siguen pasando los conjuntos anteriores de límites Unicode, banderas y emoji. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — filtros `WHERE` sobre funciones de recorte de texto
+
+Se añadieron doce capturas completas para comparar `trim(txt)`, `ltrim(txt)` y `rtrim(txt)` contra Unicode, cadena vacía y NULL, y dos errores para comparaciones STRING→INT. El test `where_trim_functions_match_unicode_null_and_empty_column_fixture` comprueba filas, valores, nulos, vacíos, texto original y posición de error. Se corrigió la comparación de una expresión de texto con literal numérico para que use coerción de columnas y devuelva el error QuestDB ``inconvertible value: `café` [STRING -> INT]`` en la posición 0, en vez del error genérico. El runner verifica las 12 respuestas por columnas/dataset/count y los dos errores por mensaje/posición.
+
+Verificación: `tools/check.sh` pasó con 355 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 consultas generales por cantidad de filas, 300 respuestas y 154 errores completos de funciones `GROUP BY`, más 3 lecturas de columna, 12 filtros y 2 errores de filtro completos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — comparaciones de otras expresiones escalares de texto en `WHERE`
+
+Se añadieron seis capturas completas de `lower`, `upper`, `replace` y `concat` sobre la fixture `trim_cases`, cubriendo Unicode, NULL y vacío, más dos errores de conversión STRING→INT. La prueba `where_text_scalar_functions_match_unicode_null_and_empty_fixture` confirma filas y valores exactos. Las comparaciones numéricas ahora comparten el camino de coerción ya corregido para `trim`; `lower(txt) = 1` y `concat(txt, '!') = 1` coinciden con QuestDB en texto del error y posición 0. El runner coteja las seis respuestas por columnas/dataset/count y los dos errores por mensaje/posición.
+
+Verificación: `tools/check.sh` pasó con 356 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 consultas generales por número de filas, 300 respuestas y 154 errores completos de funciones `GROUP BY`, además de 3 respuestas de columna, 12 filtros `trim` y sus 2 errores, 6 filtros de otras funciones de texto y sus 2 errores. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IS NULL` y `IS NOT NULL` en expresiones escalares de texto
+
+Se implementó el reconocimiento de `IS [NOT] NULL` después de una llamada escalar en el filtro y se reutilizó la comparación existente con NULL. Siete capturas completas cubren ambas formas para `trim`, `lower` y `concat`, más una composición `OR`; incluyen texto Unicode, cadena vacía y NULL. `where_text_scalar_is_null_predicates_match_questdb` reproduce las filas y valores, y el runner coteja columnas, dataset y count con QuestDB 10.1.0.
+
+Verificación: `tools/check.sh` pasó con 357 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 consultas generales por número de filas, 300 respuestas y 154 errores completos de funciones `GROUP BY`, 3 consultas de columna, 12 filtros de recorte más 2 errores, 6 filtros de funciones de texto más 2 errores y 7 predicados `IS [NOT] NULL` completos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IS [NOT] NULL` con aritmética y proyecciones entre paréntesis
+
+Se amplió el parser de filtros para detectar `IS NULL` a nivel superior antes de separar operadores booleanos. La expresión de la izquierda se procesa como operando escalar, incluyendo aritmética y paréntesis anidados, y se evalúa mediante la comparación existente con NULL. Ocho capturas de QuestDB cubren INT/LONG, aritmética sin envolver, un/dos niveles de paréntesis, funciones de texto parentizadas y combinaciones `AND`/`OR`. `where_is_null_handles_arithmetic_and_parenthesized_projections` reproduce sus filas; el runner compara columnas, dataset y count completos.
+
+Verificación: `tools/check.sh` pasó con 358 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 consultas generales por número de filas, 300 respuestas y 154 errores completos de funciones `GROUP BY`, 7 predicados NULL de texto y 8 predicados aritméticos/parentizados completos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN` y `NOT IN` en expresiones escalares de texto
+
+Se extendió el parser para reconocer listas constantes después de expresiones escalares en `WHERE` y se añadió `InListExpression`, con validación de tipos previa a recorrer filas y evaluación compatible con NULL. Nueve capturas completas cubren `trim`, `lower`, `concat`, Unicode, cadena vacía, NULL como valor y como miembro de lista, paréntesis y composición booleana. Tres errores verifican lista vacía para `IN`/`NOT IN` y el rechazo STRING con INT, con sus posiciones de QuestDB. `where_text_scalar_in_lists_match_questdb` reproduce filas y errores; el runner compara columnas/dataset/count y error/posición contra 10.1.0.
+
+Verificación: `tools/check.sh` pasó con 359 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 consultas generales por cantidad de filas, 300 respuestas y 154 errores completos de funciones `GROUP BY`, además de 9 respuestas completas y 3 errores de `IN` sobre funciones de texto. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN` en expresiones numéricas escalares y aritméticas
+
+Se verificó `abs(flags)`, `flags + 1` e `id + 1` con listas enteras, `NOT IN`, NULL en el valor/lista y cadena numérica entre comillas. Se ajustó la resolución de elementos numéricos: una cadena de varios caracteres convertible se convierte a LONG; una cadena de un carácter se rechaza como CHAR, una cadena inválida produce `invalid LONG value`, y DOUBLE no se mezcla con la lista entera. Se capturaron seis respuestas completas y cuatro errores con posiciones de QuestDB. `where_numeric_scalar_and_arithmetic_in_lists_match_questdb` las reproduce y el runner coteja columnas/dataset/count y error/posición.
+
+Verificación: `tools/check.sh` pasó con 360 pruebas SQL, 4 de storage y 3 de types. `tools/run_differential.sh` cotejó 4447 consultas generales por cantidad de filas, 300 respuestas y 154 errores completos de funciones `GROUP BY`, nueve consultas y tres errores `IN` de texto, y seis consultas y cuatro errores `IN` numéricos completos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN`/`NOT IN` sobre expresiones FLOAT y DOUBLE
+
+Se capturaron nueve respuestas completas y cuatro errores de QuestDB 10.1.0 para `IN`/`NOT IN` sobre columnas FLOAT/DOUBLE y expresiones `abs`/`sqrt`. Los casos cubren decimales, NULL como valor y miembro, `-0.0`, igualdad de ceros con signo, cadenas numéricas, `'NaN'` (que QuestDB convierte al sentinel NULL en esta lista) y errores por BOOLEAN, CHAR y DOUBLE inválido. `where_float_double_scalar_in_lists_match_questdb` reproduce las respuestas y posiciones; `tools/run_differential.sh` compara columnas/dataset/count y error/posición en vivo.
+
+Se ajustó la resolución de miembros STRING para expresiones DOUBLE: un texto numérico de más de un carácter se convierte a DOUBLE, `'NaN'` se trata como NULL y los textos inválidos generan `invalid DOUBLE value`. Un texto de un carácter conserva el error CHAR de QuestDB.
+
+Verificación: `tools/check.sh` pasó con 361 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales y todas las respuestas/errores completas existentes, incluidas las 9 nuevas respuestas FLOAT/DOUBLE y sus 4 errores. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN`/`NOT IN` sobre expresiones BOOLEAN
+
+QuestDB 10.1.0 rechaza `IN`/`NOT IN` cuando el operando es BOOLEAN, incluso si el miembro también es BOOLEAN. Se capturaron doce errores completos para columnas y `starts_with(...)`: uno y varios miembros BOOLEAN, NULL solo y combinado, `NOT`, `NOT IN`, miembros INT/STRING y listas vacías en ambas formas. El mensaje varía entre `BOOLEAN in TIPO` y el error de tipo singular con una lista de varios miembros; todas las posiciones apuntan al operador `IN`.
+
+El port valida el tipo BOOLEAN antes de evaluar filas, devuelve los mensajes de QuestDB y conserva la posición del operador en ambas rutas del parser (columna simple y expresión). `where_boolean_in_lists_match_questdb_errors` comprueba los doce casos y el runner coteja el fixture `where_boolean_in_expr_errors_oracle.jsonl` en vivo.
+
+Verificación: `tools/check.sh` pasó con 362 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales y confirmó en vivo los doce errores BOOLEAN por mensaje/posición, junto con los cotejos completos existentes de respuestas y errores. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## Próxima tarea
+
+## 2026-11-16 — `IN`/`NOT IN` sobre expresiones DATE y TIMESTAMP
+
+Se capturaron diez respuestas completas y seis errores de QuestDB 10.1.0 para columnas DATE/TIMESTAMP y una expresión `dateadd`. DATE convierte sus milisegundos a microsegundos al compararse; los miembros LONG usan microsegundos. Los textos admiten fecha corta y timestamp UTC; TIMESTAMP numérico y textual conserva la unidad de microsegundos. Los casos cubren listas múltiples, `NOT IN`, NULL y errores de parseo, CHAR, BOOLEAN y DOUBLE.
+
+El port añade resolución temporal para miembros DATE/TIMESTAMP, normaliza DATE a microsegundos y valida las listas antes de recorrer filas. El parser conserva las posiciones de cada miembro en listas de columnas simples para ubicar errores de fecha y tipo como QuestDB. `where_date_timestamp_in_lists_match_questdb` reproduce los valores y errores, y el runner compara respuestas completas y mensaje/posición en vivo.
+
+Verificación: `tools/check.sh` pasó con 363 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, 10 respuestas DATE/TIMESTAMP por columnas/dataset/count y 6 errores por mensaje/posición, además de los conjuntos existentes. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN`/`NOT IN` sobre expresiones GEOHASH
+
+QuestDB 10.1.0 rechaza `IN`/`NOT IN` sobre `make_geohash(...)`. Se capturaron trece errores completos para precisiones de 5, 8 y 10 bits: miembros CHAR, STRING, INT, DOUBLE, BOOLEAN y NULL; listas de varios miembros, `NOT IN` y listas vacías. Los mensajes incluyen el tipo GEOHASH con precisión, el tipo del miembro en listas unitarias y la posición exacta del operador.
+
+El port reconoce la expresión GEOHASH antes de la resolución como texto y devuelve el error estático correspondiente sin evaluar filas. `where_geohash_in_lists_match_questdb_errors` reproduce mensajes y posiciones; el runner compara los trece errores con QuestDB 10.1.0 en vivo.
+
+Verificación: `tools/check.sh` pasó con 364 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales y confirmó los trece errores GEOHASH por mensaje/posición, además de los manifiestos completos existentes. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN`/`NOT IN` sobre expresiones UUID
+
+Se capturaron ocho respuestas completas y siete errores de QuestDB 10.1.0 para `to_uuid(...)` en `WHERE`. Los casos incluyen UUID canónico, hexadecimal en mayúsculas, varios miembros y duplicados, `NOT IN`, NULL solo y mixto, UUID inválido, CHAR, INT, BOOLEAN, DOUBLE y listas vacías.
+
+El port valida el UUID antes de recorrer filas, normaliza la grafía hexadecimal a minúsculas para comparar el valor canónico y reproduce los errores upstream con su posición. `where_uuid_in_lists_match_questdb` verifica resultados, nulos y errores; el runner compara las ocho respuestas por columnas/dataset/count y los siete errores por mensaje/posición.
+
+Verificación: `tools/check.sh` pasó con 365 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales y confirmó en vivo las ocho respuestas UUID y sus siete errores completos, junto con los manifests de las unidades anteriores. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## 2026-11-16 — `IN`/`NOT IN` sobre expresiones IPv4
+
+Se capturaron seis respuestas completas y siete errores de QuestDB 10.1.0 para `netmask(...)` en `WHERE`. Los casos cubren IPv4 válida y sin coincidencia, NULL solo y combinado, `NOT IN`, formato inválido y miembros CHAR, INT, DOUBLE y BOOLEAN, además de listas vacías.
+
+El port reconoce que `netmask` devuelve IPv4, canoniza los miembros con `Ipv4Addr` y conserva el tipo IPv4 en errores de conversión. `where_ipv4_in_lists_match_questdb` verifica resultados y errores; el runner coteja seis respuestas completas y siete errores contra el oráculo vivo.
+
+Verificación: `tools/check.sh` pasó con 366 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales y confirmó seis respuestas IPv4 por columnas/dataset/count y siete errores por mensaje/posición, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
+## Próxima tarea
+
+Capturar y probar `IN`/`NOT IN` sobre expresiones de conversión (`::type` y `cast`) en `WHERE`, cubriendo conversiones de texto/número, NULL, miembros compatibles e incompatibles y posiciones de error frente a QuestDB 10.1.0.

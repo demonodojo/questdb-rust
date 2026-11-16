@@ -1,0 +1,24 @@
+{"query":"SELECT trim(' 👍🏻 ') AS value FROM sensors GROUP BY trim(' 👍🏻 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["👍🏻"]],"count":1,"case":"thumbs_light_trim"}
+{"query":"SELECT ltrim(' 👍🏻 ') AS value FROM sensors GROUP BY ltrim(' 👍🏻 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["👍🏻 "]],"count":1,"case":"thumbs_light_ltrim"}
+{"query":"SELECT rtrim(' 👍🏻 ') AS value FROM sensors GROUP BY rtrim(' 👍🏻 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 👍🏻"]],"count":1,"case":"thumbs_light_rtrim"}
+{"query":"SELECT trim(' 👍🏿 ') AS value FROM sensors GROUP BY trim(' 👍🏿 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["👍🏿"]],"count":1,"case":"thumbs_dark_trim"}
+{"query":"SELECT ltrim(' 👍🏿 ') AS value FROM sensors GROUP BY ltrim(' 👍🏿 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["👍🏿 "]],"count":1,"case":"thumbs_dark_ltrim"}
+{"query":"SELECT rtrim(' 👍🏿 ') AS value FROM sensors GROUP BY rtrim(' 👍🏿 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 👍🏿"]],"count":1,"case":"thumbs_dark_rtrim"}
+{"query":"SELECT trim(' 👋🏽 ') AS value FROM sensors GROUP BY trim(' 👋🏽 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["👋🏽"]],"count":1,"case":"wave_medium_trim"}
+{"query":"SELECT ltrim(' 👋🏽 ') AS value FROM sensors GROUP BY ltrim(' 👋🏽 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["👋🏽 "]],"count":1,"case":"wave_medium_ltrim"}
+{"query":"SELECT rtrim(' 👋🏽 ') AS value FROM sensors GROUP BY rtrim(' 👋🏽 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 👋🏽"]],"count":1,"case":"wave_medium_rtrim"}
+{"query":"SELECT trim(' 🏃🏾‍♀️ ') AS value FROM sensors GROUP BY trim(' 🏃🏾‍♀️ ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🏃🏾‍♀️"]],"count":1,"case":"runner_medium_dark_trim"}
+{"query":"SELECT ltrim(' 🏃🏾‍♀️ ') AS value FROM sensors GROUP BY ltrim(' 🏃🏾‍♀️ ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🏃🏾‍♀️ "]],"count":1,"case":"runner_medium_dark_ltrim"}
+{"query":"SELECT rtrim(' 🏃🏾‍♀️ ') AS value FROM sensors GROUP BY rtrim(' 🏃🏾‍♀️ ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 🏃🏾‍♀️"]],"count":1,"case":"runner_medium_dark_rtrim"}
+{"query":"SELECT trim(' 🇨🇦 ') AS value FROM sensors GROUP BY trim(' 🇨🇦 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🇨🇦"]],"count":1,"case":"canada_flag_trim"}
+{"query":"SELECT ltrim(' 🇨🇦 ') AS value FROM sensors GROUP BY ltrim(' 🇨🇦 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🇨🇦 "]],"count":1,"case":"canada_flag_ltrim"}
+{"query":"SELECT rtrim(' 🇨🇦 ') AS value FROM sensors GROUP BY rtrim(' 🇨🇦 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 🇨🇦"]],"count":1,"case":"canada_flag_rtrim"}
+{"query":"SELECT trim(' 🇯🇵 ') AS value FROM sensors GROUP BY trim(' 🇯🇵 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🇯🇵"]],"count":1,"case":"japan_flag_trim"}
+{"query":"SELECT ltrim(' 🇯🇵 ') AS value FROM sensors GROUP BY ltrim(' 🇯🇵 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🇯🇵 "]],"count":1,"case":"japan_flag_ltrim"}
+{"query":"SELECT rtrim(' 🇯🇵 ') AS value FROM sensors GROUP BY rtrim(' 🇯🇵 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 🇯🇵"]],"count":1,"case":"japan_flag_rtrim"}
+{"query":"SELECT trim(' 🇺🇳 ') AS value FROM sensors GROUP BY trim(' 🇺🇳 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🇺🇳"]],"count":1,"case":"un_flag_trim"}
+{"query":"SELECT ltrim(' 🇺🇳 ') AS value FROM sensors GROUP BY ltrim(' 🇺🇳 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🇺🇳 "]],"count":1,"case":"un_flag_ltrim"}
+{"query":"SELECT rtrim(' 🇺🇳 ') AS value FROM sensors GROUP BY rtrim(' 🇺🇳 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 🇺🇳"]],"count":1,"case":"un_flag_rtrim"}
+{"query":"SELECT trim(' 🏴󠁧󠁢󠁳󠁣󠁴󠁿 ') AS value FROM sensors GROUP BY trim(' 🏴󠁧󠁢󠁳󠁣󠁴󠁿 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🏴󠁧󠁢󠁳󠁣󠁴󠁿"]],"count":1,"case":"scotland_tag_flag_trim"}
+{"query":"SELECT ltrim(' 🏴󠁧󠁢󠁳󠁣󠁴󠁿 ') AS value FROM sensors GROUP BY ltrim(' 🏴󠁧󠁢󠁳󠁣󠁴󠁿 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["🏴󠁧󠁢󠁳󠁣󠁴󠁿 "]],"count":1,"case":"scotland_tag_flag_ltrim"}
+{"query":"SELECT rtrim(' 🏴󠁧󠁢󠁳󠁣󠁴󠁿 ') AS value FROM sensors GROUP BY rtrim(' 🏴󠁧󠁢󠁳󠁣󠁴󠁿 ')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[[" 🏴󠁧󠁢󠁳󠁣󠁴󠁿"]],"count":1,"case":"scotland_tag_flag_rtrim"}

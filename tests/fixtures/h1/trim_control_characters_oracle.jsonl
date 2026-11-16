@@ -1,0 +1,5 @@
+{"query":"SELECT ltrim('\rX') AS value FROM sensors GROUP BY ltrim('\rX')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\rX"]],"count":1}
+{"query":"SELECT rtrim('X\r') AS value FROM sensors GROUP BY rtrim('X\r')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["X\r"]],"count":1}
+{"query":"SELECT trim('\nX\n') AS value FROM sensors GROUP BY trim('\nX\n')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\nX\n"]],"count":1}
+{"query":"SELECT trim('\fX\f') AS value FROM sensors GROUP BY trim('\fX\f')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\fX\f"]],"count":1}
+{"query":"SELECT trim('\u000bX\u000b') AS value FROM sensors GROUP BY trim('\u000bX\u000b')","columns":[{"name":"value","type":"STRING"}],"timestamp":-1,"dataset":[["\u000bX\u000b"]],"count":1}

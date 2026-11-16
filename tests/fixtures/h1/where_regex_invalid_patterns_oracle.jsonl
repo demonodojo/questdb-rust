@@ -9,3 +9,22 @@
 {"query":"SELECT id FROM sensors WHERE note ~ 'a\\'","error":"Unescaped trailing backslash near index 2\na\\","position":39}
 {"query":"SELECT id FROM sensors WHERE note ~ 'XJ**'","error":"Dangling meta character '*' near index 3\nXJ**\n   ^","position":40}
 {"query":"SELECT id FROM sensors WHERE note ~ '(abc'","error":"Unclosed group near index 4\n(abc","position":41}
+{"query":"SELECT id FROM sensors s WHERE abs(s.id) ~ 'x' ORDER BY id","error":"there is no matching operator `~` with the argument types: LONG ~ CHAR","position":41}
+{"query":"SELECT id FROM sensors s WHERE left(s.id, 1) ~ '1' ORDER BY id","error":"there is no matching function `left` with the argument types: (LONG, INT)","position":31}
+{"query":"SELECT id FROM sensors s WHERE to_str(s.id) ~ '1' ORDER BY id","error":"there is no matching function `to_str` with the argument types: (LONG)","position":31}
+{"query":"SELECT id FROM sensors s WHERE split_part(s.note, s.id, 1) ~ 'a' ORDER BY id","error":"there is no matching function `split_part` with the argument types: (STRING, LONG, INT)","position":31}
+{"query":"SELECT id FROM sensors s WHERE split_part(s.note, 'a', s.flags) ~ 'a' ORDER BY id","error":"index must be either a constant expression or a placeholder","position":55}
+{"query":"SELECT id FROM sensors s WHERE to_str(s.ts, s.note) ~ '2020' ORDER BY id","error":"there is no matching function `to_str` with the argument types: (TIMESTAMP, STRING)","position":31}
+{"query":"SELECT id FROM sensors s WHERE quote_ident(s.id) ~ '1' ORDER BY id","error":"there is no matching function `quote_ident` with the argument types: (LONG)","position":31}
+{"query":"SELECT id FROM sensors s WHERE regexp_replace(s.note, s.id, 'x') ~ 'x' ORDER BY id","error":"there is no matching function `regexp_replace` with the argument types: (STRING, LONG, CHAR)","position":31}
+{"query":"SELECT id FROM sensors s WHERE format_type(s.id, NULL) ~ '.+' ORDER BY id","error":"expression type mismatch, expected: INT, actual: LONG","position":43}
+{"query":"SELECT id FROM sensors s WHERE json_extract(s.id, '$') ~ '.' ORDER BY id","error":"there is no matching function `json_extract` with the argument types: (LONG, CHAR)","position":31}
+{"query":"SELECT id FROM sensors s WHERE json_extract(s.tag, s.note) ~ '.' ORDER BY id","error":"constant or bind variable expected","position":51}
+{"query":"SELECT id FROM sensors s WHERE md5(s.id) ~ '.' ORDER BY id","error":"there is no matching function `md5` with the argument types: (LONG)","position":31}
+{"query":"SELECT id FROM sensors s WHERE to_uuid(s.id) ~ '.' ORDER BY id","error":"wrong number of arguments for function `to_uuid`; expected: 2, provided: 1","position":31}
+{"query":"SELECT id FROM sensors s WHERE pg_catalog.pg_get_userbyid(s.id) ~ '.*' ORDER BY id","error":"argument type mismatch for function `pg_catalog.pg_get_userbyid` at #1 expected: INT, actual: LONG","position":58}
+{"query":"SELECT id FROM sensors s WHERE pg_catalog.pg_table_is_visible('sensors') ~ '.*' ORDER BY id","error":"there is no matching operator `~` with the argument types: BOOLEAN ~ STRING","position":73}
+{"query":"SELECT id FROM sensors s WHERE pg_catalog.pg_is_in_recovery() ~ '.*' ORDER BY id","error":"there is no matching operator `~` with the argument types: BOOLEAN ~ STRING","position":62}
+{"query":"SELECT id FROM sensors s WHERE to_char(s.ts) ~ '.' ORDER BY id","error":"argument type mismatch for function `to_char` at #1 expected: BINARY, actual: TIMESTAMP","position":39}
+{"query":"SELECT id FROM sensors s WHERE make_geohash(s.reading, s.reading, 4) ~ '.*' ORDER BY id","error":"there is no matching operator `~` with the argument types: GEOHASH(4b) ~ STRING","position":69}
+{"query":"SELECT id FROM sensors s WHERE netmask(s.id) ~ '.*' ORDER BY id","error":"there is no matching function `netmask` with the argument types: (LONG)","position":31}
