@@ -1502,12 +1502,12 @@ Verificación: `tools/check.sh` pasó con 377 pruebas SQL, 4 de storage y 3 de t
 
 ## 2026-11-16 — subconsultas cursor en `IN`/`NOT IN` para SYMBOL
 
-QuestDB 10.1.0 admite un cursor como fuente de miembros para columnas `SYMBOL`. Se portó la primera columna de subconsultas con referencias directas, proyecciones escalares de tipo STRING/SYMBOL/VARCHAR y agregados simples o agrupados. Se comprobaron duplicados, alias en ambas consultas, valores NULL, cursor vacío, JOIN, subconsultas anidadas, composición AND/OR, `NOT`, `ORDER BY` y `LIMIT`; se reproducen además errores y posiciones para salida de cursor incompatible y columnas externas BOOLEAN, numéricas, temporales, textuales y expresiones no admitidas.
+QuestDB 10.1.0 admite un cursor como fuente de miembros para columnas `SYMBOL`, en filtros `WHERE` y proyecciones `SELECT`. Se portó la primera columna de subconsultas con referencias directas, proyecciones escalares de tipo STRING/SYMBOL/VARCHAR y agregados simples o agrupados. Se comprobaron duplicados, alias en ambas consultas, valores NULL, cursor vacío, JOIN, subconsultas anidadas, composición AND/OR, `NOT`, `ORDER BY`, `LIMIT` y proyecciones booleanas; se reproducen además errores y posiciones para salida de cursor incompatible y columnas externas BOOLEAN, numéricas, temporales, textuales y expresiones no admitidas.
 
-`where_symbol_in_subqueries_match_cursor_results` verifica veinticuatro resultados completos y siete errores. Capturas `/exec` en `where_symbol_in_subqueries_oracle.jsonl`, `where_symbol_in_subqueries_errors_oracle.jsonl` y `where_in_subquery_rejected_outer_types_oracle.jsonl`; el runner compara las respuestas completas y errores contra la referencia viva.
+`where_symbol_in_subqueries_match_cursor_results` y `symbol_in_subqueries_work_in_select_projections` verifican treinta y cinco resultados completos y veintitrés errores. Capturas `/exec` en `where_symbol_in_subqueries_oracle.jsonl`, `where_symbol_in_subqueries_errors_oracle.jsonl`, `where_in_subquery_rejected_outer_types_oracle.jsonl`, `where_in_subquery_remaining_outer_types_oracle.jsonl`, `where_in_subquery_limit0_oracle.jsonl` y `where_in_subquery_projection_oracle.jsonl`; el runner compara respuestas completas y errores contra la referencia viva.
 
-Verificación: pendiente de repetir después de ampliar la inferencia de tipo, JOIN, anidamiento y composición de predicados.
+Verificación: `tools/check.sh` pasó con 379 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 35 resultados completos y 23 errores de subconsultas cursor, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
 
 ## Próxima tarea
 
-Consultar QuestDB 10.1.0 sobre los tipos externos restantes (CHAR, VARCHAR, UUID, GEOHASH, etc.) en `IN` con cursor; capturar mensajes y posiciones y portar los rechazos observados.
+Ampliar la compatibilidad de `IN`/`NOT IN` en proyecciones para cursores vacíos y operandos externos inválidos; comparar NULL, orden de evaluación y posiciones de error con QuestDB 10.1.0.

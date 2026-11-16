@@ -1158,6 +1158,7 @@ pub struct InListExpr {
     pub source_label: String,
     pub value: String,
     pub args: Vec<ConcatArg>,
+    pub negated: bool,
 }
 
 /// `+`, `-`, `*`, `/` or `%` of a column and a constant.
@@ -5297,6 +5298,8 @@ impl<'a> Parser<'a> {
                     pieces.push(SelectPiece::Cast(self.parse_colon_cast(name)?));
                 } else if self.starts_pipes() {
                     pieces.push(SelectPiece::Concat(self.parse_concat_op(name)?));
+                } else if self.starts_not_in() {
+                    pieces.push(SelectPiece::InList(self.parse_not_in_list(name)?));
                 } else if self.eat_keyword("in") {
                     pieces.push(SelectPiece::InList(self.parse_in_list(name)?));
                 } else if self.eat_keyword("and") {
@@ -6751,7 +6754,24 @@ impl<'a> Parser<'a> {
             source_label,
             value: name,
             args,
+            negated: false,
         })
+    }
+
+    fn parse_not_in_list(&mut self, name: String) -> Result<InListExpr, Error> {
+        self.expect_keyword("not")?;
+        self.expect_keyword("in")?;
+        let mut expression = self.parse_in_list(name)?;
+        expression.negated = true;
+        expression.label = format!("not({})", expression.label);
+        expression.source_label = expression.source_label.replacen(" in ", " not in ", 1);
+        Ok(expression)
+    }
+
+    fn starts_not_in(&self) -> bool {
+        self.keyword_at(self.pos, "not")
+            .and_then(|after_not| self.keyword_at(after_not, "in"))
+            .is_some()
     }
 
     fn parse_and(&mut self, left: String, op: BoolOp) -> Result<AndExpr, Error> {

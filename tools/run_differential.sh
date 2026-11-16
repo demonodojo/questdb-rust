@@ -4290,7 +4290,19 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   symbol_subquery_boolean_or "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid') OR location IN (SELECT location FROM sensors WHERE location='東京') ORDER BY ts" \
   symbol_subquery_not_parenthesized "SELECT ts,location FROM sensors WHERE NOT (location IN (SELECT location FROM sensors WHERE location='madrid')) ORDER BY ts" \
   symbol_subquery_order_limit_asc "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors ORDER BY ts LIMIT 1) ORDER BY ts" \
-  symbol_subquery_order_limit_desc "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors ORDER BY ts DESC LIMIT 1) ORDER BY ts"
+  symbol_subquery_order_limit_desc "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors ORDER BY ts DESC LIMIT 1) ORDER BY ts" \
+  symbol_subquery_null_member_not_in_varchar "SELECT ts,location FROM sensors WHERE location NOT IN (SELECT tag FROM sensors) ORDER BY ts" \
+  symbol_subquery_null_member_not_in_string "SELECT ts,location FROM sensors WHERE location NOT IN (SELECT note FROM sensors) ORDER BY ts" \
+  symbol_subquery_null_only_in "SELECT ts,location FROM sensors WHERE location IN (SELECT nullif(location,location) FROM sensors LIMIT 1) ORDER BY ts" \
+  symbol_subquery_null_only_not_in "SELECT ts,location FROM sensors WHERE location NOT IN (SELECT nullif(location,location) FROM sensors LIMIT 1) ORDER BY ts" \
+  symbol_subquery_limit0_valid "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid') LIMIT 0"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" \
+  symbol_subquery_projection_in "SELECT ts, location IN (SELECT location FROM sensors WHERE location='madrid') AS matched FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_not_in_null "SELECT ts, location NOT IN (SELECT tag FROM sensors) AS unmatched FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_expression "SELECT ts, location IN (SELECT lower(location) FROM sensors WHERE location='madrid') AS matched FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_multiple "SELECT ts, location IN (SELECT location FROM sensors WHERE location='madrid') AS in_madrid, location NOT IN (SELECT tag FROM sensors) AS unmatched FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_where "SELECT ts, location IN (SELECT location FROM sensors WHERE location='madrid') AS in_madrid FROM sensors WHERE location NOT IN (SELECT location FROM sensors WHERE location='東京') ORDER BY ts" \
+  symbol_subquery_projection_logic "SELECT ts, (location IN (SELECT location FROM sensors WHERE location='madrid') OR location IN (SELECT location FROM sensors WHERE location='東京')) AS is_known FROM sensors ORDER BY ts"
 
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o "$DIFF_TMP/qdb-diff-count.json"; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -9728,6 +9740,44 @@ for expected in outer_subquery_error_captures:
         if payload.get(field) != expected.get(field):
             raise SystemExit(f"live unsupported outer IN subquery mismatch for {expected['case']} field {field}")
 print(f"live-reference-errors: {len(outer_subquery_error_captures)} unsupported outer IN subquery types match message and position")
+remaining_outer_subquery_errors = [json.loads(line) for line in open(os.path.join(os.environ["DIFF_H1"], "where_in_subquery_remaining_outer_types_oracle.jsonl"), encoding="utf-8")]
+for expected in remaining_outer_subquery_errors:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live remaining outer IN subquery mismatch for {expected['case']} field {field}")
+print(f"live-reference-errors: {len(remaining_outer_subquery_errors)} remaining outer IN subquery types match message and position")
+limit0_subquery_captures = [json.loads(line) for line in open(os.path.join(os.environ["DIFF_H1"], "where_in_subquery_limit0_oracle.jsonl"), encoding="utf-8")]
+for expected in limit0_subquery_captures:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    fields = ("error", "position") if "error" in expected else ("columns", "dataset", "count")
+    for field in fields:
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live LIMIT 0 IN cursor mismatch for {expected['case']} field {field}")
+print(f"live-reference: {sum('error' in x for x in limit0_subquery_captures)} LIMIT 0 cursor errors and {sum('error' not in x for x in limit0_subquery_captures)} valid cursor result match")
+projection_subquery_captures = [json.loads(line) for line in open(os.path.join(os.environ["DIFF_H1"], "where_in_subquery_projection_oracle.jsonl"), encoding="utf-8")]
+for expected in projection_subquery_captures:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        payload = json.load(error)
+    fields = ("error", "position") if "error" in expected else ("columns", "dataset", "count")
+    for field in fields:
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live SELECT projection IN cursor mismatch for {expected['case']} field {field}")
+print(f"live-reference: {sum('error' not in x for x in projection_subquery_captures)} SELECT cursor projections and {sum('error' in x for x in projection_subquery_captures)} projection errors match")
 PY
 else
   echo "live-reference: NOT RUNNING at $HTTP"

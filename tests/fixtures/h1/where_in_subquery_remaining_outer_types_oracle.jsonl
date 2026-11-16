@@ -1,0 +1,7 @@
+{"query":"SELECT ch FROM sensors WHERE ch IN (SELECT location FROM sensors)","error":"constant expected","position":36,"case":"char_outer"}
+{"query":"SELECT tag FROM sensors WHERE tag IN (SELECT location FROM sensors)","error":"constant expected","position":38,"case":"varchar_outer"}
+{"query":"SELECT b FROM sensors WHERE b IN (SELECT id FROM sensors)","error":"cannot compare LONG with type CURSOR","position":34,"case":"byte_outer"}
+{"query":"SELECT code FROM sensors WHERE code IN (SELECT id FROM sensors)","error":"cannot compare LONG with type CURSOR","position":40,"case":"short_outer"}
+{"query":"SELECT to_uuid(id,id) FROM sensors WHERE to_uuid(id,id) IN (SELECT location FROM sensors)","error":"constant expected","position":60,"case":"uuid_expression_outer"}
+{"query":"SELECT make_geohash(reading,reading,4) FROM sensors WHERE make_geohash(reading,reading,4) IN (SELECT location FROM sensors)","error":"there is no matching operator `in` with the argument types: GEOHASH(4b) in CURSOR","position":90,"case":"geohash_expression_outer"}
+{"query":"SELECT netmask('192.168.1.1/24') FROM sensors WHERE netmask('192.168.1.1/24') IN (SELECT location FROM sensors)","error":"constant expected","position":82,"case":"ipv4_expression_outer"}

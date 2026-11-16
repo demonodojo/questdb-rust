@@ -1,3 +1,6 @@
 {"query":"SELECT location FROM sensors WHERE location IN (SELECT id FROM sensors)","error":"supported column types are VARCHAR, SYMBOL and STRING, found: LONG","position":44,"case":"symbol_cursor_wrong_type"}
 {"query":"SELECT lower(location) FROM sensors WHERE lower(location) IN (SELECT lower(location) FROM sensors WHERE location='madrid')","error":"constant expected","position":62,"case":"symbol_expression_outer"}
 {"query":"SELECT id FROM sensors WHERE missing IN (SELECT id FROM sensors)","error":"Invalid column: missing","position":29,"case":"invalid_outer_column"}
+{"query":"SELECT location FROM sensors WHERE location IN (SELECT ch FROM sensors)","error":"supported column types are VARCHAR, SYMBOL and STRING, found: CHAR","position":44,"case":"symbol_cursor_char_output"}
+{"query":"SELECT location FROM sensors WHERE location IN (SELECT ts FROM sensors)","error":"supported column types are VARCHAR, SYMBOL and STRING, found: TIMESTAMP","position":44,"case":"symbol_cursor_timestamp_output"}
+{"query":"SELECT location FROM sensors WHERE location IN (SELECT ok FROM sensors)","error":"supported column types are VARCHAR, SYMBOL and STRING, found: BOOLEAN","position":44,"case":"symbol_cursor_boolean_output"}

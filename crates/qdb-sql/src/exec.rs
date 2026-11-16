@@ -90,6 +90,23 @@ fn expand_symbol_cursor(data_dir: &Path, sql: &str) -> Result<Option<String>, Er
         .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
         .next()
         .unwrap_or("");
+    if lhs.is_empty() {
+        if let Some((FilterOperand::Projection(expression), position)) =
+            outer.filter.as_ref().and_then(filter_in_subquery_lhs)
+        {
+            if let ResolvedProj::MakeGeohash { bits, .. } = resolve_proj(&outer_table, expression)?
+            {
+                return Err(Error::at(
+                    format!(
+                        "there is no matching operator `in` with the argument types: {} in CURSOR",
+                        geohash_type_name(bits)
+                    ),
+                    position,
+                ));
+            }
+        }
+        return Err(Error::at("constant expected", start));
+    }
     let Some(lhs_index) = in_list_column_index(&outer_table, lhs).or_else(|| {
         lhs.rsplit('.')
             .next()
@@ -181,6 +198,19 @@ fn expand_symbol_cursor(data_dir: &Path, sql: &str) -> Result<Option<String>, Er
     let mut expanded = sql.to_string();
     expanded.replace_range(open..=end, &format!("({})", members.join(",")));
     Ok(Some(expanded))
+}
+
+fn filter_in_subquery_lhs(filter: &Filter) -> Option<(&FilterOperand, usize)> {
+    match filter {
+        Filter::InListExpression {
+            value, position, ..
+        } => Some((value, *position)),
+        Filter::Not(inner) => filter_in_subquery_lhs(inner),
+        Filter::And(left, right) | Filter::Or(left, right) => {
+            filter_in_subquery_lhs(left).or_else(|| filter_in_subquery_lhs(right))
+        }
+        _ => None,
+    }
 }
 
 fn cursor_first_column_tag(data_dir: &Path, sql: &str) -> Result<i32, Error> {
@@ -1922,6 +1952,7 @@ enum ResolvedProj {
         label: String,
         index: usize,
         items: Vec<InItem>,
+        negated: bool,
     },
     Eq {
         label: String,
@@ -5517,6 +5548,7 @@ fn resolve_in_list(table: &Table, expr: &InListExpr) -> Result<ResolvedProj, Err
         label: expr.label.clone(),
         index,
         items,
+        negated: expr.negated,
     })
 }
 
@@ -5611,7 +5643,7 @@ fn in_char_text(unit: u16) -> String {
 
 fn in_list_value(table: &Table, row: usize, index: usize, items: &[InItem]) -> Scalar {
     Scalar::Boolean(match &table.columns[index][row] {
-        Scalar::Null => false,
+        Scalar::Null => items.iter().any(|item| matches!(item, InItem::Null)),
         Scalar::Long(number) => in_long(*number, items),
         Scalar::Int(number) => in_long(i64::from(*number), items),
         Scalar::Short(number) => in_long(i64::from(*number), items),
@@ -14215,7 +14247,15 @@ fn eval_resolved(table: &Table, row: usize, item: &ResolvedProj) -> Scalar {
                 value
             }
         }
-        ResolvedProj::InList { index, items, .. } => in_list_value(table, row, *index, items),
+        ResolvedProj::InList {
+            index,
+            items,
+            negated,
+            ..
+        } => match in_list_value(table, row, *index, items) {
+            Scalar::Boolean(value) => Scalar::Boolean(if *negated { !value } else { value }),
+            value => value,
+        },
         ResolvedProj::Eq {
             index,
             op,
@@ -28083,6 +28123,11 @@ mod tests {
             ("SELECT ts,location FROM sensors WHERE NOT (location IN (SELECT location FROM sensors WHERE location='madrid')) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:08.000000Z\t東京\n"),
             ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors ORDER BY ts LIMIT 1) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
             ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors ORDER BY ts DESC LIMIT 1) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE location NOT IN (SELECT tag FROM sensors) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE location NOT IN (SELECT note FROM sensors) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT nullif(location,location) FROM sensors LIMIT 1) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts,location FROM sensors WHERE location NOT IN (SELECT nullif(location,location) FROM sensors LIMIT 1) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid') LIMIT 0", "ts\tlocation\n"),
         ];
         for (sql, expected) in cases {
             assert_eq!(
@@ -28098,6 +28143,55 @@ mod tests {
             "supported column types are VARCHAR, SYMBOL and STRING, found: LONG"
         );
         assert_eq!(error.position, Some(44));
+        for (sql, message, position) in [
+            (
+                "SELECT id FROM sensors WHERE id IN (SELECT id FROM sensors) LIMIT 0",
+                "cannot compare LONG with type CURSOR",
+                36,
+            ),
+            (
+                "SELECT location FROM sensors WHERE location IN (SELECT id FROM sensors) LIMIT 0",
+                "supported column types are VARCHAR, SYMBOL and STRING, found: LONG",
+                44,
+            ),
+            (
+                "SELECT note FROM sensors WHERE note IN (SELECT note FROM sensors) LIMIT 0",
+                "constant expected",
+                40,
+            ),
+            (
+                "SELECT ok FROM sensors WHERE ok IN (SELECT ok FROM sensors) LIMIT 0",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                32,
+            ),
+            (
+                "SELECT make_geohash(reading,reading,4) FROM sensors WHERE make_geohash(reading,reading,4) IN (SELECT location FROM sensors) LIMIT 0",
+                "there is no matching operator `in` with the argument types: GEOHASH(4b) in CURSOR",
+                90,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+        for (sql, message) in [
+            (
+                "SELECT location FROM sensors WHERE location IN (SELECT ch FROM sensors)",
+                "supported column types are VARCHAR, SYMBOL and STRING, found: CHAR",
+            ),
+            (
+                "SELECT location FROM sensors WHERE location IN (SELECT ts FROM sensors)",
+                "supported column types are VARCHAR, SYMBOL and STRING, found: TIMESTAMP",
+            ),
+            (
+                "SELECT location FROM sensors WHERE location IN (SELECT ok FROM sensors)",
+                "supported column types are VARCHAR, SYMBOL and STRING, found: BOOLEAN",
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(44), "{sql}");
+        }
         for (sql, message, position) in [
             (
                 "SELECT id FROM sensors WHERE id IN (SELECT id FROM sensors)",
@@ -28129,11 +28223,69 @@ mod tests {
                 "Invalid column: missing",
                 29,
             ),
+            (
+                "SELECT ch FROM sensors WHERE ch IN (SELECT location FROM sensors)",
+                "constant expected",
+                36,
+            ),
+            (
+                "SELECT tag FROM sensors WHERE tag IN (SELECT location FROM sensors)",
+                "constant expected",
+                38,
+            ),
+            (
+                "SELECT b FROM sensors WHERE b IN (SELECT id FROM sensors)",
+                "cannot compare LONG with type CURSOR",
+                34,
+            ),
+            (
+                "SELECT code FROM sensors WHERE code IN (SELECT id FROM sensors)",
+                "cannot compare LONG with type CURSOR",
+                40,
+            ),
+            (
+                "SELECT to_uuid(id,id) FROM sensors WHERE to_uuid(id,id) IN (SELECT location FROM sensors)",
+                "constant expected",
+                60,
+            ),
+            (
+                "SELECT make_geohash(reading,reading,4) FROM sensors WHERE make_geohash(reading,reading,4) IN (SELECT location FROM sensors)",
+                "there is no matching operator `in` with the argument types: GEOHASH(4b) in CURSOR",
+                90,
+            ),
+            (
+                "SELECT netmask('192.168.1.1/24') FROM sensors WHERE netmask('192.168.1.1/24') IN (SELECT location FROM sensors)",
+                "constant expected",
+                82,
+            ),
         ] {
             let error = execute(&sensors, sql).unwrap_err();
             assert_eq!(error.message, message, "{sql}");
             assert_eq!(error.position, Some(position), "{sql}");
         }
+    }
+
+    #[test]
+    fn symbol_in_subqueries_work_in_select_projections() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, expected) in [
+            ("SELECT ts, location IN (SELECT location FROM sensors WHERE location='madrid') AS matched FROM sensors ORDER BY ts", "ts\tmatched\n2020-01-02T03:04:05.000000Z\ttrue\n2020-01-02T03:04:06.000000Z\tfalse\n2020-01-02T03:04:07.000000Z\ttrue\n2020-01-02T03:04:08.000000Z\tfalse\n"),
+            ("SELECT ts, location NOT IN (SELECT tag FROM sensors) AS unmatched FROM sensors ORDER BY ts", "ts\tunmatched\n2020-01-02T03:04:05.000000Z\ttrue\n2020-01-02T03:04:06.000000Z\tfalse\n2020-01-02T03:04:07.000000Z\ttrue\n2020-01-02T03:04:08.000000Z\ttrue\n"),
+            ("SELECT ts, location IN (SELECT lower(location) FROM sensors WHERE location='madrid') AS matched FROM sensors ORDER BY ts", "ts\tmatched\n2020-01-02T03:04:05.000000Z\ttrue\n2020-01-02T03:04:06.000000Z\tfalse\n2020-01-02T03:04:07.000000Z\ttrue\n2020-01-02T03:04:08.000000Z\tfalse\n"),
+            ("SELECT ts, location IN (SELECT location FROM sensors WHERE location='madrid') AS in_madrid, location NOT IN (SELECT tag FROM sensors) AS unmatched FROM sensors ORDER BY ts", "ts\tin_madrid\tunmatched\n2020-01-02T03:04:05.000000Z\ttrue\ttrue\n2020-01-02T03:04:06.000000Z\tfalse\tfalse\n2020-01-02T03:04:07.000000Z\ttrue\ttrue\n2020-01-02T03:04:08.000000Z\tfalse\ttrue\n"),
+            ("SELECT ts, location IN (SELECT location FROM sensors WHERE location='madrid') AS in_madrid FROM sensors WHERE location NOT IN (SELECT location FROM sensors WHERE location='東京') ORDER BY ts", "ts\tin_madrid\n2020-01-02T03:04:05.000000Z\ttrue\n2020-01-02T03:04:06.000000Z\tfalse\n2020-01-02T03:04:07.000000Z\ttrue\n"),
+            ("SELECT ts, (location IN (SELECT location FROM sensors WHERE location='madrid') OR location IN (SELECT location FROM sensors WHERE location='東京')) AS is_known FROM sensors ORDER BY ts", "ts\tis_known\n2020-01-02T03:04:05.000000Z\ttrue\n2020-01-02T03:04:06.000000Z\tfalse\n2020-01-02T03:04:07.000000Z\ttrue\n2020-01-02T03:04:08.000000Z\ttrue\n"),
+        ] {
+            let actual = execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+            assert_eq!(render_tsv(&actual), expected, "{sql}");
+        }
+        let error = execute(
+            &sensors,
+            "SELECT ts, id IN (SELECT id FROM sensors) AS matched FROM sensors ORDER BY ts",
+        )
+        .unwrap_err();
+        assert_eq!(error.message, "cannot compare LONG with type CURSOR");
+        assert_eq!(error.position, Some(18));
     }
 
     #[test]

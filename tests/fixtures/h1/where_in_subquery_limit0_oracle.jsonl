@@ -1,0 +1,6 @@
+{"query":"SELECT id FROM sensors WHERE id IN (SELECT id FROM sensors) LIMIT 0","error":"cannot compare LONG with type CURSOR","position":36,"case":"limit0_numeric_outer"}
+{"query":"SELECT location FROM sensors WHERE location IN (SELECT id FROM sensors) LIMIT 0","error":"supported column types are VARCHAR, SYMBOL and STRING, found: LONG","position":44,"case":"limit0_symbol_bad_cursor"}
+{"query":"SELECT note FROM sensors WHERE note IN (SELECT note FROM sensors) LIMIT 0","error":"constant expected","position":40,"case":"limit0_string_outer"}
+{"query":"SELECT ok FROM sensors WHERE ok IN (SELECT ok FROM sensors) LIMIT 0","error":"there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN","position":32,"case":"limit0_boolean_outer"}
+{"query":"SELECT make_geohash(reading,reading,4) FROM sensors WHERE make_geohash(reading,reading,4) IN (SELECT location FROM sensors) LIMIT 0","error":"there is no matching operator `in` with the argument types: GEOHASH(4b) in CURSOR","position":90,"case":"limit0_geohash_outer"}
+{"query":"SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid') LIMIT 0","columns":[{"name":"ts","type":"TIMESTAMP"},{"name":"location","type":"SYMBOL"}],"timestamp":0,"dataset":[],"count":0,"case":"limit0_valid_cursor"}
