@@ -28400,6 +28400,28 @@ mod tests {
     }
 
     #[test]
+    fn qualified_symbol_cursor_projections_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, expected) in [
+            (
+                "SELECT s.location IN (SELECT t.location FROM sensors t WHERE t.location='madrid') AS matched FROM sensors s ORDER BY s.ts",
+                "matched\ntrue\nfalse\ntrue\nfalse\n",
+            ),
+            (
+                "SELECT s.location NOT IN (SELECT t.tag FROM sensors t) AS unmatched FROM sensors s ORDER BY s.ts",
+                "unmatched\ntrue\nfalse\ntrue\ntrue\n",
+            ),
+            (
+                "SELECT s.location IN (SELECT t.location FROM sensors t WHERE t.id=99) AS empty_in FROM sensors s WHERE s.location IS NULL ORDER BY s.ts",
+                "empty_in\nfalse\n",
+            ),
+        ] {
+            let actual = execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+            assert_eq!(render_tsv(&actual), expected, "{sql}");
+        }
+    }
+
+    #[test]
     fn replace_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");

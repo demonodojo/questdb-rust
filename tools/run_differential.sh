@@ -4305,7 +4305,10 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   symbol_subquery_projection_logic "SELECT ts, (location IN (SELECT location FROM sensors WHERE location='madrid') OR location IN (SELECT location FROM sensors WHERE location='東京')) AS is_known FROM sensors ORDER BY ts" \
   symbol_subquery_projection_empty_in "SELECT ts, location IN (SELECT location FROM sensors WHERE id=99) AS x FROM sensors ORDER BY ts" \
   symbol_subquery_projection_empty_not_in "SELECT ts, location NOT IN (SELECT location FROM sensors WHERE id=99) AS x FROM sensors ORDER BY ts" \
-  symbol_subquery_projection_empty_in_null_lhs "SELECT ts, location IN (SELECT location FROM sensors WHERE id=99) AS x FROM sensors WHERE location IS NULL ORDER BY ts"
+  symbol_subquery_projection_empty_in_null_lhs "SELECT ts, location IN (SELECT location FROM sensors WHERE id=99) AS x FROM sensors WHERE location IS NULL ORDER BY ts" \
+  symbol_subquery_projection_qualified_outer_in "SELECT s.location IN (SELECT t.location FROM sensors t WHERE t.location='madrid') AS matched FROM sensors s ORDER BY s.ts" \
+  symbol_subquery_projection_qualified_outer_not_in "SELECT s.location NOT IN (SELECT t.tag FROM sensors t) AS unmatched FROM sensors s ORDER BY s.ts" \
+  symbol_subquery_projection_qualified_outer_empty_in "SELECT s.location IN (SELECT t.location FROM sensors t WHERE t.id=99) AS empty_in FROM sensors s WHERE s.location IS NULL ORDER BY s.ts"
 
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o "$DIFF_TMP/qdb-diff-count.json"; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
