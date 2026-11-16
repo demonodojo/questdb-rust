@@ -192,12 +192,60 @@ fn expand_symbol_cursor(data_dir: &Path, sql: &str) -> Result<Option<String>, Er
     if members.is_empty() {
         let left_start = lhs_prefix.rfind(lhs).unwrap_or(in_marker - lhs.len());
         let mut expanded = sql.to_string();
-        expanded.replace_range(left_start..=end, if negated { "true" } else { "false" });
+        let select_projection =
+            top_level_sql_keyword(&lower, b"from").is_some_and(|from| in_marker < from);
+        let replacement = if select_projection {
+            // SELECT projections do not accept a bare BOOLEAN literal, so use a
+            // constant predicate with the same value when the cursor is empty.
+            if negated {
+                "starts_with('a', 'a')"
+            } else {
+                "starts_with('a', 'b')"
+            }
+        } else if negated {
+            "true"
+        } else {
+            "false"
+        };
+        expanded.replace_range(left_start..=end, replacement);
         return Ok(Some(expanded));
     }
     let mut expanded = sql.to_string();
     expanded.replace_range(open..=end, &format!("({})", members.join(",")));
     Ok(Some(expanded))
+}
+
+fn top_level_sql_keyword(sql: &str, keyword: &[u8]) -> Option<usize> {
+    let bytes = sql.as_bytes();
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\'' {
+            if quoted && bytes.get(i + 1) == Some(&b'\'') {
+                i += 2;
+                continue;
+            }
+            quoted = !quoted;
+        } else if !quoted {
+            match bytes[i] {
+                b'(' => depth += 1,
+                b')' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            if depth == 0
+                && bytes[i..].starts_with(keyword)
+                && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_'))
+                && bytes
+                    .get(i + keyword.len())
+                    .is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+            {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 fn filter_in_subquery_lhs(filter: &Filter) -> Option<(&FilterOperand, usize)> {
@@ -28286,6 +28334,69 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.message, "cannot compare LONG with type CURSOR");
         assert_eq!(error.position, Some(18));
+    }
+
+    #[test]
+    fn symbol_cursor_projections_empty_and_invalid_types_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, expected) in [
+            (
+                "SELECT ts, location IN (SELECT location FROM sensors WHERE id=99) AS x FROM sensors ORDER BY ts",
+                "ts\tx\n2020-01-02T03:04:05.000000Z\tfalse\n2020-01-02T03:04:06.000000Z\tfalse\n2020-01-02T03:04:07.000000Z\tfalse\n2020-01-02T03:04:08.000000Z\tfalse\n",
+            ),
+            (
+                "SELECT ts, location NOT IN (SELECT location FROM sensors WHERE id=99) AS x FROM sensors ORDER BY ts",
+                "ts\tx\n2020-01-02T03:04:05.000000Z\ttrue\n2020-01-02T03:04:06.000000Z\ttrue\n2020-01-02T03:04:07.000000Z\ttrue\n2020-01-02T03:04:08.000000Z\ttrue\n",
+            ),
+            (
+                "SELECT ts, location IN (SELECT location FROM sensors WHERE id=99) AS x FROM sensors WHERE location IS NULL ORDER BY ts",
+                "ts\tx\n2020-01-02T03:04:06.000000Z\tfalse\n",
+            ),
+        ] {
+            let actual = execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+            assert_eq!(render_tsv(&actual), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts, id IN (SELECT location FROM sensors) AS x FROM sensors ORDER BY ts",
+                "cannot compare LONG with type CURSOR",
+                18,
+            ),
+            (
+                "SELECT ts, ok IN (SELECT location FROM sensors) AS x FROM sensors ORDER BY ts",
+                "there is no matching operator `in` with the argument types: BOOLEAN in CURSOR",
+                14,
+            ),
+            (
+                "SELECT ts, note IN (SELECT location FROM sensors) AS x FROM sensors ORDER BY ts",
+                "constant expected",
+                20,
+            ),
+            (
+                "SELECT ts, ts IN (SELECT location FROM sensors) AS x FROM sensors ORDER BY ts",
+                "cannot compare TIMESTAMP with type CURSOR",
+                18,
+            ),
+            (
+                "SELECT ts, id IN (SELECT id FROM sensors) AS x FROM sensors LIMIT 0",
+                "cannot compare LONG with type CURSOR",
+                18,
+            ),
+            (
+                "SELECT ts, location IN (SELECT id FROM sensors) AS x FROM sensors ORDER BY ts",
+                "supported column types are VARCHAR, SYMBOL and STRING, found: LONG",
+                20,
+            ),
+            (
+                "SELECT ts, location IN (SELECT ok FROM sensors) AS x FROM sensors ORDER BY ts",
+                "supported column types are VARCHAR, SYMBOL and STRING, found: BOOLEAN",
+                20,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
     }
 
     #[test]
