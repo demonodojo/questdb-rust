@@ -127,11 +127,32 @@ fn expand_symbol_cursor(
     if lhs_prefix.to_ascii_lowercase().ends_with(" not") {
         lhs_prefix = lhs_prefix[..lhs_prefix.len() - 3].trim_end();
     }
-    let lhs = lhs_prefix
-        .trim_end()
-        .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
-        .next()
-        .unwrap_or("");
+    let cast_suffix_candidate = lhs_prefix
+        .to_ascii_lowercase()
+        .ends_with("::symbol")
+        .then(|| lhs_prefix.len() - "::symbol".len());
+    let cast_base = cast_suffix_candidate.map(|suffix_start| {
+        lhs_prefix[..suffix_start]
+            .split_whitespace()
+            .last()
+            .unwrap_or("")
+    });
+    let cast_to_symbol = cast_base.is_some_and(|base| {
+        !base.is_empty()
+            && base
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'.')
+    });
+    let cast_suffix_start = cast_to_symbol.then_some(cast_suffix_candidate).flatten();
+    let lhs = if cast_to_symbol {
+        cast_base.unwrap_or("")
+    } else {
+        lhs_prefix
+            .trim_end()
+            .rsplit(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+            .next()
+            .unwrap_or("")
+    };
     if lhs.is_empty() {
         if let Some((FilterOperand::Projection(expression), position)) =
             outer.filter.as_ref().and_then(filter_in_subquery_lhs)
@@ -163,7 +184,18 @@ fn expand_symbol_cursor(
         ));
     };
     let lhs_tag = outer_table.meta.columns[lhs_index].tag;
-    if lhs_tag != qdb_types::TAG_SYMBOL {
+    let symbol_cast_source = cast_to_symbol
+        && matches!(
+            lhs_tag,
+            qdb_types::TAG_STRING
+                | qdb_types::TAG_SYMBOL
+                | qdb_types::TAG_VARCHAR
+                | qdb_types::TAG_LONG
+                | qdb_types::TAG_INT
+                | qdb_types::TAG_SHORT
+                | qdb_types::TAG_BYTE
+        );
+    if lhs_tag != qdb_types::TAG_SYMBOL && !symbol_cast_source {
         let message = match lhs_tag {
             qdb_types::TAG_BOOLEAN => {
                 let member = cursor_first_column_tag(data_dir, &sql[start..end]).ok();
@@ -204,6 +236,11 @@ fn expand_symbol_cursor(
         };
         return Err(Error::at(message, position));
     }
+    let numeric_symbol_cast = cast_to_symbol
+        && matches!(
+            lhs_tag,
+            qdb_types::TAG_LONG | qdb_types::TAG_INT | qdb_types::TAG_SHORT | qdb_types::TAG_BYTE
+        );
 
     let inner_sql = &sql[start..end];
     let tag = cursor_first_column_tag(data_dir, inner_sql)
@@ -224,10 +261,15 @@ fn expand_symbol_cursor(
     let members = values
         .rows
         .iter()
-        .map(|row| match row.first() {
-            Some(Scalar::Text(value)) => Ok(format!("'{}'", value.replace('\'', "''"))),
-            Some(Scalar::Null) | None => Ok("NULL".to_string()),
-            _ => Err(Error::at("constant expected", start)),
+        .filter_map(|row| match row.first() {
+            Some(Scalar::Text(value)) if numeric_symbol_cast => value
+                .parse::<i64>()
+                .ok()
+                .filter(|number| number.to_string() == *value)
+                .map(|number| Ok(number.to_string())),
+            Some(Scalar::Text(value)) => Some(Ok(format!("'{}'", value.replace('\'', "''")))),
+            Some(Scalar::Null) | None => Some(Ok("NULL".to_string())),
+            _ => Some(Err(Error::at("constant expected", start))),
         })
         .collect::<Result<Vec<_>, _>>()?;
     let negated = lower[..in_marker].trim_end().ends_with(" not");
@@ -236,7 +278,18 @@ fn expand_symbol_cursor(
         let mut expanded = sql.to_string();
         let select_projection =
             top_level_sql_keyword(&lower, b"from").is_some_and(|from| in_marker < from);
-        let replacement = if select_projection {
+        let projection_end = top_level_sql_keyword(&lower, b"from").unwrap_or(lower.len());
+        let projection_prefix = &lower[..projection_end];
+        let projection_has_boolean_composition = projection_prefix.contains(" and ")
+            || projection_prefix.contains(" or ")
+            || projection_prefix.trim_start().starts_with("select not ");
+        let replacement = if select_projection && projection_has_boolean_composition {
+            if negated {
+                "true"
+            } else {
+                "false"
+            }
+        } else if select_projection {
             // SELECT projections do not accept a bare BOOLEAN literal, so use a
             // constant predicate with the same value when the cursor is empty.
             if negated {
@@ -267,6 +320,13 @@ fn expand_symbol_cursor(
     let replacement = format!("({})", members.join(","));
     let original_end = end + 1;
     let expanded_end = open + replacement.len();
+    if let Some(cast_suffix_start) = cast_suffix_start {
+        let suffix_end = lhs_prefix.len();
+        expanded.replace_range(
+            cast_suffix_start..suffix_end,
+            &" ".repeat(suffix_end - cast_suffix_start),
+        );
+    }
     expanded.replace_range(open..original_end, &replacement);
     let label_override = projection_cursor_label_override(sql, &lower, in_marker);
     Ok(Some((
@@ -367,7 +427,12 @@ fn render_projection_expression_label(item: &str) -> Option<(String, bool)> {
         if negated {
             let prefix = expression.get(..in_marker)?.trim_end();
             let prefix = prefix.get(..prefix.len().checked_sub(3)?)?.trim_end();
-            let lhs_start = prefix
+            let lhs_prefix = if prefix.to_ascii_lowercase().ends_with("::symbol") {
+                prefix.get(..prefix.len() - "::symbol".len())?
+            } else {
+                prefix
+            };
+            let lhs_start = lhs_prefix
                 .rfind(|character: char| {
                     !(character.is_ascii_alphanumeric() || matches!(character, '_' | '.'))
                 })
@@ -480,6 +545,7 @@ fn normalize_query_model_tokens(sql: &str) -> String {
     let mut output = String::with_capacity(sql.len());
     let mut i = 0;
     let mut quoted = false;
+    let mut preserve_cast_type = false;
     while i < characters.len() {
         let character = characters[i];
         if character == '\'' {
@@ -498,6 +564,9 @@ fn normalize_query_model_tokens(sql: &str) -> String {
         } else if character.is_ascii_whitespace() {
             if !output.ends_with(' ') && !output.is_empty() {
                 output.push(' ');
+            }
+            if preserve_cast_type {
+                preserve_cast_type = false;
             }
             i += 1;
         } else if matches!(character, '=' | '<' | '>' | '!') {
@@ -521,8 +590,19 @@ fn normalize_query_model_tokens(sql: &str) -> String {
             }
             output.push_str(", ");
             i += 1;
+        } else if character == ':' && characters.get(i + 1) == Some(&':') {
+            output.push_str("::");
+            preserve_cast_type = true;
+            i += 2;
         } else {
-            output.push(character.to_ascii_lowercase());
+            output.push(if preserve_cast_type {
+                character
+            } else {
+                character.to_ascii_lowercase()
+            });
+            if preserve_cast_type && !character.is_ascii_alphanumeric() && character != '_' {
+                preserve_cast_type = false;
+            }
             i += 1;
         }
     }
@@ -28820,6 +28900,26 @@ mod tests {
                 "SELECT (location NOT IN (SELECT tag FROM sensors) OR location IN (SELECT location FROM sensors WHERE location='東京')) FROM sensors ORDER BY ts",
                 "projection_no_alias_not_in_or",
             ),
+            (
+                "SELECT (location IN (SELECT location FROM sensors WHERE id=99) OR location IN (SELECT location FROM sensors WHERE location='madrid')) FROM sensors ORDER BY ts",
+                "projection_no_alias_empty_or_match",
+            ),
+            (
+                "SELECT (location IN (SELECT location FROM sensors WHERE id=99) AND location IN (SELECT location FROM sensors WHERE location='madrid')) FROM sensors ORDER BY ts",
+                "projection_no_alias_empty_and_match",
+            ),
+            (
+                "SELECT (location NOT IN (SELECT location FROM sensors WHERE id=99) AND location IN (SELECT location FROM sensors WHERE location='madrid')) FROM sensors ORDER BY ts",
+                "projection_no_alias_empty_not_in_and_match",
+            ),
+            (
+                "SELECT NOT (location IN (SELECT location FROM sensors WHERE id=99)) FROM sensors ORDER BY ts",
+                "projection_no_alias_not_empty_in",
+            ),
+            (
+                "SELECT (location IN (SELECT location FROM sensors WHERE id=99) OR location IN (SELECT location FROM sensors WHERE id=98)) FROM sensors ORDER BY ts",
+                "projection_no_alias_empty_or_empty",
+            ),
         ] {
             let expected = std::fs::read_to_string(
                 sensors.join(format!("expected/symbol_subquery_{name}.tsv")),
@@ -28877,6 +28977,58 @@ mod tests {
         ] {
             let error = execute(&sensors, sql).unwrap_err();
             assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
+    fn symbol_cursor_cast_projections_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, expected) in [
+            (
+                "SELECT location::SYMBOL IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts",
+                "location::SYMBOL in (select-choose location from (sensors where\ntrue\nfalse\ntrue\nfalse\n",
+            ),
+            (
+                "SELECT location::SYMBOL IN (SELECT location FROM sensors WHERE id=99) FROM sensors WHERE location IS NULL ORDER BY ts",
+                "location::SYMBOL in (select-choose location from (sensors where\nfalse\n",
+            ),
+            (
+                "SELECT note::SYMBOL IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts",
+                "note::SYMBOL in (select-choose location from (sensors where loca\nfalse\nfalse\nfalse\nfalse\n",
+            ),
+            (
+                "SELECT note::SYMBOL NOT IN (SELECT location FROM sensors WHERE id=99) FROM sensors ORDER BY ts",
+                "not(note::SYMBOL in (select-choose location from (sensors where\ntrue\ntrue\ntrue\ntrue\n",
+            ),
+            (
+                "SELECT s.location::SYMBOL IN (SELECT t.location FROM sensors t WHERE t.location='madrid') AS matched FROM sensors s ORDER BY s.ts",
+                "matched\ntrue\nfalse\ntrue\nfalse\n",
+            ),
+            (
+                "SELECT id::SYMBOL IN (SELECT id::STRING FROM sensors WHERE id=1) FROM sensors ORDER BY ts",
+                "id::SYMBOL in (select-choose id::STRING id::STRING from (sensors\ntrue\nfalse\nfalse\nfalse\n",
+            ),
+            (
+                "SELECT id::SYMBOL NOT IN (SELECT id::STRING FROM sensors WHERE id=99) FROM sensors ORDER BY ts",
+                "not(id::SYMBOL in (select-choose id::STRING id::STRING from (sen\ntrue\ntrue\ntrue\ntrue\n",
+            ),
+        ] {
+            let actual = execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+            assert_eq!(render_tsv(&actual), expected, "{sql}");
+        }
+        for (sql, position) in [
+            (
+                "SELECT lower(location) IN (SELECT location FROM sensors WHERE id=99) FROM sensors ORDER BY ts",
+                27,
+            ),
+            (
+                "SELECT concat(location, '!') NOT IN (SELECT location FROM sensors WHERE id=99) FROM sensors ORDER BY ts",
+                37,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, "constant expected", "{sql}");
             assert_eq!(error.position, Some(position), "{sql}");
         }
     }

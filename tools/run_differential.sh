@@ -4325,7 +4325,12 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   symbol_subquery_projection_no_alias_or "SELECT (location IN (SELECT location FROM sensors WHERE location='madrid') OR location IN (SELECT location FROM sensors WHERE location='東京')) FROM sensors ORDER BY ts" \
   symbol_subquery_projection_no_alias_and "SELECT (location IN (SELECT location FROM sensors WHERE location='madrid') AND location IN (SELECT location FROM sensors WHERE location='東京')) FROM sensors ORDER BY ts" \
   symbol_subquery_projection_no_alias_not "SELECT NOT (location IN (SELECT location FROM sensors WHERE location='madrid')) FROM sensors ORDER BY ts" \
-  symbol_subquery_projection_no_alias_not_in_or "SELECT (location NOT IN (SELECT tag FROM sensors) OR location IN (SELECT location FROM sensors WHERE location='東京')) FROM sensors ORDER BY ts"
+  symbol_subquery_projection_no_alias_not_in_or "SELECT (location NOT IN (SELECT tag FROM sensors) OR location IN (SELECT location FROM sensors WHERE location='東京')) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_empty_or_match "SELECT (location IN (SELECT location FROM sensors WHERE id=99) OR location IN (SELECT location FROM sensors WHERE location='madrid')) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_empty_and_match "SELECT (location IN (SELECT location FROM sensors WHERE id=99) AND location IN (SELECT location FROM sensors WHERE location='madrid')) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_empty_not_in_and_match "SELECT (location NOT IN (SELECT location FROM sensors WHERE id=99) AND location IN (SELECT location FROM sensors WHERE location='madrid')) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_not_empty_in "SELECT NOT (location IN (SELECT location FROM sensors WHERE id=99)) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_empty_or_empty "SELECT (location IN (SELECT location FROM sensors WHERE id=99) OR location IN (SELECT location FROM sensors WHERE id=98)) FROM sensors ORDER BY ts"
 
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o "$DIFF_TMP/qdb-diff-count.json"; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
