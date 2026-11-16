@@ -8908,6 +8908,31 @@ for expected in expected_qualified_boolean_in_errors:
         if payload.get(field) != expected.get(field):
             raise SystemExit(f"live qualified BOOLEAN IN error mismatch for {expected['case']!r} field {field}")
 print(f"live-reference-errors: {len(expected_qualified_boolean_in_errors)} table-qualified BOOLEAN IN errors match message and position")
+alias_numeric_in_captures = os.path.join(os.environ["DIFF_H1"], "where_alias_numeric_in_oracle.jsonl")
+with open(alias_numeric_in_captures, encoding="utf-8") as captures:
+    expected_alias_numeric_in = [json.loads(line) for line in captures]
+for expected in expected_alias_numeric_in:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live alias numeric IN mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-full: {len(expected_alias_numeric_in)} alias-qualified numeric IN queries match columns, dataset, and count")
+alias_numeric_boolean_in_error_captures = os.path.join(os.environ["DIFF_H1"], "where_alias_numeric_boolean_in_errors_oracle.jsonl")
+with open(alias_numeric_boolean_in_error_captures, encoding="utf-8") as captures:
+    expected_alias_numeric_boolean_in_errors = [json.loads(line) for line in captures]
+for expected in expected_alias_numeric_boolean_in_errors:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    try:
+        with urllib.request.urlopen(url) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as response:
+        payload = json.loads(response.read())
+    for field in ("error", "position"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live alias numeric/BOOLEAN IN error mismatch for {expected['case']!r} field {field}")
+print(f"live-reference-errors: {len(expected_alias_numeric_boolean_in_errors)} alias-qualified numeric/BOOLEAN IN errors match message and position")
 text_scalar_where_error_captures = os.path.join(
     os.environ["DIFF_H1"], "../trim-cases/where_text_scalar_errors_oracle.jsonl"
 )

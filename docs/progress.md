@@ -1468,6 +1468,14 @@ Se capturaron catorce errores de QuestDB 10.1.0 para `sensors.ok IN/NOT IN`: mie
 
 Verificación: `tools/check.sh` pasó con 373 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales y los catorce errores BOOLEAN cualificados, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
 
+## 2026-11-16 — `IN`/`NOT IN` con alias de tabla en columnas numéricas y BOOLEAN
+
+Se capturaron cinco respuestas completas y dieciséis errores de QuestDB 10.1.0 con `s.columna` para LONG, INT, DOUBLE, FLOAT y BOOLEAN. Se cubren listas numéricas, NULL, `NOT IN`, errores de tipo en listas numéricas y el rechazo de BOOLEAN para listas unitarias/múltiples, con NULL y con listas vacías. Los casos de validación estática también se ejecutan con `LIMIT 0`.
+
+`where_alias_numeric_boolean_in_lists_match_questdb` verifica resultados y mensajes/posiciones. El runner compara cinco respuestas por columnas/dataset/count y dieciséis errores por mensaje/posición en vivo.
+
+Verificación: `tools/check.sh` pasó con 374 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, cinco resultados numéricos por alias y dieciséis errores numéricos/BOOLEAN, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
 ## Próxima tarea
 
-Capturar y probar `IN`/`NOT IN` sobre columnas cualificadas mediante alias de tabla para BOOLEAN y tipos numéricos, incluyendo `LIMIT 0`, frente a QuestDB 10.1.0.
+Capturar y probar `IN`/`NOT IN` sobre columnas DATE y TIMESTAMP con alias de tabla, incluyendo NULL y errores de conversión bajo `LIMIT 0`, frente a QuestDB 10.1.0.

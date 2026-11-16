@@ -27540,6 +27540,107 @@ mod tests {
     }
 
     #[test]
+    fn where_alias_numeric_boolean_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, expected) in [
+            ("SELECT ts,id FROM sensors s WHERE s.id IN (1) ORDER BY ts", "ts\tid\n2020-01-02T03:04:05.000000Z\t1\n"),
+            ("SELECT ts,id FROM sensors s WHERE s.id NOT IN (1,NULL) ORDER BY ts", "ts\tid\n2020-01-02T03:04:06.000000Z\t2\n2020-01-02T03:04:08.000000Z\t-1\n"),
+            ("SELECT ts,flags FROM sensors s WHERE s.flags IN (0,10) ORDER BY ts", "ts\tflags\n2020-01-02T03:04:05.000000Z\t10\n2020-01-02T03:04:07.000000Z\t0\n"),
+            ("SELECT ts,reading FROM sensors s WHERE s.reading IN (1.5,NULL) ORDER BY ts", "ts\treading\n2020-01-02T03:04:05.000000Z\t1.5\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts,score FROM sensors s WHERE s.score IN (1.25,0.0) ORDER BY ts", "ts\tscore\n2020-01-02T03:04:05.000000Z\t1.25\n2020-01-02T03:04:07.000000Z\t0.0\n"),
+        ] {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors s WHERE s.id IN (true) LIMIT 0",
+                "cannot compare LONG with type BOOLEAN",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.flags IN (1.0) LIMIT 0",
+                "cannot compare LONG with type DOUBLE",
+                43,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.reading IN (true) LIMIT 0",
+                "cannot compare DOUBLE with type BOOLEAN",
+                45,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok IN (true)",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok IN (false)",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok IN (NULL)",
+                "there is no matching operator `in` with the argument types: BOOLEAN in NULL",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok NOT IN (false)",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok IN (true,false)",
+                "there is no matching operator `in` with the argument type: BOOLEAN",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok IN (true,NULL)",
+                "there is no matching operator `in` with the argument type: BOOLEAN",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok NOT IN (true,NULL)",
+                "there is no matching operator `in` with the argument type: BOOLEAN",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok IN (true) LIMIT 0",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok IN (true,false) LIMIT 0",
+                "there is no matching operator `in` with the argument type: BOOLEAN",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok IN (1) LIMIT 0",
+                "there is no matching operator `in` with the argument types: BOOLEAN in INT",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok IN ('x') LIMIT 0",
+                "there is no matching operator `in` with the argument types: BOOLEAN in CHAR",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok IN () LIMIT 0",
+                "too few arguments for 'in'",
+                36,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ok NOT IN () LIMIT 0",
+                "too few arguments for 'in'",
+                40,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
     fn replace_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
