@@ -4,3 +4,4 @@
 {"query":"SELECT location FROM sensors WHERE location IN (SELECT ch FROM sensors)","error":"supported column types are VARCHAR, SYMBOL and STRING, found: CHAR","position":44,"case":"symbol_cursor_char_output"}
 {"query":"SELECT location FROM sensors WHERE location IN (SELECT ts FROM sensors)","error":"supported column types are VARCHAR, SYMBOL and STRING, found: TIMESTAMP","position":44,"case":"symbol_cursor_timestamp_output"}
 {"query":"SELECT location FROM sensors WHERE location IN (SELECT ok FROM sensors)","error":"supported column types are VARCHAR, SYMBOL and STRING, found: BOOLEAN","position":44,"case":"symbol_cursor_boolean_output"}
+{"query":"SELECT ts FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid') OR id IN (SELECT id FROM sensors)","error":"cannot compare LONG with type CURSOR","position":106,"case":"where_valid_cursor_then_numeric_cursor_error"}

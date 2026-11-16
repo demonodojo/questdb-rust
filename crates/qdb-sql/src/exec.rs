@@ -43,9 +43,30 @@ struct ProjectionLabelOverride {
     label: String,
 }
 
+struct ExpansionPositionMap {
+    original_end: usize,
+    expanded_end: usize,
+}
+
+impl ExpansionPositionMap {
+    fn restore(&self, error: &mut Error) {
+        if let Some(position) = error.position {
+            if position >= self.expanded_end {
+                error.position = Some(self.original_end + position - self.expanded_end);
+            }
+        }
+    }
+}
+
 pub fn execute(data_dir: &Path, sql: &str) -> Result<QueryResult, Error> {
-    if let Some((expanded, label_override)) = expand_symbol_cursor(data_dir, sql)? {
-        let mut result = execute(data_dir, &expanded)?;
+    if let Some((expanded, label_override, position_map)) = expand_symbol_cursor(data_dir, sql)? {
+        let mut result = match execute(data_dir, &expanded) {
+            Ok(result) => result,
+            Err(mut error) => {
+                position_map.restore(&mut error);
+                return Err(error);
+            }
+        };
         if let Some(label_override) = label_override {
             if let Some(column) = result.columns.get_mut(label_override.index) {
                 *column = label_override.label;
@@ -78,7 +99,14 @@ pub fn execute(data_dir: &Path, sql: &str) -> Result<QueryResult, Error> {
 fn expand_symbol_cursor(
     data_dir: &Path,
     sql: &str,
-) -> Result<Option<(String, Option<ProjectionLabelOverride>)>, Error> {
+) -> Result<
+    Option<(
+        String,
+        Option<ProjectionLabelOverride>,
+        ExpansionPositionMap,
+    )>,
+    Error,
+> {
     let lower = sql.to_ascii_lowercase();
     let Some((in_marker, open, start)) = find_in_cursor_subquery(&lower) else {
         return Ok(None);
@@ -221,14 +249,34 @@ fn expand_symbol_cursor(
         } else {
             "false"
         };
+        let original_start = left_start;
+        let original_end = end + 1;
+        let expanded_end = original_start + replacement.len();
         expanded.replace_range(left_start..=end, replacement);
         let label_override = projection_cursor_label_override(sql, &lower, in_marker);
-        return Ok(Some((expanded, label_override)));
+        return Ok(Some((
+            expanded,
+            label_override,
+            ExpansionPositionMap {
+                original_end,
+                expanded_end,
+            },
+        )));
     }
     let mut expanded = sql.to_string();
-    expanded.replace_range(open..=end, &format!("({})", members.join(",")));
+    let replacement = format!("({})", members.join(","));
+    let original_end = end + 1;
+    let expanded_end = open + replacement.len();
+    expanded.replace_range(open..original_end, &replacement);
     let label_override = projection_cursor_label_override(sql, &lower, in_marker);
-    Ok(Some((expanded, label_override)))
+    Ok(Some((
+        expanded,
+        label_override,
+        ExpansionPositionMap {
+            original_end,
+            expanded_end,
+        },
+    )))
 }
 
 fn top_level_sql_keyword(sql: &str, keyword: &[u8]) -> Option<usize> {
@@ -528,7 +576,7 @@ fn cursor_first_column_tag(data_dir: &Path, sql: &str) -> Result<i32, Error> {
     let expanded = expand_symbol_cursor(data_dir, sql)?;
     let sql = expanded
         .as_ref()
-        .map(|(expanded, _)| expanded.as_str())
+        .map(|(expanded, _, _)| expanded.as_str())
         .unwrap_or(sql);
     let query = parse_query(sql)?;
     let table = query_source_table(data_dir, &query)?;
@@ -28580,6 +28628,18 @@ mod tests {
     }
 
     #[test]
+    fn where_cursor_expansion_restores_later_error_position() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        let error = execute(
+            &sensors,
+            "SELECT ts FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid') OR id IN (SELECT id FROM sensors)",
+        )
+        .unwrap_err();
+        assert_eq!(error.message, "cannot compare LONG with type CURSOR");
+        assert_eq!(error.position, Some(106));
+    }
+
+    #[test]
     fn symbol_in_subqueries_work_in_select_projections() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         for (sql, expected) in [
@@ -28767,6 +28827,57 @@ mod tests {
             .unwrap();
             let actual = execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
             assert_eq!(render_tsv(&actual), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn symbol_cursor_projection_composite_errors_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, message, position) in [
+            (
+                "SELECT id IN (SELECT id FROM sensors) OR location IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors",
+                "cannot compare LONG with type CURSOR",
+                14,
+            ),
+            (
+                "SELECT ok IN (SELECT ok FROM sensors) OR location IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                10,
+            ),
+            (
+                "SELECT note IN (SELECT location FROM sensors) OR location IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors",
+                "constant expected",
+                16,
+            ),
+            (
+                "SELECT ts IN (SELECT ts FROM sensors) OR location IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors",
+                "cannot compare TIMESTAMP with type CURSOR",
+                14,
+            ),
+            (
+                "SELECT location IN (SELECT location FROM sensors WHERE location='madrid') OR id IN (SELECT id FROM sensors) FROM sensors LIMIT 0",
+                "cannot compare LONG with type CURSOR",
+                84,
+            ),
+            (
+                "SELECT id IN (SELECT id FROM sensors) OR location IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors LIMIT 0",
+                "cannot compare LONG with type CURSOR",
+                14,
+            ),
+            (
+                "SELECT location IN (SELECT location FROM sensors) OR ok IN (SELECT ok FROM sensors) FROM sensors",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                56,
+            ),
+            (
+                "SELECT location IN (SELECT location FROM sensors) OR ok IN (SELECT ok FROM sensors) FROM sensors LIMIT 0",
+                "there is no matching operator `in` with the argument types: BOOLEAN in BOOLEAN",
+                56,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
         }
     }
 
