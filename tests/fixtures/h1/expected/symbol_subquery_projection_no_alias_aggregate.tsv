@@ -1,0 +1,5 @@
+location in (select-choose min(location) min(location) from (sen
+true
+false
+true
+false

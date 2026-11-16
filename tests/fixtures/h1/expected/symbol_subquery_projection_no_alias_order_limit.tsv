@@ -1,0 +1,5 @@
+location in (select-choose location from (sensors) limit 1)
+true
+false
+true
+false

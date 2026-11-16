@@ -1,0 +1,5 @@
+location in (select-choose location from (sensors group by locat
+true
+true
+true
+true

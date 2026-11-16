@@ -289,7 +289,8 @@ fn projection_cursor_label_override(
     if !suffix.trim_start_matches(')').trim().is_empty() {
         return None;
     }
-    let inner_plan = render_simple_subquery_plan(sql.get(inner_start..end)?)?;
+    let inner_sql = sql.get(inner_start..end)?;
+    let inner_plan = render_simple_subquery_plan(inner_sql)?;
     let mut lhs = sql.get(*item_start..in_marker)?.trim_end();
     if negated {
         lhs = lhs.trim_end();
@@ -305,7 +306,13 @@ fn projection_cursor_label_override(
     } else {
         expression
     };
-    let label = label.chars().take(64).collect::<String>();
+    let inner_lower = inner_sql.to_ascii_lowercase();
+    let max_label_len = if top_level_sql_keyword(&inner_lower, b"join").is_some() {
+        60
+    } else {
+        64
+    };
+    let label = label.chars().take(max_label_len).collect::<String>();
     Some(ProjectionLabelOverride {
         index,
         label: label.trim_end().to_string(),
@@ -28689,6 +28696,39 @@ mod tests {
                 "ts\tlocation in (select-choose location from (sensors where location\n2020-01-02T03:04:05.000000Z\ttrue\n2020-01-02T03:04:06.000000Z\tfalse\n2020-01-02T03:04:07.000000Z\ttrue\n2020-01-02T03:04:08.000000Z\tfalse\n",
             ),
         ] {
+            let actual = execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+            assert_eq!(render_tsv(&actual), expected, "{sql}");
+        }
+        for (sql, name) in [
+            (
+                "SELECT location IN (SELECT min(location) FROM sensors) FROM sensors ORDER BY ts",
+                "projection_no_alias_aggregate",
+            ),
+            (
+                "SELECT location IN (SELECT location FROM sensors GROUP BY location) FROM sensors ORDER BY ts",
+                "projection_no_alias_group",
+            ),
+            (
+                "SELECT location IN (SELECT t.location FROM sensors s JOIN sensors t ON s.id=t.id) FROM sensors ORDER BY ts",
+                "projection_no_alias_join",
+            ),
+            (
+                "SELECT location IN (SELECT location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid')) FROM sensors ORDER BY ts",
+                "projection_no_alias_nested",
+            ),
+            (
+                "SELECT location IN (SELECT location FROM sensors ORDER BY ts LIMIT 1) FROM sensors ORDER BY ts",
+                "projection_no_alias_order_limit",
+            ),
+            (
+                "SELECT location IN (SELECT min(location) FROM sensors GROUP BY location) FROM sensors ORDER BY ts",
+                "projection_no_alias_grouped_aggregate",
+            ),
+        ] {
+            let expected = std::fs::read_to_string(
+                sensors.join(format!("expected/symbol_subquery_{name}.tsv")),
+            )
+            .unwrap();
             let actual = execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
             assert_eq!(render_tsv(&actual), expected, "{sql}");
         }

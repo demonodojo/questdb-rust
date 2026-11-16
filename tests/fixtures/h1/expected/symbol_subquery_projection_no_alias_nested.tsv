@@ -1,0 +1,5 @@
+location in (select-choose location from (sensors where location
+true
+false
+true
+false

@@ -1,0 +1,5 @@
+location in (select-choose t.location location from (sensors
+true
+true
+true
+true

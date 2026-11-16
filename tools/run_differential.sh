@@ -4315,7 +4315,13 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   symbol_subquery_projection_no_alias_empty_in "SELECT location IN (SELECT location FROM sensors WHERE id=99) FROM sensors ORDER BY ts" \
   symbol_subquery_projection_no_alias_direct_in "SELECT location IN (SELECT location FROM sensors) FROM sensors" \
   symbol_subquery_projection_no_alias_scalar_in "SELECT location IN (SELECT lower(location) FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts" \
-  symbol_subquery_projection_no_alias_in_second_column "SELECT ts, location IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts"
+  symbol_subquery_projection_no_alias_in_second_column "SELECT ts, location IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_aggregate "SELECT location IN (SELECT min(location) FROM sensors) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_group "SELECT location IN (SELECT location FROM sensors GROUP BY location) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_join "SELECT location IN (SELECT t.location FROM sensors s JOIN sensors t ON s.id=t.id) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_nested "SELECT location IN (SELECT location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid')) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_order_limit "SELECT location IN (SELECT location FROM sensors ORDER BY ts LIMIT 1) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_grouped_aggregate "SELECT location IN (SELECT min(location) FROM sensors GROUP BY location) FROM sensors ORDER BY ts"
 
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o "$DIFF_TMP/qdb-diff-count.json"; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
