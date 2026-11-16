@@ -1,0 +1,5 @@
+not(location in (select-choose tag from (sensors)))
+true
+false
+true
+true

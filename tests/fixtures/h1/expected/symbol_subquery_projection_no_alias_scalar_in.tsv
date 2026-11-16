@@ -1,0 +1,5 @@
+location in (select-choose lower(location) lower(location) from
+true
+false
+true
+false

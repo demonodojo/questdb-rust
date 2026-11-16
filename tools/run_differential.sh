@@ -4309,6 +4309,13 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   symbol_subquery_projection_qualified_outer_in "SELECT s.location IN (SELECT t.location FROM sensors t WHERE t.location='madrid') AS matched FROM sensors s ORDER BY s.ts" \
   symbol_subquery_projection_qualified_outer_not_in "SELECT s.location NOT IN (SELECT t.tag FROM sensors t) AS unmatched FROM sensors s ORDER BY s.ts" \
   symbol_subquery_projection_qualified_outer_empty_in "SELECT s.location IN (SELECT t.location FROM sensors t WHERE t.id=99) AS empty_in FROM sensors s WHERE s.location IS NULL ORDER BY s.ts"
+compare_captured "$ROOT_DIR/tests/fixtures/h1" \
+  symbol_subquery_projection_no_alias_in "SELECT location IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_not_in "SELECT location NOT IN (SELECT tag FROM sensors) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_empty_in "SELECT location IN (SELECT location FROM sensors WHERE id=99) FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_direct_in "SELECT location IN (SELECT location FROM sensors) FROM sensors" \
+  symbol_subquery_projection_no_alias_scalar_in "SELECT location IN (SELECT lower(location) FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts" \
+  symbol_subquery_projection_no_alias_in_second_column "SELECT ts, location IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts"
 
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o "$DIFF_TMP/qdb-diff-count.json"; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'
@@ -9784,6 +9791,15 @@ for expected in projection_subquery_captures:
         if payload.get(field) != expected.get(field):
             raise SystemExit(f"live SELECT projection IN cursor mismatch for {expected['case']} field {field}")
 print(f"live-reference: {sum('error' not in x for x in projection_subquery_captures)} SELECT cursor projections and {sum('error' in x for x in projection_subquery_captures)} projection errors match")
+projection_header_captures = [json.loads(line) for line in open(os.path.join(os.environ["DIFF_H1"], "where_in_subquery_projection_headers_oracle.jsonl"), encoding="utf-8")]
+for expected in projection_header_captures:
+    url = http + "?" + urllib.parse.urlencode({"query": expected["query"]})
+    with urllib.request.urlopen(url) as response:
+        payload = json.load(response)
+    for field in ("columns", "dataset", "count"):
+        if payload.get(field) != expected.get(field):
+            raise SystemExit(f"live SELECT cursor projection header mismatch for {expected['case']} field {field}")
+print(f"live-reference-full: {len(projection_header_captures)} aliasless SELECT cursor headers match columns, dataset, and count")
 PY
 else
   echo "live-reference: NOT RUNNING at $HTTP"

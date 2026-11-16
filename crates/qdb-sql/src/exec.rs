@@ -38,9 +38,20 @@ pub struct QueryResult {
     pub rows: Vec<Vec<Scalar>>,
 }
 
+struct ProjectionLabelOverride {
+    index: usize,
+    label: String,
+}
+
 pub fn execute(data_dir: &Path, sql: &str) -> Result<QueryResult, Error> {
-    if let Some(expanded) = expand_symbol_cursor(data_dir, sql)? {
-        return execute(data_dir, &expanded);
+    if let Some((expanded, label_override)) = expand_symbol_cursor(data_dir, sql)? {
+        let mut result = execute(data_dir, &expanded)?;
+        if let Some(label_override) = label_override {
+            if let Some(column) = result.columns.get_mut(label_override.index) {
+                *column = label_override.label;
+            }
+        }
+        return Ok(result);
     }
     let query = parse_query(sql)?;
     if let Some(count) = query.long_sequence {
@@ -64,7 +75,10 @@ pub fn execute(data_dir: &Path, sql: &str) -> Result<QueryResult, Error> {
     execute_on(&table, &query)
 }
 
-fn expand_symbol_cursor(data_dir: &Path, sql: &str) -> Result<Option<String>, Error> {
+fn expand_symbol_cursor(
+    data_dir: &Path,
+    sql: &str,
+) -> Result<Option<(String, Option<ProjectionLabelOverride>)>, Error> {
     let lower = sql.to_ascii_lowercase();
     let Some((in_marker, open, start)) = find_in_cursor_subquery(&lower) else {
         return Ok(None);
@@ -208,11 +222,15 @@ fn expand_symbol_cursor(data_dir: &Path, sql: &str) -> Result<Option<String>, Er
             "false"
         };
         expanded.replace_range(left_start..=end, replacement);
-        return Ok(Some(expanded));
+        let label_override =
+            projection_cursor_label_override(sql, &lower, in_marker, end, start, negated);
+        return Ok(Some((expanded, label_override)));
     }
     let mut expanded = sql.to_string();
     expanded.replace_range(open..=end, &format!("({})", members.join(",")));
-    Ok(Some(expanded))
+    let label_override =
+        projection_cursor_label_override(sql, &lower, in_marker, end, start, negated);
+    Ok(Some((expanded, label_override)))
 }
 
 fn top_level_sql_keyword(sql: &str, keyword: &[u8]) -> Option<usize> {
@@ -248,6 +266,224 @@ fn top_level_sql_keyword(sql: &str, keyword: &[u8]) -> Option<usize> {
     None
 }
 
+fn projection_cursor_label_override(
+    sql: &str,
+    lower: &str,
+    in_marker: usize,
+    end: usize,
+    inner_start: usize,
+    negated: bool,
+) -> Option<ProjectionLabelOverride> {
+    let select = top_level_sql_keyword(lower, b"select")?;
+    let from = top_level_sql_keyword(lower, b"from")?;
+    if in_marker >= from {
+        return None;
+    }
+    let list_start = select + b"select".len();
+    let ranges = top_level_ranges(sql, list_start, from, b',');
+    let (index, (item_start, item_end)) = ranges
+        .iter()
+        .enumerate()
+        .find(|(_, (start, end))| *start <= in_marker && in_marker < *end)?;
+    let suffix = sql.get(end + 1..*item_end)?.trim();
+    if !suffix.trim_start_matches(')').trim().is_empty() {
+        return None;
+    }
+    let inner_plan = render_simple_subquery_plan(sql.get(inner_start..end)?)?;
+    let mut lhs = sql.get(*item_start..in_marker)?.trim_end();
+    if negated {
+        lhs = lhs.trim_end();
+        lhs = lhs
+            .strip_suffix("not")
+            .or_else(|| lhs.strip_suffix("NOT"))?;
+        lhs = lhs.trim_end();
+    }
+    let lhs = lhs.trim().trim_start_matches('(').trim();
+    let expression = format!("{lhs} in ({inner_plan})");
+    let label = if negated {
+        format!("not({expression})")
+    } else {
+        expression
+    };
+    let label = label.chars().take(64).collect::<String>();
+    Some(ProjectionLabelOverride {
+        index,
+        label: label.trim_end().to_string(),
+    })
+}
+
+fn render_simple_subquery_plan(sql: &str) -> Option<String> {
+    let lower = sql.to_ascii_lowercase();
+    let select = top_level_sql_keyword(&lower, b"select")?;
+    let from = top_level_sql_keyword(&lower, b"from")?;
+    if select != 0 || from <= select + 6 {
+        return None;
+    }
+    let projection = sql.get(select + 6..from)?.trim();
+    let projection_items = top_level_ranges(sql, select + 6, from, b',');
+    let mut rendered_columns = Vec::with_capacity(projection_items.len());
+    for (start, end) in projection_items {
+        let item = sql.get(start..end)?.trim();
+        if item.is_empty() {
+            return None;
+        }
+        rendered_columns.push(render_query_model_select_item(item));
+    }
+    if projection.is_empty() {
+        return None;
+    }
+    let from_start = from + 4;
+    let where_pos = top_level_sql_keyword(&lower, b"where");
+    let order_pos = top_level_sql_keyword(&lower, b"order");
+    let limit_pos = top_level_sql_keyword(&lower, b"limit");
+    let source_end = [where_pos, order_pos, limit_pos]
+        .into_iter()
+        .flatten()
+        .filter(|position| *position > from_start)
+        .min()
+        .unwrap_or(sql.len());
+    let source = normalize_query_model_tokens(sql.get(from_start..source_end)?.trim());
+    if source.is_empty() {
+        return None;
+    }
+    let mut input_model = source;
+    if let Some(where_pos) = where_pos.filter(|position| *position > from_start) {
+        let where_start = where_pos + 5;
+        let where_end = [order_pos, limit_pos]
+            .into_iter()
+            .flatten()
+            .filter(|position| *position > where_start)
+            .min()
+            .unwrap_or(sql.len());
+        let predicate = normalize_query_model_tokens(sql.get(where_start..where_end)?.trim());
+        if predicate.is_empty() {
+            return None;
+        }
+        input_model.push_str(" where ");
+        input_model.push_str(&predicate);
+    }
+    let mut model = format!(
+        "select-choose {} from ({input_model})",
+        rendered_columns.join(" ")
+    );
+    if let Some(limit_pos) = limit_pos.filter(|position| *position > from_start) {
+        model.push_str(" limit ");
+        model.push_str(&normalize_query_model_tokens(
+            sql.get(limit_pos + 5..)?.trim(),
+        ));
+    }
+    Some(model)
+}
+
+fn render_query_model_select_item(item: &str) -> String {
+    let lower = item.to_ascii_lowercase();
+    if let Some(as_pos) = lower.rfind(" as ") {
+        return format!(
+            "{} {}",
+            normalize_query_model_tokens(item[..as_pos].trim()),
+            normalize_query_model_tokens(item[as_pos + 4..].trim())
+        );
+    }
+    let normalized = normalize_query_model_tokens(item);
+    let is_simple_column = normalized
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '.'));
+    if is_simple_column {
+        if normalized.contains('.') {
+            let output_name = normalized.rsplit('.').next().unwrap_or(&normalized);
+            format!("{normalized} {output_name}")
+        } else {
+            normalized
+        }
+    } else {
+        format!("{normalized} {normalized}")
+    }
+}
+
+fn normalize_query_model_tokens(sql: &str) -> String {
+    let characters: Vec<char> = sql.chars().collect();
+    let mut output = String::with_capacity(sql.len());
+    let mut i = 0;
+    let mut quoted = false;
+    while i < characters.len() {
+        let character = characters[i];
+        if character == '\'' {
+            if quoted && characters.get(i + 1) == Some(&'\'') {
+                output.push('\'');
+                output.push('\'');
+                i += 2;
+                continue;
+            }
+            quoted = !quoted;
+            output.push('\'');
+            i += 1;
+        } else if quoted {
+            output.push(character);
+            i += 1;
+        } else if character.is_ascii_whitespace() {
+            if !output.ends_with(' ') && !output.is_empty() {
+                output.push(' ');
+            }
+            i += 1;
+        } else if matches!(character, '=' | '<' | '>' | '!') {
+            while output.ends_with(' ') {
+                output.pop();
+            }
+            output.push(' ');
+            output.push(character);
+            i += 1;
+            if characters
+                .get(i)
+                .is_some_and(|next| matches!(*next, '=' | '>'))
+            {
+                output.push(characters[i]);
+                i += 1;
+            }
+            output.push(' ');
+        } else if character == ',' {
+            while output.ends_with(' ') {
+                output.pop();
+            }
+            output.push_str(", ");
+            i += 1;
+        } else {
+            output.push(character.to_ascii_lowercase());
+            i += 1;
+        }
+    }
+    output.trim().to_string()
+}
+
+fn top_level_ranges(sql: &str, start: usize, end: usize, delimiter: u8) -> Vec<(usize, usize)> {
+    let bytes = sql.as_bytes();
+    let mut ranges = Vec::new();
+    let mut range_start = start;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut i = start;
+    while i < end {
+        match bytes[i] {
+            b'\'' => {
+                if quoted && bytes.get(i + 1) == Some(&b'\'') {
+                    i += 2;
+                    continue;
+                }
+                quoted = !quoted;
+            }
+            b'(' if !quoted => depth += 1,
+            b')' if !quoted => depth = depth.saturating_sub(1),
+            byte if byte == delimiter && !quoted && depth == 0 => {
+                ranges.push((range_start, i));
+                range_start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    ranges.push((range_start, end));
+    ranges
+}
+
 fn filter_in_subquery_lhs(filter: &Filter) -> Option<(&FilterOperand, usize)> {
     match filter {
         Filter::InListExpression {
@@ -263,7 +499,10 @@ fn filter_in_subquery_lhs(filter: &Filter) -> Option<(&FilterOperand, usize)> {
 
 fn cursor_first_column_tag(data_dir: &Path, sql: &str) -> Result<i32, Error> {
     let expanded = expand_symbol_cursor(data_dir, sql)?;
-    let sql = expanded.as_deref().unwrap_or(sql);
+    let sql = expanded
+        .as_ref()
+        .map(|(expanded, _)| expanded.as_str())
+        .unwrap_or(sql);
     let query = parse_query(sql)?;
     let table = query_source_table(data_dir, &query)?;
     match &query.columns {
@@ -28414,6 +28653,40 @@ mod tests {
             (
                 "SELECT s.location IN (SELECT t.location FROM sensors t WHERE t.id=99) AS empty_in FROM sensors s WHERE s.location IS NULL ORDER BY s.ts",
                 "empty_in\nfalse\n",
+            ),
+        ] {
+            let actual = execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+            assert_eq!(render_tsv(&actual), expected, "{sql}");
+        }
+    }
+
+    #[test]
+    fn symbol_cursor_projection_headers_match_questdb_without_aliases() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, expected) in [
+            (
+                "SELECT location IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts",
+                "location in (select-choose location from (sensors where location\ntrue\nfalse\ntrue\nfalse\n",
+            ),
+            (
+                "SELECT location NOT IN (SELECT tag FROM sensors) FROM sensors ORDER BY ts",
+                "not(location in (select-choose tag from (sensors)))\ntrue\nfalse\ntrue\ntrue\n",
+            ),
+            (
+                "SELECT location IN (SELECT location FROM sensors WHERE id=99) FROM sensors ORDER BY ts",
+                "location in (select-choose location from (sensors where id = 99)\nfalse\nfalse\nfalse\nfalse\n",
+            ),
+            (
+                "SELECT location IN (SELECT location FROM sensors) FROM sensors",
+                "location in (select-choose location from (sensors))\ntrue\ntrue\ntrue\ntrue\n",
+            ),
+            (
+                "SELECT location IN (SELECT lower(location) FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts",
+                "location in (select-choose lower(location) lower(location) from\ntrue\nfalse\ntrue\nfalse\n",
+            ),
+            (
+                "SELECT ts, location IN (SELECT location FROM sensors WHERE location='madrid') FROM sensors ORDER BY ts",
+                "ts\tlocation in (select-choose location from (sensors where location\n2020-01-02T03:04:05.000000Z\ttrue\n2020-01-02T03:04:06.000000Z\tfalse\n2020-01-02T03:04:07.000000Z\ttrue\n2020-01-02T03:04:08.000000Z\tfalse\n",
             ),
         ] {
             let actual = execute(&sensors, sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
