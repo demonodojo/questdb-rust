@@ -1502,12 +1502,12 @@ Verificación: `tools/check.sh` pasó con 377 pruebas SQL, 4 de storage y 3 de t
 
 ## 2026-11-16 — subconsultas cursor en `IN`/`NOT IN` para SYMBOL
 
-QuestDB 10.1.0 admite un cursor como fuente de miembros para columnas `SYMBOL`. Se portó la primera columna directa de subconsultas cuyo tipo sea STRING, SYMBOL o VARCHAR. Se comprobaron duplicados, alias en ambas consultas, valores NULL, cursor vacío y `NOT IN`; se reproducen además errores y posiciones para salida de cursor incompatible y columnas externas BOOLEAN, numéricas, temporales y textuales.
+QuestDB 10.1.0 admite un cursor como fuente de miembros para columnas `SYMBOL`. Se portó la primera columna de subconsultas con referencias directas, proyecciones escalares de tipo STRING/SYMBOL/VARCHAR y agregados simples o agrupados. Se comprobaron duplicados, alias en ambas consultas, valores NULL, cursor vacío, JOIN, subconsultas anidadas, composición AND/OR, `NOT`, `ORDER BY` y `LIMIT`; se reproducen además errores y posiciones para salida de cursor incompatible y columnas externas BOOLEAN, numéricas, temporales, textuales y expresiones no admitidas.
 
-`where_symbol_in_subqueries_match_cursor_results` verifica siete resultados completos y cinco errores. Capturas `/exec` en `where_symbol_in_subqueries_oracle.jsonl`, `where_symbol_in_subqueries_errors_oracle.jsonl` y `where_in_subquery_rejected_outer_types_oracle.jsonl`; el runner compara las respuestas completas y errores contra la referencia viva.
+`where_symbol_in_subqueries_match_cursor_results` verifica veinticuatro resultados completos y siete errores. Capturas `/exec` en `where_symbol_in_subqueries_oracle.jsonl`, `where_symbol_in_subqueries_errors_oracle.jsonl` y `where_in_subquery_rejected_outer_types_oracle.jsonl`; el runner compara las respuestas completas y errores contra la referencia viva.
 
-Verificación: `tools/check.sh` pasó con 378 pruebas SQL, 4 de storage, 3 de types y 2 de CLI. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, siete consultas cursor por columnas/dataset/count, cinco errores de subconsulta y los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+Verificación: pendiente de repetir después de ampliar la inferencia de tipo, JOIN, anidamiento y composición de predicados.
 
 ## Próxima tarea
 
-Consultar QuestDB 10.1.0 para determinar cómo infiere el tipo de la primera columna cuando la subconsulta `IN` proyecta una expresión o agregado; portar las formas admitidas y añadir regresiones, o fijar los rechazos exactos.
+Consultar QuestDB 10.1.0 sobre los tipos externos restantes (CHAR, VARCHAR, UUID, GEOHASH, etc.) en `IN` con cursor; capturar mensajes y posiciones y portar los rechazos observados.

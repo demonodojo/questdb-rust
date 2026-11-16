@@ -4273,7 +4273,24 @@ compare_captured "$ROOT_DIR/tests/fixtures/h1" \
   symbol_subquery_empty_in "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE id = 99) ORDER BY ts" \
   symbol_subquery_empty_not_in "SELECT ts,location FROM sensors WHERE location NOT IN (SELECT location FROM sensors WHERE id = 99) ORDER BY ts" \
   symbol_subquery_qualified_alias "SELECT s.ts,s.location FROM sensors AS s WHERE s.location IN (SELECT t.location FROM sensors AS t WHERE t.location = 'madrid') ORDER BY s.ts" \
-  symbol_subquery_literal_guard "SELECT ts,location FROM sensors WHERE note = 'IN (SELECT x)' ORDER BY ts"
+  symbol_subquery_literal_guard "SELECT ts,location FROM sensors WHERE note = 'IN (SELECT x)' ORDER BY ts" \
+  symbol_subquery_lower_projection "SELECT ts,location FROM sensors WHERE location IN (SELECT lower(location) FROM sensors WHERE location='madrid') ORDER BY ts" \
+  symbol_subquery_concat_projection "SELECT ts,location FROM sensors WHERE location IN (SELECT concat(location, '!') FROM sensors WHERE location='madrid') ORDER BY ts" \
+  symbol_subquery_min_aggregate "SELECT ts,location FROM sensors WHERE location IN (SELECT min(location) FROM sensors) ORDER BY ts" \
+  symbol_subquery_string_column "SELECT ts,location FROM sensors WHERE location IN (SELECT note FROM sensors) ORDER BY ts" \
+  symbol_subquery_first_aggregate "SELECT ts,location FROM sensors WHERE location IN (SELECT first(location) FROM sensors) ORDER BY ts" \
+  symbol_subquery_string_agg_aggregate "SELECT ts,location FROM sensors WHERE location IN (SELECT string_agg(location, ',') FROM sensors) ORDER BY ts" \
+  symbol_subquery_empty_expression_not_in "SELECT ts,location FROM sensors WHERE location NOT IN (SELECT lower(location) FROM sensors WHERE id=99) ORDER BY ts" \
+  symbol_subquery_group_key "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors GROUP BY location) ORDER BY ts" \
+  symbol_subquery_grouped_aggregate_first "SELECT ts,location FROM sensors WHERE location IN (SELECT min(location), location FROM sensors GROUP BY location) ORDER BY ts" \
+  symbol_subquery_nested_in "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid')) ORDER BY ts" \
+  symbol_subquery_join_left_field "SELECT ts,location FROM sensors WHERE location IN (SELECT s.location FROM sensors s JOIN sensors t ON s.id=t.id) ORDER BY ts" \
+  symbol_subquery_join_right_field "SELECT ts,location FROM sensors WHERE location IN (SELECT t.location FROM sensors s JOIN sensors t ON s.id=t.id) ORDER BY ts" \
+  symbol_subquery_boolean_and "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid') AND location NOT IN (SELECT location FROM sensors WHERE location='東京') ORDER BY ts" \
+  symbol_subquery_boolean_or "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid') OR location IN (SELECT location FROM sensors WHERE location='東京') ORDER BY ts" \
+  symbol_subquery_not_parenthesized "SELECT ts,location FROM sensors WHERE NOT (location IN (SELECT location FROM sensors WHERE location='madrid')) ORDER BY ts" \
+  symbol_subquery_order_limit_asc "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors ORDER BY ts LIMIT 1) ORDER BY ts" \
+  symbol_subquery_order_limit_desc "SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors ORDER BY ts DESC LIMIT 1) ORDER BY ts"
 
 if curl -sf -G "$HTTP" --data-urlencode "query=SELECT count() FROM sensors" -o "$DIFF_TMP/qdb-diff-count.json"; then
   DIFF_H1="$ROOT_DIR/tests/fixtures/h1" DIFF_H2="$ROOT_DIR/tests/fixtures/h2" DIFF_BIN="$BIN" python3 - "$HTTP" << 'PY'

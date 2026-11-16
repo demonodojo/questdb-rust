@@ -69,27 +69,18 @@ fn expand_symbol_cursor(data_dir: &Path, sql: &str) -> Result<Option<String>, Er
     let Some((in_marker, open, start)) = find_in_cursor_subquery(&lower) else {
         return Ok(None);
     };
-    let mut depth = 1usize;
-    let mut quoted = false;
-    let mut end = None;
-    for (i, byte) in sql.bytes().enumerate().skip(open + 1) {
-        if byte == b'\'' {
-            quoted = !quoted;
-        } else if !quoted && byte == b'(' {
-            depth += 1;
-        } else if !quoted && byte == b')' {
-            depth -= 1;
-            if depth == 0 {
-                end = Some(i);
-                break;
-            }
-        }
-    }
-    let Some(end) = end else { return Ok(None) };
+    let Some(end) = matching_sql_paren(sql, open) else {
+        return Ok(None);
+    };
     let mut parseable = sql.to_string();
-    parseable.replace_range(open..=end, "(NULL)");
+    while let Some((_, parse_open, _)) = find_in_cursor_subquery(&parseable.to_ascii_lowercase()) {
+        let Some(parse_end) = matching_sql_paren(&parseable, parse_open) else {
+            break;
+        };
+        parseable.replace_range(parse_open..=parse_end, "(NULL)");
+    }
     let outer = parse_query(&parseable)?;
-    let outer_table = open_table(data_dir, &outer.table)?;
+    let outer_table = query_source_table(data_dir, &outer)?;
     let mut lhs_prefix = sql[..in_marker].trim_end();
     if lhs_prefix.to_ascii_lowercase().ends_with(" not") {
         lhs_prefix = lhs_prefix[..lhs_prefix.len() - 3].trim_end();
@@ -104,26 +95,19 @@ fn expand_symbol_cursor(data_dir: &Path, sql: &str) -> Result<Option<String>, Er
             .next()
             .and_then(|bare| outer_table.column_index(bare))
     }) else {
-        return Ok(None);
+        if lhs.is_empty() {
+            return Err(Error::at("constant expected", start));
+        }
+        return Err(Error::at(
+            format!("Invalid column: {lhs}"),
+            lhs_prefix.rfind(lhs).unwrap_or(in_marker - lhs.len()),
+        ));
     };
     let lhs_tag = outer_table.meta.columns[lhs_index].tag;
     if lhs_tag != qdb_types::TAG_SYMBOL {
         let message = match lhs_tag {
             qdb_types::TAG_BOOLEAN => {
-                let inner = parse_query(&sql[start..end])?;
-                let source = open_table(data_dir, &inner.table)?;
-                let first = match &inner.columns {
-                    SelectList::Columns(cols) => cols.first().map(|col| col.name.as_str()),
-                    SelectList::Projection(proj) => match proj.items.first() {
-                        Some(Proj::Column(name)) => Some(name.as_str()),
-                        _ => None,
-                    },
-                    SelectList::Star => source.meta.columns.first().map(|col| col.name.as_str()),
-                    _ => None,
-                };
-                let member = first
-                    .and_then(|name| source.column_index(name))
-                    .map(|index| source.meta.columns[index].tag);
+                let member = cursor_first_column_tag(data_dir, &sql[start..end]).ok();
                 let member_type = if member == Some(qdb_types::TAG_BOOLEAN) {
                     "BOOLEAN"
                 } else {
@@ -163,22 +147,8 @@ fn expand_symbol_cursor(data_dir: &Path, sql: &str) -> Result<Option<String>, Er
     }
 
     let inner_sql = &sql[start..end];
-    let inner = parse_query(inner_sql)?;
-    let inner_table = open_table(data_dir, &inner.table)?;
-    let name = match &inner.columns {
-        SelectList::Columns(cols) => cols.first().map(|c| c.name.as_str()),
-        SelectList::Projection(proj) => match proj.items.first() {
-            Some(Proj::Column(name)) => Some(name.as_str()),
-            _ => None,
-        },
-        SelectList::Star => inner_table.meta.columns.first().map(|c| c.name.as_str()),
-        _ => None,
-    }
-    .ok_or_else(|| Error::at("constant expected", start))?;
-    let index = inner_table
-        .column_index(name)
-        .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
-    let tag = inner_table.meta.columns[index].tag;
+    let tag = cursor_first_column_tag(data_dir, inner_sql)
+        .map_err(|error| Error::at(error.message, start))?;
     if !matches!(
         tag,
         qdb_types::TAG_STRING | qdb_types::TAG_SYMBOL | qdb_types::TAG_VARCHAR
@@ -211,6 +181,75 @@ fn expand_symbol_cursor(data_dir: &Path, sql: &str) -> Result<Option<String>, Er
     let mut expanded = sql.to_string();
     expanded.replace_range(open..=end, &format!("({})", members.join(",")));
     Ok(Some(expanded))
+}
+
+fn cursor_first_column_tag(data_dir: &Path, sql: &str) -> Result<i32, Error> {
+    let expanded = expand_symbol_cursor(data_dir, sql)?;
+    let sql = expanded.as_deref().unwrap_or(sql);
+    let query = parse_query(sql)?;
+    let table = query_source_table(data_dir, &query)?;
+    match &query.columns {
+        SelectList::Star => table
+            .meta
+            .columns
+            .first()
+            .map(|column| column.tag)
+            .ok_or_else(|| Error::at("constant expected", 0)),
+        SelectList::Columns(columns) => {
+            let column = columns
+                .first()
+                .ok_or_else(|| Error::at("constant expected", 0))?;
+            let index = table
+                .column_index(&column.name)
+                .ok_or_else(|| Error::new(format!("Invalid column: {}", column.name)))?;
+            Ok(table.meta.columns[index].tag)
+        }
+        SelectList::Projection(projection) => {
+            let item = projection
+                .items
+                .first()
+                .ok_or_else(|| Error::at("constant expected", 0))?;
+            if let Proj::Column(name) = item {
+                let index = table
+                    .column_index(name)
+                    .ok_or_else(|| Error::new(format!("Invalid column: {name}")))?;
+                Ok(table.meta.columns[index].tag)
+            } else {
+                Ok(resolve_proj(&table, item)?.expr_tag())
+            }
+        }
+        SelectList::Aggregate(aggregate) => {
+            let input = aggregate_input(&table, aggregate)?;
+            Ok(aggregate_order_tag(&input))
+        }
+        SelectList::Grouped(grouped) => match grouped.select_order.first() {
+            Some(GroupedSelectItem::Key(index)) => select_operand_tag(
+                &table,
+                &grouped
+                    .keys
+                    .get(*index)
+                    .ok_or_else(|| Error::at("constant expected", 0))?
+                    .operand,
+            ),
+            Some(GroupedSelectItem::Aggregate(index)) => {
+                let aggregate = grouped
+                    .aggregates
+                    .get(*index)
+                    .ok_or_else(|| Error::at("constant expected", 0))?;
+                let input = aggregate_input(&table, aggregate)?;
+                Ok(aggregate_order_tag(&input))
+            }
+            None => Err(Error::at("constant expected", 0)),
+        },
+    }
+}
+
+fn query_source_table(data_dir: &Path, query: &Query) -> Result<Table, Error> {
+    let mut table = open_table(data_dir, &query.table)?;
+    for join in &query.join {
+        table = equi_join_table(&table, data_dir, join)?;
+    }
+    Ok(table)
 }
 
 fn find_in_cursor_subquery(lower: &str) -> Option<(usize, usize, usize)> {
@@ -251,6 +290,24 @@ fn find_in_cursor_subquery(lower: &str) -> Option<(usize, usize, usize)> {
             }
         }
         i += 1;
+    }
+    None
+}
+
+fn matching_sql_paren(sql: &str, open: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut quoted = false;
+    for (i, byte) in sql.bytes().enumerate().skip(open + 1) {
+        if byte == b'\'' {
+            quoted = !quoted;
+        } else if !quoted && byte == b'(' {
+            depth += 1;
+        } else if !quoted && byte == b')' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
     }
     None
 }
@@ -28009,6 +28066,23 @@ mod tests {
             ("SELECT ts,location FROM sensors WHERE location NOT IN (SELECT location FROM sensors WHERE id = 99) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
             ("SELECT s.ts,s.location FROM sensors AS s WHERE s.location IN (SELECT t.location FROM sensors AS t WHERE t.location = 'madrid') ORDER BY s.ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
             ("SELECT ts,location FROM sensors WHERE note = 'IN (SELECT x)' ORDER BY ts", "ts\tlocation\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT lower(location) FROM sensors WHERE location='madrid') ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT concat(location, '!') FROM sensors WHERE location='madrid') ORDER BY ts", "ts\tlocation\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT min(location) FROM sensors) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT note FROM sensors) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT first(location) FROM sensors) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT string_agg(location, ',') FROM sensors) ORDER BY ts", "ts\tlocation\n"),
+            ("SELECT ts,location FROM sensors WHERE location NOT IN (SELECT lower(location) FROM sensors WHERE id=99) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors GROUP BY location) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT min(location), location FROM sensors GROUP BY location) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid')) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT s.location FROM sensors s JOIN sensors t ON s.id=t.id) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT t.location FROM sensors s JOIN sensors t ON s.id=t.id) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid') AND location NOT IN (SELECT location FROM sensors WHERE location='東京') ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors WHERE location='madrid') OR location IN (SELECT location FROM sensors WHERE location='東京') ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE NOT (location IN (SELECT location FROM sensors WHERE location='madrid')) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors ORDER BY ts LIMIT 1) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n"),
+            ("SELECT ts,location FROM sensors WHERE location IN (SELECT location FROM sensors ORDER BY ts DESC LIMIT 1) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:08.000000Z\t東京\n"),
         ];
         for (sql, expected) in cases {
             assert_eq!(
@@ -28044,6 +28118,16 @@ mod tests {
                 "SELECT day FROM sensors WHERE day IN (SELECT day FROM sensors)",
                 "cannot compare TIMESTAMP with type CURSOR",
                 38,
+            ),
+            (
+                "SELECT lower(location) FROM sensors WHERE lower(location) IN (SELECT lower(location) FROM sensors WHERE location='madrid')",
+                "constant expected",
+                62,
+            ),
+            (
+                "SELECT id FROM sensors WHERE missing IN (SELECT id FROM sensors)",
+                "Invalid column: missing",
+                29,
             ),
         ] {
             let error = execute(&sensors, sql).unwrap_err();
