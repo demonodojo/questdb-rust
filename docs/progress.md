@@ -1484,6 +1484,14 @@ Se capturaron ocho respuestas completas y ocho errores de QuestDB 10.1.0 para `s
 
 Verificación: `tools/check.sh` pasó con 375 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, ocho respuestas temporales por alias y ocho errores, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
 
+## 2026-11-16 — `IN`/`NOT IN` textual con alias de tabla
+
+Se capturaron dieciséis respuestas completas y seis errores de QuestDB 10.1.0 con alias sobre columnas STRING, VARCHAR, SYMBOL y CHAR. Los casos cubren miembros CHAR y STRING, Unicode, vacío, NULL como operando y miembro, `NOT IN`, tipos incompatibles y listas vacías bajo `LIMIT 0`.
+
+`where_alias_text_in_lists_match_questdb` verifica filas y errores con posición. El runner compara dieciséis respuestas por columnas/dataset/count y seis errores por mensaje/posición en vivo.
+
+Verificación: `tools/check.sh` pasó con 376 pruebas SQL, 4 de storage y 3 de types. `TMPDIR="$PWD/target/oracle-tmp" tools/run_differential.sh` cotejó 4447 cuentas generales, dieciséis resultados textuales por alias y seis errores, además de los manifiestos previos. También pasaron `cargo fmt --all -- --check`, `bash -n tools/run_differential.sh` y `git diff --check`.
+
 ## Próxima tarea
 
-Capturar y probar `IN`/`NOT IN` sobre columnas STRING/VARCHAR y SYMBOL/CHAR con alias de tabla, incluyendo coerción a texto, Unicode y NULL frente a QuestDB 10.1.0.
+Capturar y probar combinaciones de `IN`/`NOT IN` con `AND`/`OR` y paréntesis sobre columnas con alias de tabla, frente a QuestDB 10.1.0.

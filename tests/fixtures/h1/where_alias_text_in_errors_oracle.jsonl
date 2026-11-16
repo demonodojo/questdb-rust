@@ -1,0 +1,6 @@
+{"query":"SELECT ts FROM sensors s WHERE s.note IN (1) LIMIT 0","case":"string_int_limit0","error":"cannot compare STRING with type INT","position":42}
+{"query":"SELECT ts FROM sensors s WHERE s.tag IN (true) LIMIT 0","case":"varchar_bool_limit0","error":"cannot compare VARCHAR with type BOOLEAN","position":41}
+{"query":"SELECT ts FROM sensors s WHERE s.location IN (1) LIMIT 0","case":"symbol_int_limit0","error":"STRING constant expected","position":46}
+{"query":"SELECT ts FROM sensors s WHERE s.ch IN ('ab') LIMIT 0","case":"char_long_limit0","error":"CHAR constant expected","position":40}
+{"query":"SELECT ts FROM sensors s WHERE s.note IN () LIMIT 0","case":"string_empty_list_limit0","error":"too few arguments for 'in'","position":38}
+{"query":"SELECT ts FROM sensors s WHERE s.ch NOT IN () LIMIT 0","case":"char_empty_not_list_limit0","error":"too few arguments for 'in'","position":40}

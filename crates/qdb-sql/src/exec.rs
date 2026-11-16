@@ -27705,6 +27705,68 @@ mod tests {
     }
 
     #[test]
+    fn where_alias_text_in_lists_match_questdb() {
+        let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
+        for (sql, expected) in [
+            ("SELECT ts,note FROM sensors s WHERE s.note IN ('alpha','βeta',NULL) ORDER BY ts", "ts\tnote\n2020-01-02T03:04:05.000000Z\talpha\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:08.000000Z\tβeta\n"),
+            ("SELECT ts,note FROM sensors s WHERE s.note NOT IN ('alpha',NULL) ORDER BY ts", "ts\tnote\n2020-01-02T03:04:07.000000Z\t\n2020-01-02T03:04:08.000000Z\tβeta\n"),
+            ("SELECT ts,note FROM sensors s WHERE s.note IN ('') ORDER BY ts", "ts\tnote\n2020-01-02T03:04:07.000000Z\t\n"),
+            ("SELECT ts,note FROM sensors s WHERE s.note IN ('a') ORDER BY ts", "ts\tnote\n"),
+            ("SELECT ts,note FROM sensors s WHERE s.note IN (NULL) ORDER BY ts", "ts\tnote\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts,tag FROM sensors s WHERE s.tag IN ('v1','héllo') ORDER BY ts", "ts\ttag\n2020-01-02T03:04:05.000000Z\tv1\n2020-01-02T03:04:07.000000Z\théllo\n"),
+            ("SELECT ts,tag FROM sensors s WHERE s.tag IN ('') ORDER BY ts", "ts\ttag\n"),
+            ("SELECT ts,tag FROM sensors s WHERE s.tag IN (NULL) ORDER BY ts", "ts\ttag\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts,tag FROM sensors s WHERE s.tag NOT IN ('v1') ORDER BY ts", "ts\ttag\n2020-01-02T03:04:06.000000Z\tNULL\n2020-01-02T03:04:07.000000Z\théllo\n2020-01-02T03:04:08.000000Z\t0123456789ABCDEF\n"),
+            ("SELECT ts,location FROM sensors s WHERE s.location IN ('madrid','東京') ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:05.000000Z\tmadrid\n2020-01-02T03:04:07.000000Z\tmadrid\n2020-01-02T03:04:08.000000Z\t東京\n"),
+            ("SELECT ts,location FROM sensors s WHERE s.location IN ('','m') ORDER BY ts", "ts\tlocation\n"),
+            ("SELECT ts,location FROM sensors s WHERE s.location IN (NULL) ORDER BY ts", "ts\tlocation\n2020-01-02T03:04:06.000000Z\tNULL\n"),
+            ("SELECT ts,ch FROM sensors s WHERE s.ch IN ('A','β') ORDER BY ts", "ts\tch\n2020-01-02T03:04:05.000000Z\tA\n2020-01-02T03:04:07.000000Z\tβ\n"),
+            ("SELECT ts,ch FROM sensors s WHERE s.ch IN ('') ORDER BY ts", "ts\tch\n2020-01-02T03:04:06.000000Z\t\n"),
+            ("SELECT ts,ch FROM sensors s WHERE s.ch IN (NULL) ORDER BY ts", "ts\tch\n2020-01-02T03:04:06.000000Z\t\n"),
+            ("SELECT ts,ch FROM sensors s WHERE s.ch NOT IN ('A') ORDER BY ts", "ts\tch\n2020-01-02T03:04:06.000000Z\t\n2020-01-02T03:04:07.000000Z\tβ\n2020-01-02T03:04:08.000000Z\t東\n"),
+        ] {
+            let result = execute(&sensors, sql).unwrap();
+            assert_eq!(render_tsv(&result), expected, "{sql}");
+        }
+        for (sql, message, position) in [
+            (
+                "SELECT ts FROM sensors s WHERE s.note IN (1) LIMIT 0",
+                "cannot compare STRING with type INT",
+                42,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.tag IN (true) LIMIT 0",
+                "cannot compare VARCHAR with type BOOLEAN",
+                41,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.location IN (1) LIMIT 0",
+                "STRING constant expected",
+                46,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ch IN ('ab') LIMIT 0",
+                "CHAR constant expected",
+                40,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.note IN () LIMIT 0",
+                "too few arguments for 'in'",
+                38,
+            ),
+            (
+                "SELECT ts FROM sensors s WHERE s.ch NOT IN () LIMIT 0",
+                "too few arguments for 'in'",
+                40,
+            ),
+        ] {
+            let error = execute(&sensors, sql).unwrap_err();
+            assert_eq!(error.message, message, "{sql}");
+            assert_eq!(error.position, Some(position), "{sql}");
+        }
+    }
+
+    #[test]
     fn replace_matches_captured_exec() {
         let sensors = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h1");
         let days = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/h2");
